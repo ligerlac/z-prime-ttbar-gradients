@@ -1,4 +1,4 @@
-from utils.systematics import jet_pt_resolution
+from utils.systematics import jet_pt_resolution, jet_pt_scale
 config = {
     "general": {
         "lumi": 16400,
@@ -13,40 +13,42 @@ config = {
      }
     ],
     "corrections":[
-        {
-            "name": "pu_weight",
-            "file": "puWeights.json.gz",
-            "type": "event", # event or object
-            "target": None, # if object this must be specfied
-            "op": "mult", # or add or subtract
-            "key": "Collisions16_UltraLegacy_goldenJSON",
-            "use_correctionlib": True,
-        },
-        {
-            "name": "muon_id_sf",
-            "file": "muon_Z.json.gz",
-            "type": "event_weight",
-            "key": "NUM_TightID_DEN_TrackerMuons",
-            "use_correctionlib": True,
-        },
+        # {
+        #     "name": "pu_weight",
+        #     "file": "corrections/puWeights.json.gz",
+        #     "type": "event", # event or object
+        #     "use": [("Pileup", "nTrueInt")],
+        #     "target": None, # if object this must be specfied
+        #     "op": "mult", # or add or subtract
+        #     "key": "Collisions16_UltraLegacy_goldenJSON",
+        #     "use_correctionlib": True,
+        # },
+        # {
+        #     "name": "muon_id_sf",
+        #     "file": "corrections/muon_Z.json.gz",
+        #     "use": [("Muon", "eta"), ("Muon", "pt")],
+        #     "type": "event",
+        #     "key": "NUM_TightID_DEN_TrackerMuons",
+        #     "use_correctionlib": True,
+        # },
     ],
     "systematics": [
-        {
-            "name": "jet_pt_resolution",
-            "up_function": jet_pt_resolution,
-            "target": ("Jet", "pt")
-            "use": [("Jet", "pt")]
-            "symmetrise": True,
-            "op": "mult", # or add or subtract
-            "type": : "object"
-        },
+        # {
+        #     "name": "jet_pt_resolution",
+        #     "up_function": jet_pt_resolution,
+        #     "target": ("Jet", "pt"),
+        #     "use": [("Jet", "pt")],
+        #     "symmetrise": True,
+        #     "op": "mult", # or add or subtract
+        #     "type": "object",
+        # },
         {
             "name": "jet_pt_scale",
             "up_function": jet_pt_scale,
-            "target": ("Jet", "pt")
+            "target": ("Jet", "pt"),
             "symmetrise": True,
             "op": "mult", # or add or subtract
-            "type": : "object"
+            "type": "object",
         },
     ]
 }
