@@ -111,23 +111,18 @@ class ZprimeAnalysis(processor.ProcessorABC):
         if process != "data":
             xsec_weight = x_sec * lumi / n_generated_events
 
-        # ============== Corrections to event weights ==============
 
         #=============== Systematics =========================
-        for systematic_source in self.systematics+self.corrections:
+        for systematic_source in self.systematics+self.corrections+[{"name": "nominal"}]:
 
             # create copies of objects to modify in systematic variations
             # without touching the original objects
+            # Does dask materialise this?
             object_copies = {field: events[field] for field in events.fields}
-            #     "Electron": events.Electron,
-            #     "Muon": events.Muon,
-            #     "Jet": events.Jet,
-            #     "FatJet": events.FatJet,
-            #     "PuppiMET": events.PuppiMET,
-            # }
+
             # ========================= Workout what and how to vary ======================== #
 
-            if process != "data":
+            if process != "data" and systematic_source != "nominal":
                 # Get arguments for corrections function
                 systematics_fn_str_args = systematic_source.get("use", [])
                 syst_fn_args = []
@@ -163,34 +158,36 @@ class ZprimeAnalysis(processor.ProcessorABC):
 
             # ====== Object systematics first because they affect cuts ========== #
             either_variations_present = True
-            for direction in ["up", "down", "nominal"]:
-                suffix = direction if direction != "nominal" else ""
-                syst_variation_hist_name = f"{systematic_source['name']}_{suffix}"
+            directions = ["up", "down"] if systematic_source != "nominal" else ["nominal"]
+            for direction in directions:
+                suffix = f"_{direction}" if systematic_source['name'] != "nominal" else ""
+                syst_variation_hist_name = f"{systematic_source['name']}{suffix}"
 
-                if systematic_source["type"] == "object" and process != "data":
-                    if use_correctionlib:
-                        object_copies[syst_fn_target[0]][syst_fn_target[1]] = self.apply_correctionlib(
-                            systematic_source["name"],
-                            systematic_source["key"],
-                            direction,
-                            syst_fn_args,
-                            syst_fn_affects,
-                            syst_fn_op,
-                        )
+                if systematic_source["name"] != "nominal":
+                    if systematic_source["type"] == "object" and process != "data":
+                        if use_correctionlib:
+                            object_copies[syst_fn_target[0]][syst_fn_target[1]] = self.apply_correctionlib(
+                                systematic_source["name"],
+                                systematic_source["key"],
+                                direction,
+                                syst_fn_args,
+                                syst_fn_affects,
+                                syst_fn_op,
+                            )
 
-                    else:
-                        # Get the function to apply
-                        syst_variation_fn = systematic_source.get(f"{direction}_function", None)
-                        either_variations_present *= syst_variation_fn is not None
-                        if syst_variation_fn is None: continue
+                        else:
+                            # Get the function to apply
+                            syst_variation_fn = systematic_source.get(f"{direction}_function", None)
+                            either_variations_present *= syst_variation_fn is not None
+                            if syst_variation_fn is None: continue
 
-                        object_copies[syst_fn_target[0]][syst_fn_target[1]] = self.apply_syst_fn(
-                            systematic_source["name"],
-                            syst_variation_fn,
-                            syst_fn_args,
-                            syst_fn_affects,
-                            syst_fn_op
-                        )
+                            object_copies[syst_fn_target[0]][syst_fn_target[1]] = self.apply_syst_fn(
+                                systematic_source["name"],
+                                syst_variation_fn,
+                                syst_fn_args,
+                                syst_fn_affects,
+                                syst_fn_op
+                            )
 
 
                 # We now varied an objects kinematics, we can apply cuts and fill histograms
@@ -228,11 +225,11 @@ class ZprimeAnalysis(processor.ProcessorABC):
                 selections.add("pass_mu_trigger", events.HLT.TkMu50)
                 selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
                 selections.add("met_cut", met.pt > 50)
-                #selections.add("lep_ht_cut", lep_ht > 150)
+                #selections.add("lep_ht_cut", lep_ht[:,0] > 150)
                 selections.add("exactly_1fatjet", ak.num(fatjets) == 1)
 
                 # Complex selection criteria
-                selections.add("Zprime_channel", selections.all("pass_mu_trigger", "exactly_1mu", "met_cut", "atleast_1b", "exactly_1fatjet")) #, "lep_ht_cut"
+                selections.add("Zprime_channel", selections.all("pass_mu_trigger", "exactly_1mu"))#, "met_cut", "atleast_1b", "exactly_1fatjet", "lep_ht_cut")) #
 
                 for channel in utils.configuration.config["channels"]:
                     channel_name = channel["name"]
@@ -252,34 +249,35 @@ class ZprimeAnalysis(processor.ProcessorABC):
                         region_weights = dak.ones_like(region_met)
 
                     # compute the region observable
-                    p4mu,p4fj,p4j = ak.unzip(ak.cartesian([region_muons, region_fatjets, region_jets[:,0]]))
-                    p4tot = p4mu + p4fj + p4j #+ p4met
-                    observable = dak.flatten(p4tot.mass)
+                    #p4mu,p4fj,p4j = ak.unzip(ak.cartesian([region_muons, region_fatjets, region_jets[:,0]]))
+                    #p4tot = p4mu + p4fj + p4j #+ p4met
+                    observable = dak.flatten(region_muons.pt)
 
-                    # if this is a systematic affects event weight
-                    if systematic_source["type"] == "event" and process != "data":
-                        if use_correctionlib:
-                            region_weights = self.apply_correctionlib(
-                                systematic_source["name"],
-                                systematic_source["key"],
-                                direction,
-                                syst_fn_args,
-                                region_weights,
-                                syst_fn_op
-                            )
-                        else:
-                            # Get the function to apply
-                            syst_variation_fn = systematic_source.get(f"{direction}_function", None)
-                            either_variations_present *= syst_variation_fn is not None
-                            if syst_variation_fn is None: continue
+                    if systematic_source["name"] != "nominal":
+                        # if this is a systematic affects event weight
+                        if systematic_source["type"] == "event" and process != "data":
+                            if use_correctionlib:
+                                region_weights = self.apply_correctionlib(
+                                    systematic_source["name"],
+                                    systematic_source["key"],
+                                    direction,
+                                    syst_fn_args,
+                                    region_weights,
+                                    syst_fn_op
+                                )
+                            else:
+                                # Get the function to apply
+                                syst_variation_fn = systematic_source.get(f"{direction}_function", None)
+                                either_variations_present *= syst_variation_fn is not None
+                                if syst_variation_fn is None: continue
 
-                            region_weights = self.apply_syst_fn(
-                                systematic_source["name"],
-                                syst_variation_fn,
-                                syst_fn_args,
-                                region_weights,
-                                syst_fn_op
-                            )
+                                region_weights = self.apply_syst_fn(
+                                    systematic_source["name"],
+                                    syst_variation_fn,
+                                    syst_fn_args,
+                                    region_weights,
+                                    syst_fn_op
+                                )
 
                     print("Filling histogram: ", syst_variation_hist_name, process)
                     if process == "data" and direction != "nominal":
@@ -295,6 +293,7 @@ class ZprimeAnalysis(processor.ProcessorABC):
 
                 if not either_variations_present:
                     raise ValueError(f"Systematic function not found for either up/down variations of {systematic_source['name']}")
+
 
         output = {"nevents": {events.metadata["dataset"]: len(events)}, "hist_dict": hist_dict}
         return output

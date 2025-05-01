@@ -1,4 +1,6 @@
 from utils.systematics import jet_pt_resolution, jet_pt_scale
+import numpy as np
+
 config = {
     "general": {
         "lumi": 16400,
@@ -23,25 +25,28 @@ config = {
         #     "key": "Collisions16_UltraLegacy_goldenJSON",
         #     "use_correctionlib": True,
         # },
-        # {
-        #     "name": "muon_id_sf",
-        #     "file": "corrections/muon_Z.json.gz",
-        #     "use": [("Muon", "eta"), ("Muon", "pt")],
-        #     "type": "event",
-        #     "key": "NUM_TightID_DEN_TrackerMuons",
-        #     "use_correctionlib": True,
-        # },
+        {
+            "name": "muon_id_sf",
+            "file": "corrections/muon_Z.json.gz",
+            "use": [("Muon", "eta"), ("Muon", "pt")],
+            "transform": lambda eta, pt: (np.abs(eta)[:,0], pt[:,0]),
+            "type": "event",
+            "key": "NUM_TightID_DEN_TrackerMuons",
+            "use_correctionlib": True,
+            "op": "mult",
+            "up_and_down_idx": ["systup", "systdown"],
+        },
     ],
     "systematics": [
-        # {
-        #     "name": "jet_pt_resolution",
-        #     "up_function": jet_pt_resolution,
-        #     "target": ("Jet", "pt"),
-        #     "use": [("Jet", "pt")],
-        #     "symmetrise": True,
-        #     "op": "mult", # or add or subtract
-        #     "type": "object",
-        # },
+        {
+            "name": "jet_pt_resolution",
+            "up_function": jet_pt_resolution,
+            "target": ("Jet", "pt"),
+            "use": [("Jet", "pt")],
+            "symmetrise": True,
+            "op": "mult", # or add or subtract
+            "type": "object",
+        },
         {
             "name": "jet_pt_scale",
             "up_function": jet_pt_scale,
