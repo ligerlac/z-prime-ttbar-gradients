@@ -15,16 +15,15 @@ config = {
      }
     ],
     "corrections":[
-        # {
-        #     "name": "pu_weight",
-        #     "file": "corrections/puWeights.json.gz",
-        #     "type": "event", # event or object
-        #     "use": [("Pileup", "nTrueInt")],
-        #     "target": None, # if object this must be specfied
-        #     "op": "mult", # or add or subtract
-        #     "key": "Collisions16_UltraLegacy_goldenJSON",
-        #     "use_correctionlib": True,
-        # },
+        {
+            "name": "pu_weight",
+            "file": "corrections/puWeights.json.gz",
+            "type": "event", # event or object
+            "use": [("Pileup", "nTrueInt")],
+            "op": "mult", # or add or subtract
+            "key": "Collisions16_UltraLegacy_goldenJSON",
+            "use_correctionlib": True,
+        },
         {
             "name": "muon_id_sf",
             "file": "corrections/muon_Z.json.gz",

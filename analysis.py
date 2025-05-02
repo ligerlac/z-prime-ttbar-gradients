@@ -39,6 +39,8 @@ NanoAODSchema.warn_missing_crossrefs = False
 warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
 
 RUN_PREPROCESS = False
+RUN_HISTOGRAMS = True
+MAX_FILES_PER_SAMPLE = 1
 
 def is_jagged(arraylike) -> bool:
     try:
@@ -64,7 +66,7 @@ def build_branches_to_keep():
         "Jet": ["btagDeepB", "jetId", "pt", "eta", "phi", "mass", "charge"],
         "PuppiMET": ["pt", "phi"],
         "HLT": ["TkMu50"],
-        "PileUp": ["nTrueInt"],
+        "Pileup": ["nTrueInt"],
         "event": ["genWeight", "event", "run", "luminosityBlock"],
     }
 
@@ -410,7 +412,6 @@ class ZprimeAnalysis:
         """
         if systematic["type"] != "event":
             return weights
-
         use_correctionlib = systematic.get("use_correctionlib", False)
         correction_arguments = []
         for use_from_object in systematic.get("use", []):
@@ -496,7 +497,8 @@ class ZprimeAnalysis:
                 logger.warning(f"{analysis}:: No events left in {chname} for {process} with variation {variation}")
                 continue
 
-            region_muons, region_fatjets, region_jets, region_met = muons[mask], fatjets[mask], jets[mask], met[mask]
+            object_copies = {collection: variable[mask] for collection, variable in object_copies.items()}
+            region_muons, region_fatjets, region_jets, region_met = object_copies["Muon"], object_copies["FatJet"], object_copies["Jet"], object_copies["PuppiMET"]
             object_copies["Muon"], object_copies["FatJet"], object_copies["Jet"], object_copies["PuppiMET"] = region_muons, region_fatjets, region_jets, region_met
             region_muons_4vec, region_jets_4vec, region_jets_4vec = [ak.zip({"pt": o.pt, "eta": o.eta, "phi": o.phi, "mass": o.mass}, with_name="Momentum4D") for o in [region_muons, region_fatjets, region_jets[:, 0]]]
             region_met_4vec = ak.zip(
@@ -507,7 +509,7 @@ class ZprimeAnalysis:
             mtt = ak.flatten((region_muons_4vec + region_jets_4vec + region_jets_4vec + region_met_4vec).mass)
 
             if process != "data":
-                weights = events[mask].genWeight / abs(events[mask].genWeight) * xsec_weight
+                weights = events[mask].genWeight * xsec_weight / abs(events[mask].genWeight)
             else:
                 weights = np.ones(len(region_met))
 
@@ -570,6 +572,40 @@ class ZprimeAnalysis:
 
         return hist_dict
 
+def save_histograms(hist_dict, output_file="outputs/histograms/histograms.root", add_offset=False):
+    """
+    Save histograms to a specified directory.
+
+    Parameters
+    ----------
+    hist_dict : dict
+        Dictionary of histograms to save.
+    output_dir : str
+        Directory to save the histograms.
+    """
+
+    with uproot.recreate(output_file) as f:
+        # save all available histograms to disk
+        for channel, histogram in hist_dict.items():
+            # optionally add minimal offset to avoid completely empty bins
+            # (useful for the ML validation variables that would need binning adjustment
+            # to avoid those)
+            if add_offset:
+                histogram += 1e-6
+                # reference count for empty histogram with floating point math tolerance
+                empty_hist_yield = histogram.axes[0].size*(1e-6)*1.01
+            else:
+                empty_hist_yield = 0
+
+            for sample in histogram.axes[1]:
+                for variation in histogram[:, sample, :].axes[1]:
+                    variation_string = "" if variation == "nominal" else f"_{variation}"
+                    current_1d_hist = histogram[:, sample, variation]
+
+                    if sum(current_1d_hist.values()) > empty_hist_yield:
+                        # only save histograms containing events
+                        f[f"{channel}_{sample}{variation_string}"] = current_1d_hist
+
 # -----------------------------
 # Main Driver
 # -----------------------------
@@ -580,7 +616,7 @@ def main():
     """
     config = utils.configuration.config
     analysis = ZprimeAnalysis(config)
-    fileset = construct_fileset(n_files_max_per_sample=2)
+    fileset = construct_fileset(n_files_max_per_sample=MAX_FILES_PER_SAMPLE)
 
     for dataset, content in fileset.items():
         os.makedirs(f"output/{dataset}", exist_ok=True)
@@ -592,6 +628,7 @@ def main():
 
         for idx, (file_path, tree) in enumerate(content["files"].items()):
             output_dir = f"output/{dataset}/file__{idx}/"
+            if idx >= MAX_FILES_PER_SAMPLE:  continue
 
             if RUN_PREPROCESS:
                 logger.info(f"🔍 Preprocessing input file: {file_path}")
@@ -602,19 +639,22 @@ def main():
             skimmed_files = [f"{f}:{tree}" for f in skimmed_files]
             remaining = sum(uproot.open(f).num_entries for f in skimmed_files)
             logger.info(f"✅ Events retained after filtering: {remaining:,}")
-
-            for skimmed in skimmed_files:
-                logger.info(f"📘 Processing skimmed file: {skimmed}")
-                events = NanoEventsFactory.from_root(skimmed, schemaclass=NanoAODSchema, delayed=False).events()
-                result = analysis.process(events, metadata)
-                logger.info("📈 Histogram filling complete.")
+            if RUN_HISTOGRAMS:
+                for skimmed in skimmed_files:
+                    logger.info(f"📘 Processing skimmed file: {skimmed}")
+                    events = NanoEventsFactory.from_root(skimmed, schemaclass=NanoAODSchema, delayed=False).events()
+                    result = analysis.process(events, metadata)
+                    logger.info("📈 Histogram filling complete.")
 
         logger.info(f"🏁 Finished dataset: {dataset}\n")
 
     logger.info("✅ All datasets processed.")
-    logger.info("📊 Final histogram (Zprime_channel, signal):")
-    logger.info(analysis.nD_hists_per_region["Zprime_channel"][:, "signal", "nominal"])
-    logger.info(analysis.nD_hists_per_region["Zprime_channel"][:, "signal", "muon_id_sf_up"])
+    save_histograms(analysis.nD_hists_per_region, output_file="output/histograms/histograms.root")
+
+    # logger.info("📊 Final histogram (Zprime_channel, signal):")
+    # logger.info(analysis.nD_hists_per_region["Zprime_channel"][:, "signal", "nominal"])
+    # logger.info(analysis.nD_hists_per_region["Zprime_channel"][:, "signal", "muon_id_sf_up"])
+    # logger.info(analysis.nD_hists_per_region["Zprime_channel"][:, "signal", "pu_weight_up"])
 
 
 
