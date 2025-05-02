@@ -25,6 +25,7 @@ from correctionlib import CorrectionSet
 
 import utils
 from utils.input_files import construct_fileset
+from utils.schema import Config  # assuming this is saved in schema.py
 
 # -----------------------------
 # Logging Configuration
@@ -218,30 +219,6 @@ class ZprimeAnalysis:
 
         return evaluators
 
-    def apply_op(self, op, lhs, rhs):
-        """
-        Apply a mathematical operation.
-
-        Parameters
-        ----------
-        op : str
-            Operation name, 'add' or 'mult'.
-        lhs : array-like
-            Left-hand side operand.
-        rhs : array-like
-            Right-hand side operand.
-
-        Returns
-        -------
-        array-like
-            Result of the operation.
-        """
-        if op == "add":
-            return lhs + rhs
-        elif op == "mult":
-            return lhs * rhs
-        else:
-            raise ValueError(f"Unsupported operation: {op}")
 
     def get_object_copies(self, events):
         """
@@ -268,59 +245,18 @@ class ZprimeAnalysis:
 
         return muons, jets, fatjets, met
 
-    def apply_syst_fn(self, name, fn, args, affects, op):
-        """
-        Apply function-based systematic variation.
 
-        Parameters
-        ----------
-        name : str
-            Name of the systematic.
-        fn : callable
-            Function to compute the correction.
-        args : list
-            Arguments to pass to the function.
-        affects : array-like
-            The quantity to apply the correction to.
-        op : str
-            Operation to apply ('add' or 'mult').
-
-        Returns
-        -------
-        array-like
-            Corrected result.
-        """
-        logger.debug(f"Applying function-based systematic: {name}")
-        return self.apply_op(op, affects, fn(*args))
-
-    def apply_correctionlib(self, name, key, direction, correction_arguments, target=None, op=None, transform=None):
+    def apply_correctionlib(
+        self, name, key, direction, correction_arguments,
+        target=None, op=None, transform=None
+    ):
         """
         Apply a correction using correctionlib.
-
-        Parameters
-        ----------
-        name : str
-            The name of the correction set.
-        key : str
-            The key within the correction set.
-        direction : str
-            Direction of the variation ('up', 'down', or 'nominal').
-        correction_arguments : list
-            List of arguments to pass to the correction.
-        target : array-like, optional
-            Target array to apply the correction to (if using an operation).
-        op : str, optional
-            Operation to apply ('add' or 'mult').
-        transform : callable, optional
-            Transformation function to apply to correction_arguments before evaluation.
-
-        Returns
-        -------
-        array-like
-            The corrected array or correction result.
         """
-        logger.info(f"Applying correctionlib correction: name={name}, key={key}, direction={direction}")
-
+        logger.info(
+            f"Applying correctionlib correction: name={name}, "
+            f"key={key}, direction={direction}"
+        )
         if transform is not None:
             correction_arguments = transform(*correction_arguments)
 
@@ -332,114 +268,133 @@ class ZprimeAnalysis:
             else:
                 flat_args.append(arg)
 
-        correction = self.corrlib_evaluators[name][key].evaluate(*flat_args, direction)
+        correction = self.corrlib_evaluators[name][key].evaluate(
+            *flat_args, direction
+        )
 
-        if counts_to_unflatten != []:
-            unflattened_corr = ak.unflatten(correction, counts_to_unflatten[0])
-        else:
-            unflattened_corr = correction
+        if counts_to_unflatten:
+            correction = ak.unflatten(
+                correction, counts_to_unflatten[0]
+            )
 
         if target is not None and op is not None:
-            return self.apply_op(op, target, unflattened_corr)
-        return unflattened_corr
+            if isinstance(target, list):
+                return [
+                    self.apply_op(op, t, correction) for t in target
+                ]
+            else:
+                return self.apply_op(op, target, correction)
 
-    def apply_object_corrections(self, object_copies, corrections, direction="nominal"):
+        return correction
+
+    def apply_syst_fn(self, name, fn, args, affects, op):
+        """
+        Apply function-based systematic variation.
+        """
+        logger.debug(f"Applying function-based systematic: {name}")
+        correction = fn(*args)
+        if isinstance(affects, list):
+            return [
+                self.apply_op(op, a, correction) for a in affects
+            ]
+        else:
+            return self.apply_op(op, affects, correction)
+
+    def apply_op(self, op, lhs, rhs):
+        """
+        Apply a binary operation.
+        """
+        if op == "add":
+            return lhs + rhs
+        elif op == "mult":
+            return lhs * rhs
+        else:
+            raise ValueError(f"Unsupported operation: {op}")
+
+    def _get_correction_arguments(self, use, object_copies):
+        """
+        Extract correction arguments from object_copies.
+        """
+        return [object_copies[obj][var] for obj, var in use]
+
+    def _get_targets(self, target, object_copies):
+        """
+        Extract one or more target arrays from object_copies.
+        """
+        targets = target if isinstance(target, list) else [target]
+        return [object_copies[obj][var] for obj, var in targets]
+
+    def _set_targets(self, target, object_copies, new_values):
+        """
+        Set corrected values in object_copies.
+        """
+        targets = target if isinstance(target, list) else [target]
+        for (obj, var), val in zip(targets, new_values):
+            object_copies[obj][var] = val
+
+    def apply_object_corrections(
+        self, object_copies, corrections, direction="nominal"
+    ):
         """
         Apply object-level corrections to input object copies.
-
-        Parameters
-        ----------
-        object_copies : dict
-            Dictionary of objects.
-        corrections : list
-            List of systematic/correction dicts.
-        direction : str
-            'nominal', 'up', or 'down'.
-
-        Returns
-        -------
-        dict
-            Corrected object copies.
         """
         for corr in corrections:
             if corr["type"] != "object":
                 continue
-            use_lib = corr.get("use_correctionlib", False)
-            correction_arguments = []
-            for use_from_object in corr.get("use", []):
-                if isinstance(use_from_object, tuple) and len(use_from_object) == 2:
-                    correction_arguments.append(object_copies[use_from_object[0]][use_from_object[1]])
-                else:
-                    raise ValueError(f"Invalid 'use' field: {use_from_object}")
-
+            args = self._get_correction_arguments(
+                corr["use"], object_copies
+            )
+            targets = self._get_targets(corr["target"], object_copies)
+            op = corr["op"]
             key = corr.get("key")
-            op = corr.get("op")
-            target = object_copies[corr["target"][0]][corr["target"][1]]
             transform = corr.get("transform", lambda *x: x)
             dir_map = corr.get("up_and_down_idx", ["up", "down"])
-            corr_dir = dir_map[0 if direction == "up" else 1] if direction in ["up", "down"] else "nominal"
-            if use_lib:
-                object_copies[corr["target"][0]][corr["target"][1]] = self.apply_correctionlib(
-                    corr["name"], key, corr_dir, correction_arguments, target, op, transform
+            corr_dir = dir_map[0 if direction == "up" else 1] \
+                if direction in ["up", "down"] else "nominal"
+
+            if corr.get("use_correctionlib", False):
+                corrected = self.apply_correctionlib(
+                    corr["name"], key, corr_dir, args,
+                    targets, op, transform
                 )
             else:
                 fn = corr.get(f"{direction}_function")
-                if fn:
-                    object_copies[corr["target"][0]][corr["target"][1]] = self.apply_syst_fn(
-                        corr["name"], fn, correction_arguments, target, op
-                    )
+                corrected = self.apply_syst_fn(
+                    corr["name"], fn, args, targets, op
+                ) if fn else targets
+
+            self._set_targets(corr["target"], object_copies, corrected)
+
         return object_copies
 
-    def apply_event_weight_correction(self, weights, systematic, direction, object_copies):
+    def apply_event_weight_correction(
+        self, weights, systematic, direction, object_copies
+    ):
         """
         Apply event-level correction to weights.
-
-        Parameters
-        ----------
-        weights : ak.Array
-            Event weights.
-        systematic : dict
-            Systematic configuration.
-        direction : str
-            Direction: 'up' or 'down'.
-        object_copies : dict
-            Object copies dictionary.
-
-        Returns
-        -------
-        ak.Array
-            Corrected event weights.
         """
         if systematic["type"] != "event":
             return weights
-        use_correctionlib = systematic.get("use_correctionlib", False)
-        correction_arguments = []
-        for use_from_object in systematic.get("use", []):
-            if isinstance(use_from_object, tuple) and len(use_from_object) == 2:
-                correction_arguments.append(object_copies[use_from_object[0]][use_from_object[1]])
-            else:
-                raise ValueError(f"Invalid 'use' field: {use_from_object}")
 
+        args = self._get_correction_arguments(
+            systematic["use"], object_copies
+        )
+        op = systematic["op"]
+        key = systematic.get("key")
+        transform = systematic.get("transform", lambda *x: x)
+        dir_map = systematic.get("up_and_down_idx", ["up", "down"])
+        corr_dir = dir_map[0 if direction == "up" else 1]
 
-        correction_key = systematic.get("key")
-        correction_operation = systematic.get("op")
-        direction_map = systematic.get("up_and_down_idx", ["up", "down"])
-        correctionlib_direction = direction_map[0 if direction == "up" else 1]
-        transform_function = systematic.get("transform", lambda *x: x)
-
-        if use_correctionlib:
+        if systematic.get("use_correctionlib", False):
             return self.apply_correctionlib(
-                systematic["name"],
-                correction_key,
-                correctionlib_direction,
-                correction_arguments,
-                target=weights,
-                op=correction_operation,
-                transform=transform_function
+                systematic["name"], key, corr_dir, args,
+                weights, op, transform
             )
         else:
-            correction_function = systematic.get(f"{direction}_function")
-            return self.apply_syst_fn(systematic["name"], correction_function, correction_arguments, weights, correction_operation) if correction_function else weights
+            fn = systematic.get(f"{direction}_function")
+            return self.apply_syst_fn(
+                systematic["name"], fn, args, weights, op
+            ) if fn else weights
 
     def apply_selection_and_fill(self, object_copies, events, process, variation, hist_dict, xsec_weight, analysis, event_syst=None, direction="nominal"):
         """
@@ -615,6 +570,7 @@ def main():
     Loads configuration, runs preprocessing, and dispatches analysis over datasets.
     """
     config = utils.configuration.config
+    config = Config(**config)
     analysis = ZprimeAnalysis(config)
     fileset = construct_fileset(n_files_max_per_sample=MAX_FILES_PER_SAMPLE)
 
@@ -650,13 +606,6 @@ def main():
 
     logger.info("✅ All datasets processed.")
     save_histograms(analysis.nD_hists_per_region, output_file="output/histograms/histograms.root")
-
-    # logger.info("📊 Final histogram (Zprime_channel, signal):")
-    # logger.info(analysis.nD_hists_per_region["Zprime_channel"][:, "signal", "nominal"])
-    # logger.info(analysis.nD_hists_per_region["Zprime_channel"][:, "signal", "muon_id_sf_up"])
-    # logger.info(analysis.nD_hists_per_region["Zprime_channel"][:, "signal", "pu_weight_up"])
-
-
 
 if __name__ == "__main__":
     main()

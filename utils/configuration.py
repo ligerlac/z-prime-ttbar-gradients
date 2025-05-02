@@ -42,7 +42,7 @@ config = {
             "up_function": jet_pt_resolution,
             "target": ("Jet", "pt"),
             "use": [("Jet", "pt")],
-            "symmetrise": True,
+            "symmetrise": True, # not implemented
             "op": "mult", # or add or subtract
             "type": "object",
         },
@@ -50,7 +50,7 @@ config = {
             "name": "jet_pt_scale",
             "up_function": jet_pt_scale,
             "target": ("Jet", "pt"),
-            "symmetrise": True,
+            "symmetrise": True, # not implemented
             "op": "mult", # or add or subtract
             "type": "object",
         },
