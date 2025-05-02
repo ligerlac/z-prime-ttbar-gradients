@@ -5,6 +5,22 @@ config = {
     "general": {
         "lumi": 16400,
         "weights_branch": "genWeight",
+        "max_files": 1,
+        "run_preprocessing": True,
+        "run_histogramming": False,
+        "output_dir": "output/",
+    },
+    "preprocess": {
+        "branches": {
+            "Muon":     ["pt", "eta", "phi", "mass", "miniIsoId", "tightId", "charge"],
+            "FatJet":   ["particleNet_TvsQCD", "pt", "eta", "phi", "mass", "charge"],
+            "Jet":      ["btagDeepB", "jetId", "pt", "eta", "phi", "mass", "charge"],
+            "PuppiMET": ["pt", "phi"],
+            "HLT":      ["TkMu50"],
+            "Pileup":   ["nTrueInt"],
+            "event":    ["genWeight", "event", "run", "luminosityBlock"],
+        },
+        "ignore_missing": False,
     },
     "channels": [
         {

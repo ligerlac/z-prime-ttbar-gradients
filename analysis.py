@@ -39,10 +39,6 @@ logger = logging.getLogger("ZprimeAnalysis")
 NanoAODSchema.warn_missing_crossrefs = False
 warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
 
-RUN_PREPROCESS = False
-RUN_HISTOGRAMS = True
-MAX_FILES_PER_SAMPLE = 1
-
 def is_jagged(arraylike) -> bool:
     try:
         return ak.num(arraylike, axis=1) is not None
@@ -52,7 +48,7 @@ def is_jagged(arraylike) -> bool:
 # -----------------------------
 # Branch Selection
 # -----------------------------
-def build_branches_to_keep():
+def build_branches_to_keep(configuration):
     """
     Define the branches to retain during pre-processing.
 
@@ -61,20 +57,12 @@ def build_branches_to_keep():
     dict
         Dictionary mapping object names to lists of branch names.
     """
-    return {
-        "Muon": ["pt", "eta", "phi", "mass", "miniIsoId", "tightId", "charge"],
-        "FatJet": ["particleNet_TvsQCD", "pt", "eta", "phi", "mass", "charge"],
-        "Jet": ["btagDeepB", "jetId", "pt", "eta", "phi", "mass", "charge"],
-        "PuppiMET": ["pt", "phi"],
-        "HLT": ["TkMu50"],
-        "Pileup": ["nTrueInt"],
-        "event": ["genWeight", "event", "run", "luminosityBlock"],
-    }
+    return configuration.preprocess.branches
 
 # -----------------------------
 # Preprocessing Logic
 # -----------------------------
-def pre_process(input_path, tree, output_path, step_size=100_000):
+def pre_process(input_path, tree, output_path, configuration, step_size=100_000):
     """
     Preprocess input ROOT file by applying basic filtering and reducing branches.
 
@@ -100,7 +88,7 @@ def pre_process(input_path, tree, output_path, step_size=100_000):
     logger.info("========================================")
     logger.info(f"📂 Preprocessing file: {input_path} with {total_events:,} events")
 
-    branches = build_branches_to_keep()
+    branches = build_branches_to_keep(configuration)
     selected = None
 
     for start in range(0, total_events, step_size):
@@ -111,7 +99,8 @@ def pre_process(input_path, tree, output_path, step_size=100_000):
             schemaclass=NanoAODSchema,
             entry_start=start,
             entry_stop=stop,
-            delayed=True
+            delayed=True,
+            #xrootd_handler= uproot.source.xrootd.MultithreadedXRootDSource,
         ).events()
 
         mu_sel = (
@@ -572,10 +561,10 @@ def main():
     config = utils.configuration.config
     config = Config(**config)
     analysis = ZprimeAnalysis(config)
-    fileset = construct_fileset(n_files_max_per_sample=MAX_FILES_PER_SAMPLE)
+    fileset = construct_fileset(n_files_max_per_sample=config.general.max_files)
 
     for dataset, content in fileset.items():
-        os.makedirs(f"output/{dataset}", exist_ok=True)
+        os.makedirs(f"{config.general.output_dir}/{dataset}", exist_ok=True)
         metadata = content["metadata"]
         metadata["dataset"] = dataset
 
@@ -584,18 +573,18 @@ def main():
 
         for idx, (file_path, tree) in enumerate(content["files"].items()):
             output_dir = f"output/{dataset}/file__{idx}/"
-            if idx >= MAX_FILES_PER_SAMPLE:  continue
+            if idx >= config.general.max_files:  continue
 
-            if RUN_PREPROCESS:
+            if config.general.run_preprocessing:
                 logger.info(f"🔍 Preprocessing input file: {file_path}")
                 logger.info(f"➡️  Writing to: {output_dir}")
-                pre_process(file_path, tree, output_dir)
+                pre_process(file_path, tree, output_dir, config)
 
             skimmed_files = glob.glob(f"{output_dir}/part*.root")
             skimmed_files = [f"{f}:{tree}" for f in skimmed_files]
             remaining = sum(uproot.open(f).num_entries for f in skimmed_files)
             logger.info(f"✅ Events retained after filtering: {remaining:,}")
-            if RUN_HISTOGRAMS:
+            if config.general.run_histogramming:
                 for skimmed in skimmed_files:
                     logger.info(f"📘 Processing skimmed file: {skimmed}")
                     events = NanoEventsFactory.from_root(skimmed, schemaclass=NanoAODSchema, delayed=False).events()
@@ -605,7 +594,7 @@ def main():
         logger.info(f"🏁 Finished dataset: {dataset}\n")
 
     logger.info("✅ All datasets processed.")
-    save_histograms(analysis.nD_hists_per_region, output_file="output/histograms/histograms.root")
+    save_histograms(analysis.nD_hists_per_region, output_file=f"{config.general.output_dir}/histograms/histograms.root")
 
 if __name__ == "__main__":
     main()

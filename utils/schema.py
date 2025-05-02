@@ -30,6 +30,39 @@ class GeneralConfig(SubscriptableModel):
         str,
         Field(description="Branch name for event weight")
     ]
+    max_files: Annotated[
+        Optional[int],
+        Field(default=1, description="Maximum number of files to process")
+    ]
+    run_preprocessing: Annotated[
+        bool,
+        Field(default=False, description="Whether to run preprocessing step")
+    ]
+    run_histogramming: Annotated[
+        bool,
+        Field(default=True, description="Whether to run histogramming step")
+    ]
+    output_dir: Annotated[
+        Optional[str],
+        Field(default="output/", description="Directory for output files")
+    ]
+
+# ------------------------
+# Preprocessing configuration
+# ------------------------
+class PreprocessConfig(SubscriptableModel):
+    branches: Annotated[
+        dict[str, List[str]],
+        Field(description="Branches to keep per NanoAOD object. "
+              "'event' refers to non-collection branches.")
+    ]
+    ignore_missing: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="If True, missing branches are ignored."
+        )
+    ]
 
 # ------------------------
 # Channel configuration
@@ -222,3 +255,28 @@ class Config(SubscriptableModel):
         List[SystematicConfig],
         Field(description="Systematic variations to apply")
     ]
+    preprocess: Annotated[
+        Optional[PreprocessConfig],
+        Field(default=None, description="Preprocessing settings")
+    ]
+
+    @model_validator(mode="after")
+    def validate_config(self) -> "Config":
+        # Check for duplicate channel names
+        channel_names = [channel.name for channel in self.channels]
+        if len(channel_names) != len(set(channel_names)):
+            raise ValueError("Duplicate channel names found in configuration.")
+
+        # Check for duplicate correction names
+        correction_names = [correction.name for correction in self.corrections]
+        if len(correction_names) != len(set(correction_names)):
+            raise ValueError("Duplicate correction names found in configuration.")
+
+        # Check for duplicate systematic names
+        systematic_names = [systematic.name for systematic in self.systematics]
+        if len(systematic_names) != len(set(systematic_names)):
+            raise ValueError("Duplicate systematic names found in configuration.")
+
+        if self.general.run_preprocessing and not self.preprocess:
+            raise ValueError("Preprocessing is enabled but no preprocess configuration provided.")
+        return self
