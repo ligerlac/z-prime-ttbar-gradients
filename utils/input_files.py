@@ -44,7 +44,6 @@ def construct_fileset(n_files_max_per_sample):
             nevts_total = sum([f["nevts"] for f in file_list])
             nevts_wt_total = sum([f["nevts_wt"] for f in file_list])
 
-            print(process, nevts_total)
             metadata = {"process": process, "variation": variation, "nevts": nevts_total, "nevts_wt": nevts_wt_total, "xsec": xsec_info[process]}
             fileset.update({f"{process}__{variation}": {"files": file_paths, "metadata": metadata}})
 

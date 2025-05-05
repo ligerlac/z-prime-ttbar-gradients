@@ -5,10 +5,11 @@ config = {
     "general": {
         "lumi": 16400,
         "weights_branch": "genWeight",
-        "max_files": 1,
+        "max_files": -1,
         "run_preprocessing": True,
         "run_histogramming": False,
         "output_dir": "output/",
+        "preprocessed_dir": "/eos/user/l/ligerlac/z-prime-ttbar-data/",
     },
     "preprocess": {
         "branches": {
@@ -21,6 +22,10 @@ config = {
             "event":    ["genWeight", "event", "run", "luminosityBlock"],
         },
         "ignore_missing": False,
+        "mc_branches": {
+            "event": ["genWeight", "luminosityBlock"],
+            "Pileup": ["nTrueInt"],
+        }
     },
     "channels": [
         {

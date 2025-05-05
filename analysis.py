@@ -9,34 +9,34 @@ correctionlib-based and function-based corrections.
 import os
 import glob
 import gzip
-import logging
-import warnings
 import copy
 
 import numpy as np
 import awkward as ak
 import uproot
 import hist
-import dask_awkward as dak
 
 from coffea.analysis_tools import PackedSelection
 from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
 from correctionlib import CorrectionSet
 
-import utils
 from utils.input_files import construct_fileset
 from utils.output_files import save_histograms
+from utils.configuration import config as ZprimeConfig
+from utils.preproc import pre_process_dak, pre_process_uproot
 from utils.schema import Config
 
 # -----------------------------
 # Logging Configuration
 # -----------------------------
+import logging
 logging.basicConfig(
     level=logging.INFO,
     format="[%(levelname)s] %(message)s"
 )
 logger = logging.getLogger("ZprimeAnalysis")
 
+import warnings
 NanoAODSchema.warn_missing_crossrefs = False
 warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
 
@@ -46,97 +46,10 @@ def is_jagged(arraylike) -> bool:
     except Exception:
         return False
 
-# -----------------------------
-# Branch Selection
-# -----------------------------
-def build_branches_to_keep(configuration):
-    """
-    Define the branches to retain during pre-processing.
-
-    Returns
-    -------
-    dict
-        Dictionary mapping object names to lists of branch names.
-    """
-    return configuration.preprocess.branches
-
-# -----------------------------
-# Preprocessing Logic
-# -----------------------------
-def pre_process(input_path, tree, output_path, configuration, step_size=100_000):
-    """
-    Preprocess input ROOT file by applying basic filtering and reducing branches.
-
-    Parameters
-    ----------
-    input_path : str
-        Path to the input ROOT file.
-    tree : str
-        Name of the TTree inside the file.
-    output_path : str
-        Destination directory for filtered output.
-    step_size : int
-        Chunk size to load events incrementally.
-
-    Returns
-    -------
-    int
-        Total number of input events before filtering.
-    """
-    with uproot.open(f"{input_path}:{tree}") as f:
-        total_events = f.num_entries
-
-    logger.info("========================================")
-    logger.info(f"📂 Preprocessing file: {input_path} with {total_events:,} events")
-
-    branches = build_branches_to_keep(configuration)
-    selected = None
-
-    for start in range(0, total_events, step_size):
-        stop = min(start + step_size, total_events)
-
-        events = NanoEventsFactory.from_root(
-            {input_path: tree},
-            schemaclass=NanoAODSchema,
-            entry_start=start,
-            entry_stop=stop,
-            delayed=True,
-            #xrootd_handler= uproot.source.xrootd.MultithreadedXRootDSource,
-        ).events()
-
-        mu_sel = (
-            (events.Muon.pt > 55) &
-            (abs(events.Muon.eta) < 2.4) &
-            events.Muon.tightId &
-            (events.Muon.miniIsoId > 1)
-        )
-        muon_count = ak.sum(mu_sel, axis=1)
-        mask = (
-            events.HLT.TkMu50 &
-            (muon_count == 1) &
-            (events.PuppiMET.pt > 50)
-        )
-
-        filtered = events[mask]
-
-        subset = {}
-        for obj, obj_branches in branches.items():
-            if obj == "event":
-                subset.update({br: filtered[br] for br in obj_branches if br in filtered.fields})
-            elif obj in filtered.fields:
-                subset.update({f"{obj}_{br}": filtered[obj][br] for br in obj_branches if br in filtered[obj].fields})
-
-        compact = dak.zip(subset, depth_limit=1)
-        selected = compact if selected is None else ak.concatenate([selected, compact])
-
-    logger.info(f"💾 Writing skimmed output to: {output_path}")
-    uproot.dask_write(selected, destination=output_path, compute=True, tree_name=tree)
-    return total_events
 
 # -----------------------------
 # ZprimeAnalysis Class Definition
 # -----------------------------
-
 class ZprimeAnalysis:
     def __init__(self, config):
         """
@@ -525,8 +438,7 @@ def main():
     Main driver function for running the Zprime analysis framework.
     Loads configuration, runs preprocessing, and dispatches analysis over datasets.
     """
-    config = utils.configuration.config
-    config = Config(**config)
+    config = Config(**ZprimeConfig)
     analysis = ZprimeAnalysis(config)
     fileset = construct_fileset(n_files_max_per_sample=config.general.max_files)
 
@@ -539,13 +451,15 @@ def main():
         logger.info(f"🚀 Processing dataset: {dataset}")
 
         for idx, (file_path, tree) in enumerate(content["files"].items()):
-            output_dir = f"output/{dataset}/file__{idx}/"
-            if idx >= config.general.max_files:  continue
-
+            output_dir = f"output/{dataset}/file__{idx}/" if not config.general.preprocessed_dir else f"{config.general.preprocessed_dir}/{dataset}/file__{idx}/"
+            if config.general.max_files != -1 and idx >= config.general.max_files:  continue
             if config.general.run_preprocessing:
                 logger.info(f"🔍 Preprocessing input file: {file_path}")
                 logger.info(f"➡️  Writing to: {output_dir}")
-                pre_process(file_path, tree, output_dir, config)
+                if config.general.preprocessor == "uproot":
+                    pre_process_uproot(file_path, tree, output_dir, config, logger=logger, is_mc=(dataset != "data"))
+                elif config.general.preprocessor == "dask":
+                    pre_process_dak(file_path, tree, output_dir+f"/part{idx}.root", config, logger=logger, is_mc=(dataset != "data"))
 
             skimmed_files = glob.glob(f"{output_dir}/part*.root")
             skimmed_files = [f"{f}:{tree}" for f in skimmed_files]

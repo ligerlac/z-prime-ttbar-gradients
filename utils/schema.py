@@ -46,6 +46,15 @@ class GeneralConfig(SubscriptableModel):
         Optional[str],
         Field(default="output/", description="Directory for output files")
     ]
+    preprocessor: Annotated[
+        Literal["uproot", "dak"],
+        Field(default="uproot", description="Preprocessor to use")
+    ]
+    preprocessed_dir: Annotated[
+        Optional[str],
+        Field(default=None, description="Directory containing preprocessed files")
+        ]
+
 
 # ------------------------
 # Preprocessing configuration
@@ -63,6 +72,40 @@ class PreprocessConfig(SubscriptableModel):
             description="If True, missing branches are ignored."
         )
     ]
+    mc_branches: Annotated[
+        dict[str, List[str]],
+        Field(description="Branches to keep for MC only. "
+              "'event' refers to non-collection branches.")
+    ]
+
+    @model_validator(mode="after")
+    def validate_branches(self) -> "PreprocessConfig":
+        # check for duplicate objects in branches
+        if len(list(self.branches.keys())) != len(set(self.branches.keys()):
+            raise ValueError(f"Duplicate objects found in branch list.")
+        # check for duplicate objects in mc_branches
+        if len(list(self.mc_branches.keys())) != len(set(self.mc_branches.keys())):
+            raise ValueError(f"Duplicate objects found in mc_branch list.")
+
+        # Check for duplicate branches in the same object in branches
+        for obj, obj_branches in self.branches.items():
+            if len(obj_branches) != len(set(obj_branches)):
+                raise ValueError(f"Duplicate branches found in '{obj}'.")
+
+        # Check for duplicate branches in the same object in mc_branches
+        for obj, obj_branches in self.mc_branches.items():
+            if len(obj_branches) != len(set(obj_branches)):
+                raise ValueError(f"Duplicate branches found in '{obj}'.")
+
+        # check that MC branches are in branches
+        for obj, obj_branches in self.mc_branches.items():
+            if obj not in self.branches:
+                raise ValueError(f"'{obj}' is not present in branches.")
+            for br in obj_branches:
+                if br not in self.branches[obj]:
+                    raise ValueError(f"'{br}' is not present in branches for '{obj}'.")
+
+        return self
 
 # ------------------------
 # Channel configuration
