@@ -9,59 +9,44 @@ import numpy as np
 import dask_awkward as dak
 from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
 
-# -----------------------------
-# Branch Selection
-# -----------------------------
-def build_branches_to_keep(configuration, mode="uproot", is_mc=False):
+def build_branches_to_keep(config, mode="uproot", is_mc=False):
     """
-    Define the branches to retain during pre-processing.
+    Build list or dict of branches to keep for preprocessing.
+
+    Parameters
+    ----------
+    config : Config
+        Configuration object with a preprocess block.
+    mode : str
+        'uproot' returns a flat list; 'dask' returns a dict.
+    is_mc : bool
+        Whether input files are Monte Carlo.
 
     Returns
     -------
-    dict
-        Dictionary mapping object names to lists of branch names.
+    dict or list
+        Branches to retain depending on mode.
     """
-    if mode == "dak":
-        branches = configuration.preprocess.branches
-        filtered_branches  = {}
+    branches = config.preprocess.branches
+    mc_branches = config.preprocess.mc_branches
+    filtered = {}
+
+    for obj, obj_branches in branches.items():
         if not is_mc:
-            for obj, obj_branches in configuration.preprocess.mc_branches.items():
-                filtered_obj_branches = []
-                for br in obj_branches:
-                    if br in configuration.preprocess.mc_branches[obj]:
-                        continue
-                    else:
-                        filtered_obj_branches.append(br)
-
-                filtered_branches[obj] = obj_branches
+            filtered[obj] = [br for br in obj_branches if br not in mc_branches.get(obj, [])]
         else:
-            filtered_branches = branches
-        return filtered_branches
+            filtered[obj] = obj_branches
 
-    elif mode == "uproot":
-        branches_list = []
-        branches = configuration.preprocess.branches
-        filtered_branches = []
+    if mode == "dask":
+        return filtered
 
-        for obj, obj_branches in branches.items():
-            filtered_obj_branches = []
-            if not is_mc:
-                for br in obj_branches:
-                    if br in configuration.preprocess.mc_branches[obj]:
-                        continue
-                    else:
-                        filtered_obj_branches.append(br)
-            else:
-                filtered_obj_branches = obj_branches
+    if mode == "uproot":
+        flat = []
+        for obj, brs in filtered.items():
+            flat.extend(brs if obj == "event" else [f"{obj}_{br}" for br in brs])
+        return flat
 
-            if obj == "event":
-                branches_list.extend(filtered_obj_branches)
-            else:
-                branches_list.extend([f"{obj}_{br}" for br in filtered_obj_branches])
-
-        return branches_list
-    else:
-        raise ValueError("Invalid mode for constructing branches to keep. Use 'dak' or 'uproot'.")
+    raise ValueError("Invalid mode: use 'dask' or 'uproot'.")
 
 # -----------------------------
 # Preprocessing Logic with dak
