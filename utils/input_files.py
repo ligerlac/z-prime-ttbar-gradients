@@ -11,7 +11,7 @@ from pathlib import Path
 import tqdm
 import urllib
 
-def construct_fileset(n_files_max_per_sample):
+def construct_fileset(n_files_max_per_sample, preprocessor="uproot"):
 
     # using https://atlas-groupdata.web.cern.ch/atlas-groupdata/dev/AnalysisTop/TopDataPreparation/XSection-MC15-13TeV.data
     # for reference
@@ -46,5 +46,16 @@ def construct_fileset(n_files_max_per_sample):
 
             metadata = {"process": process, "variation": variation, "nevts": nevts_total, "nevts_wt": nevts_wt_total, "xsec": xsec_info[process]}
             fileset.update({f"{process}__{variation}": {"files": file_paths, "metadata": metadata}})
+        if preprocessor == "uproot":
+            file_list = file_info[process][variation]["files"]
+            a_file = file_list[0]
+            process_root_path = "/".join(a_file["path"].split("/")[:-2])
+            process_all_files = os.path.join(process_root_path, "/*/*.root")
+            nevts_total = sum([f["nevts"] for f in file_list])
+            nevts_wt_total = sum([f["nevts_wt"] for f in file_list])
+            metadata = {"process": process, "variation": variation, "nevts": nevts_total, "nevts_wt": nevts_wt_total, "xsec": xsec_info[process]}
+            file_paths = {process_all_files: "Events"}
+            fileset.update({f"{process}__{variation}": {"files": file_paths, "metadata": metadata}})
+
 
     return fileset

@@ -81,7 +81,7 @@ class PreprocessConfig(SubscriptableModel):
     @model_validator(mode="after")
     def validate_branches(self) -> "PreprocessConfig":
         # check for duplicate objects in branches
-        if len(list(self.branches.keys())) != len(set(self.branches.keys()):
+        if len(list(self.branches.keys())) != len(set(self.branches.keys())):
             raise ValueError(f"Duplicate objects found in branch list.")
         # check for duplicate objects in mc_branches
         if len(list(self.mc_branches.keys())) != len(set(self.mc_branches.keys())):

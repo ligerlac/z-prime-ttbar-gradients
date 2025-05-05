@@ -462,6 +462,7 @@ def main():
                     pre_process_dak(file_path, tree, output_dir+f"/part{idx}.root", config, logger=logger, is_mc=(dataset != "data"))
 
             skimmed_files = glob.glob(f"{output_dir}/part*.root")
+            print(output_dir, f"Skimmed files: {skimmed_files}")
             skimmed_files = [f"{f}:{tree}" for f in skimmed_files]
             remaining = sum(uproot.open(f).num_entries for f in skimmed_files)
             logger.info(f"✅ Events retained after filtering: {remaining:,}")

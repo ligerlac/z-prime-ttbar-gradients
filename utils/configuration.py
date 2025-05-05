@@ -6,10 +6,11 @@ config = {
         "lumi": 16400,
         "weights_branch": "genWeight",
         "max_files": -1,
-        "run_preprocessing": True,
-        "run_histogramming": False,
+        "run_preprocessing": False,
+        "run_histogramming": True,
         "output_dir": "output/",
-        "preprocessed_dir": "/eos/user/l/ligerlac/z-prime-ttbar-data/",
+        "preprocessed_dir": "./preproc_uproot/z-prime-ttbar-data/",
+        "processor": "uproot"
     },
     "preprocess": {
         "branches": {
