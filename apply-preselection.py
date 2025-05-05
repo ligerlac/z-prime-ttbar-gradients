@@ -1,20 +1,12 @@
 import glob
-from collections import defaultdict
 import argparse
 from tqdm import tqdm
 
 import numpy as np
-import matplotlib.pylab as plt
-import pandas as pd
 
 # scikit-hep
 import awkward as ak
 import uproot
-import vector
-vector.register_awkward()
-import correctionlib
-
-from utils import read_branch_list
 
 
 def process_with_selection(input_file, output_file, tree_name, branches, cut_str="", chunk_size=100_000):
