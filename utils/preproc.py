@@ -136,10 +136,34 @@ def pre_process_dak(input_path, tree, output_dir, configuration, step_size=100_0
     uproot.dask_write(selected, destination=output_dir, compute=True, tree_name=tree)
     return total_events
 
+# -----------------------------
+# Preprocessing Logic with uproot
+# -----------------------------
 def pre_process_uproot(input_path, tree, output_path, configuration, step_size=100_000, logger=None, is_mc=True):
     """
     Process a ROOT file by applying a selection function on chunks of data
     and saving the filtered results to a new file, with a progress bar.
+
+    Parameters
+    ----------
+    input_path : str
+        Path to the input ROOT file.
+    tree : str
+        Name of the TTree inside the file.
+    output_path : str
+        Path to the output ROOT file.
+    configuration : object
+        Configuration object containing branch selection and other settings.
+    step_size : int
+        Number of entries to process in each chunk.
+    logger : object
+        Logger object for logging messages.
+    is_mc : bool
+        Flag indicating whether the input data is from MC or not.
+    Returns
+    -------
+    bool
+        True if the output file was created successfully, False otherwise.
     """
 
     cut_str = "HLT_TkMu50*(PuppiMET_pt>50)"
