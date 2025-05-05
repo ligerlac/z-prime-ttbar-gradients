@@ -339,12 +339,11 @@ class ZprimeAnalysis:
         selections = PackedSelection(dtype='uint64')
         selections.add("dummy", ak.num(muons) > -1)
         selections.add("exactly_1mu", ak.num(muons) == 1)
-        selections.add("pass_mu_trigger", events.HLT.TkMu50)
         selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
         selections.add("met_cut", met.pt > 50)
-        selections.add("lep_ht_cut", lep_ht[:, 0] > 150)
+        selections.add("lep_ht_cut", ak.firsts(lep_ht) > 150)
         selections.add("exactly_1fatjet", ak.num(fatjets) == 1)
-        selections.add("Zprime_channel", selections.all("pass_mu_trigger", "exactly_1mu", "met_cut", "exactly_1fatjet", "lep_ht_cut", "atleast_1b"))
+        selections.add("Zprime_channel", selections.all("exactly_1mu", "met_cut", "exactly_1fatjet", "atleast_1b", "lep_ht_cut"))
         selections.add("preselection", selections.all("dummy"))
 
 
@@ -354,6 +353,7 @@ class ZprimeAnalysis:
             if ak.sum(mask) == 0:
                 logger.warning(f"{analysis}:: No events left in {chname} for {process} with variation {variation}")
                 continue
+
 
             object_copies = {collection: variable[mask] for collection, variable in object_copies.items()}
             region_muons, region_fatjets, region_jets, region_met = object_copies["Muon"], object_copies["FatJet"], object_copies["Jet"], object_copies["PuppiMET"]
@@ -375,9 +375,6 @@ class ZprimeAnalysis:
                 weights = self.apply_event_weight_correction(weights, event_syst, direction, object_copies)
 
             self.nD_hists_per_region[chname].fill(observable=mtt, process=process, variation=variation, weight=weights)
-            hist_dict[chname].fill(observable=mtt, process=process, variation=variation, weight=weights)
-
-        return hist_dict
 
     def process(self, events, metadata):
         """
@@ -412,7 +409,7 @@ class ZprimeAnalysis:
         obj_copies["Muon"], obj_copies["Jet"], obj_copies["FatJet"], obj_copies["PuppiMET"] = muons, jets, fatjets, met
         # apply nominal corrections
         obj_copies = self.apply_object_corrections(obj_copies, self.corrections, direction="nominal")
-        hist_dict = self.apply_selection_and_fill(obj_copies, events, process, "nominal", hist_dict, xsec_weight, analysis)
+        self.apply_selection_and_fill(obj_copies, events, process, "nominal", hist_dict, xsec_weight, analysis)
 
         # Systematic variations
         for syst in self.systematics + self.corrections:
@@ -426,9 +423,8 @@ class ZprimeAnalysis:
                 # apply corrections
                 obj_copies = self.apply_object_corrections(obj_copies, [syst], direction=direction)
                 varname = f"{syst['name']}_{direction}"
-                hist_dict = self.apply_selection_and_fill(obj_copies, events, process, varname, hist_dict, xsec_weight, analysis, event_syst=syst, direction=direction)
+                self.apply_selection_and_fill(obj_copies, events, process, varname, hist_dict, xsec_weight, analysis, event_syst=syst, direction=direction)
 
-        return hist_dict
 
 # -----------------------------
 # Main Driver
@@ -470,7 +466,7 @@ def main():
                 for skimmed in skimmed_files:
                     logger.info(f"📘 Processing skimmed file: {skimmed}")
                     events = NanoEventsFactory.from_root(skimmed, schemaclass=NanoAODSchema, delayed=False).events()
-                    result = analysis.process(events, metadata)
+                    analysis.process(events, metadata)
                     logger.info("📈 Histogram filling complete.")
 
         logger.info(f"🏁 Finished dataset: {dataset}\n")
