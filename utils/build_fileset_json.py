@@ -1,22 +1,28 @@
 """
-Utility to generate JSON metadata for NanoAOD ROOT files used in ZprimeTtbar analysis.
+Utility to generate JSON metadata for NanoAOD ROOT files used in
+ZprimeTtbar analysis.
 
-For each process, this script reads ROOT file paths from `.txt` files in a specified location,
-extracts the number of events per file using uproot, and stores the data in a JSON
-dictionary for downstream usage.
+For each process, this script reads ROOT file paths from `.txt` files in a
+specified location, extracts the number of events per file using uproot,
+and stores the data in a JSON dictionary for downstream usage.
 
 Based on original code from AGC repo:
-https://github.com/iris-hep/analysis-grand-challenge/blob/main/datasets/cms-open-data-2015/build_ntuple_json.py
+https://github.com/iris-hep/analysis-grand-challenge/blob/main/datasets/
+cms-open-data-2015/build_ntuple_json.py
 """
 
+from collections import defaultdict
+from glob import glob
 import json
+import logging
 import os
 import time
-from glob import glob
-from collections import defaultdict
 
-import uproot
 import awkward as ak
+import uproot
+
+
+logger = logging.getLogger(__name__)
 
 # Mapping of process names to folder paths containing .txt files listing ROOT files
 PROCESS_TO_DATASETS_FOLDER = {
@@ -28,8 +34,6 @@ PROCESS_TO_DATASETS_FOLDER = {
     "data": "datasets/data/",
 }
 
-RUN_AT_UNL = False  # Unused flag — for future extensions
-
 
 def get_paths(folder: str, recids=None) -> list[str]:
     """
@@ -40,7 +44,8 @@ def get_paths(folder: str, recids=None) -> list[str]:
 
     Args:
         folder (str): Path to the folder containing .txt files.
-        recids (Optional[int or list[int]]): Optional list of IDs for specific text files.
+        recids (Optional[int or list[int]]): Optional list of IDs for specific text
+        files.
 
     Returns:
         list[str]: List of ROOT file paths.
@@ -77,13 +82,15 @@ def num_events_list(files: list[str]) -> list[int]:
 
     for i, filename in enumerate(files):
         if i % 10 == 0 or i == len(files) - 1:
-            print(f"{i+1} / {len(files)} in {time.time() - t0:.0f} s")
+            logger.info(f"{i+1} / {len(files)} in {time.time() - t0:.0f} s")
         try:
             with uproot.open(filename) as f:
                 num_events.append(f["Events"].num_entries)
-                num_weight_events.append(float(ak.sum(f["Events"]["genWeight"].array())))
+                num_weight_events.append(
+                    float(ak.sum(f["Events"]["genWeight"].array()))
+                )
         except Exception as e:
-            print(f"Warning: Could not read {filename}: {e}")
+            logger.warning(f"Could not read {filename}: {e}")
             num_events.append(0)
             num_weight_events.append(0)
 
@@ -106,14 +113,17 @@ def update_dict(
     Returns:
         dict: Updated file_dict.
     """
-    print(f"Processing: {process}")
+    logger.info(f"Processing: {process}")
     files = get_paths(folder, recid)
     nevts_list, nevts_wt_list = num_events_list(files)
 
     file_dict[process].update(
         {
             variation: {
-                "files": [{"path": f, "nevts": n, "nevts_wt": n_wt} for f, n, n_wt in zip(files, nevts_list, nevts_wt_list)],
+                "files": [
+                    {"path": f, "nevts": n, "nevts_wt": n_wt}
+                    for f, n, n_wt in zip(files, nevts_list, nevts_wt_list)
+                ],
                 "nevts_total": sum(nevts_list),
                 "nevts_wt_total": sum(nevts_wt_list),
             }
@@ -122,7 +132,10 @@ def update_dict(
 
     os.makedirs("datasets/nanoaods_jsons_per_proces", exist_ok=True)
     # Create partial backup JSON file
-    write_to_file(file_dict, f"datasets/nanoaods_jsons_per_proces/nanoaods_{process}_{variation}.json")
+    write_to_file(
+        file_dict,
+        f"datasets/nanoaods_jsons_per_proces/nanoaods_{process}_{variation}.json",
+    )
 
     return file_dict
 
@@ -145,7 +158,9 @@ if __name__ == "__main__":
     file_dict = defaultdict(dict)
 
     for process, folder in PROCESS_TO_DATASETS_FOLDER.items():
-        update_dict(file_dict, process, folder, variation="nominal", recid=None)
+        update_dict(
+            file_dict, process, folder, variation="nominal", recid=None
+        )
 
     # Final master JSON
     write_to_file(file_dict, "datasets/nanoaods.json")

@@ -30,15 +30,15 @@ from utils.schema import Config
 # Logging Configuration
 # -----------------------------
 import logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(levelname)s] %(message)s"
-)
+
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger("ZprimeAnalysis")
 
 import warnings
+
 NanoAODSchema.warn_missing_crossrefs = False
 warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
+
 
 def is_jagged(arraylike) -> bool:
     try:
@@ -84,7 +84,9 @@ class ZprimeAnalysis:
 
             if isinstance(binning, str):
                 low, high, nbins = map(float, binning.split(","))
-                axis = hist.axis.Regular(int(nbins), low, high, name="observable", label=label)
+                axis = hist.axis.Regular(
+                    int(nbins), low, high, name="observable", label=label
+                )
             else:
                 axis = hist.axis.Variable(binning, name="observable", label=label)
 
@@ -92,7 +94,7 @@ class ZprimeAnalysis:
                 axis,
                 hist.axis.StrCategory([], name="process", growth=True),
                 hist.axis.StrCategory([], name="variation", growth=True),
-                storage=hist.storage.Weight()
+                storage=hist.storage.Weight(),
             )
         return histograms
 
@@ -122,7 +124,6 @@ class ZprimeAnalysis:
 
         return evaluators
 
-
     def get_object_copies(self, events):
         """
         Extract a dictionary of objects from the NanoEvents array.
@@ -141,17 +142,41 @@ class ZprimeAnalysis:
 
     def get_good_objects(self, object_copies):
 
-        muons, jets, fatjets, met = object_copies["Muon"], object_copies["Jet"], object_copies["FatJet"], object_copies["PuppiMET"]
-        muons = muons[(muons.pt > 55) & (abs(muons.eta) < 2.4) & muons.tightId & (muons.miniIsoId > 1)]
-        jets = jets[(jets.pt > 30) & (abs(jets.eta) < 2.4) & jets.isTightLeptonVeto & (jets.jetId >= 4)]
-        fatjets = fatjets[(fatjets.pt > 200) & (abs(fatjets.eta) < 2.4) & (fatjets.particleNet_TvsQCD > 0.5)]
+        muons, jets, fatjets, met = (
+            object_copies["Muon"],
+            object_copies["Jet"],
+            object_copies["FatJet"],
+            object_copies["PuppiMET"],
+        )
+        muons = muons[
+            (muons.pt > 55)
+            & (abs(muons.eta) < 2.4)
+            & muons.tightId
+            & (muons.miniIsoId > 1)
+        ]
+        jets = jets[
+            (jets.pt > 30)
+            & (abs(jets.eta) < 2.4)
+            & jets.isTightLeptonVeto
+            & (jets.jetId >= 4)
+        ]
+        fatjets = fatjets[
+            (fatjets.pt > 200)
+            & (abs(fatjets.eta) < 2.4)
+            & (fatjets.particleNet_TvsQCD > 0.5)
+        ]
 
         return muons, jets, fatjets, met
 
-
     def apply_correctionlib(
-        self, name, key, direction, correction_arguments,
-        target=None, op=None, transform=None
+        self,
+        name,
+        key,
+        direction,
+        correction_arguments,
+        target=None,
+        op=None,
+        transform=None,
     ):
         """
         Apply a correction using correctionlib.
@@ -171,20 +196,14 @@ class ZprimeAnalysis:
             else:
                 flat_args.append(arg)
 
-        correction = self.corrlib_evaluators[name][key].evaluate(
-            *flat_args, direction
-        )
+        correction = self.corrlib_evaluators[name][key].evaluate(*flat_args, direction)
 
         if counts_to_unflatten:
-            correction = ak.unflatten(
-                correction, counts_to_unflatten[0]
-            )
+            correction = ak.unflatten(correction, counts_to_unflatten[0])
 
         if target is not None and op is not None:
             if isinstance(target, list):
-                return [
-                    self.apply_op(op, t, correction) for t in target
-                ]
+                return [self.apply_op(op, t, correction) for t in target]
             else:
                 return self.apply_op(op, target, correction)
 
@@ -197,9 +216,7 @@ class ZprimeAnalysis:
         logger.debug(f"Applying function-based systematic: {name}")
         correction = fn(*args)
         if isinstance(affects, list):
-            return [
-                self.apply_op(op, a, correction) for a in affects
-            ]
+            return [self.apply_op(op, a, correction) for a in affects]
         else:
             return self.apply_op(op, affects, correction)
 
@@ -235,36 +252,36 @@ class ZprimeAnalysis:
         for (obj, var), val in zip(targets, new_values):
             object_copies[obj][var] = val
 
-    def apply_object_corrections(
-        self, object_copies, corrections, direction="nominal"
-    ):
+    def apply_object_corrections(self, object_copies, corrections, direction="nominal"):
         """
         Apply object-level corrections to input object copies.
         """
         for corr in corrections:
             if corr["type"] != "object":
                 continue
-            args = self._get_correction_arguments(
-                corr["use"], object_copies
-            )
+            args = self._get_correction_arguments(corr["use"], object_copies)
             targets = self._get_targets(corr["target"], object_copies)
             op = corr["op"]
             key = corr.get("key")
             transform = corr.get("transform", lambda *x: x)
             dir_map = corr.get("up_and_down_idx", ["up", "down"])
-            corr_dir = dir_map[0 if direction == "up" else 1] \
-                if direction in ["up", "down"] else "nominal"
+            corr_dir = (
+                dir_map[0 if direction == "up" else 1]
+                if direction in ["up", "down"]
+                else "nominal"
+            )
 
             if corr.get("use_correctionlib", False):
                 corrected = self.apply_correctionlib(
-                    corr["name"], key, corr_dir, args,
-                    targets, op, transform
+                    corr["name"], key, corr_dir, args, targets, op, transform
                 )
             else:
                 fn = corr.get(f"{direction}_function")
-                corrected = self.apply_syst_fn(
-                    corr["name"], fn, args, targets, op
-                ) if fn else targets
+                corrected = (
+                    self.apply_syst_fn(corr["name"], fn, args, targets, op)
+                    if fn
+                    else targets
+                )
 
             self._set_targets(corr["target"], object_copies, corrected)
 
@@ -279,9 +296,7 @@ class ZprimeAnalysis:
         if systematic["type"] != "event":
             return weights
 
-        args = self._get_correction_arguments(
-            systematic["use"], object_copies
-        )
+        args = self._get_correction_arguments(systematic["use"], object_copies)
         op = systematic["op"]
         key = systematic.get("key")
         transform = systematic.get("transform", lambda *x: x)
@@ -290,16 +305,28 @@ class ZprimeAnalysis:
 
         if systematic.get("use_correctionlib", False):
             return self.apply_correctionlib(
-                systematic["name"], key, corr_dir, args,
-                weights, op, transform
+                systematic["name"], key, corr_dir, args, weights, op, transform
             )
         else:
             fn = systematic.get(f"{direction}_function")
-            return self.apply_syst_fn(
-                systematic["name"], fn, args, weights, op
-            ) if fn else weights
+            return (
+                self.apply_syst_fn(systematic["name"], fn, args, weights, op)
+                if fn
+                else weights
+            )
 
-    def apply_selection_and_fill(self, object_copies, events, process, variation, hist_dict, xsec_weight, analysis, event_syst=None, direction="nominal"):
+    def apply_selection_and_fill(
+        self,
+        object_copies,
+        events,
+        process,
+        variation,
+        hist_dict,
+        xsec_weight,
+        analysis,
+        event_syst=None,
+        direction="nominal",
+    ):
         """
         Apply physics selections and fill histograms.
 
@@ -332,49 +359,96 @@ class ZprimeAnalysis:
         if process == "data" and variation != "nominal":
             return
 
-        muons, jets, fatjets, met = object_copies["Muon"], object_copies["Jet"], object_copies["FatJet"], object_copies["PuppiMET"]
+        muons, jets, fatjets, met = (
+            object_copies["Muon"],
+            object_copies["Jet"],
+            object_copies["FatJet"],
+            object_copies["PuppiMET"],
+        )
 
         lep_ht = muons.pt + met.pt
 
-        selections = PackedSelection(dtype='uint64')
+        selections = PackedSelection(dtype="uint64")
         selections.add("dummy", ak.num(muons) > -1)
         selections.add("exactly_1mu", ak.num(muons) == 1)
         selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
         selections.add("met_cut", met.pt > 50)
         selections.add("lep_ht_cut", ak.firsts(lep_ht) > 150)
         selections.add("exactly_1fatjet", ak.num(fatjets) == 1)
-        selections.add("Zprime_channel", selections.all("exactly_1mu", "met_cut", "exactly_1fatjet", "atleast_1b", "lep_ht_cut"))
+        selections.add(
+            "Zprime_channel",
+            selections.all(
+                "exactly_1mu", "met_cut", "exactly_1fatjet", "atleast_1b", "lep_ht_cut"
+            ),
+        )
         selections.add("preselection", selections.all("dummy"))
-
 
         for channel in self.channels:
             chname = channel["name"]
             mask = selections.all(chname)
             if ak.sum(mask) == 0:
-                logger.warning(f"{analysis}:: No events left in {chname} for {process} with variation {variation}")
+                logger.warning(
+                    f"{analysis}:: No events left in {chname} for {process} with variation {variation}"
+                )
                 continue
 
-
-            object_copies = {collection: variable[mask] for collection, variable in object_copies.items()}
-            region_muons, region_fatjets, region_jets, region_met = object_copies["Muon"], object_copies["FatJet"], object_copies["Jet"], object_copies["PuppiMET"]
-            object_copies["Muon"], object_copies["FatJet"], object_copies["Jet"], object_copies["PuppiMET"] = region_muons, region_fatjets, region_jets, region_met
-            region_muons_4vec, region_jets_4vec, region_jets_4vec = [ak.zip({"pt": o.pt, "eta": o.eta, "phi": o.phi, "mass": o.mass}, with_name="Momentum4D") for o in [region_muons, region_fatjets, region_jets[:, 0]]]
+            object_copies = {
+                collection: variable[mask]
+                for collection, variable in object_copies.items()
+            }
+            region_muons, region_fatjets, region_jets, region_met = (
+                object_copies["Muon"],
+                object_copies["FatJet"],
+                object_copies["Jet"],
+                object_copies["PuppiMET"],
+            )
+            (
+                object_copies["Muon"],
+                object_copies["FatJet"],
+                object_copies["Jet"],
+                object_copies["PuppiMET"],
+            ) = (region_muons, region_fatjets, region_jets, region_met)
+            region_muons_4vec, region_jets_4vec, region_jets_4vec = [
+                ak.zip(
+                    {"pt": o.pt, "eta": o.eta, "phi": o.phi, "mass": o.mass},
+                    with_name="Momentum4D",
+                )
+                for o in [region_muons, region_fatjets, region_jets[:, 0]]
+            ]
             region_met_4vec = ak.zip(
-                {"pt": region_met.pt, "eta": 0 * region_met.pt, "phi": region_met.phi, "mass": 0},
+                {
+                    "pt": region_met.pt,
+                    "eta": 0 * region_met.pt,
+                    "phi": region_met.phi,
+                    "mass": 0,
+                },
                 with_name="Momentum4D",
             )
 
-            mtt = ak.flatten((region_muons_4vec + region_jets_4vec + region_jets_4vec + region_met_4vec).mass)
+            mtt = ak.flatten(
+                (
+                    region_muons_4vec
+                    + region_jets_4vec
+                    + region_jets_4vec
+                    + region_met_4vec
+                ).mass
+            )
 
             if process != "data":
-                weights = events[mask].genWeight * xsec_weight / abs(events[mask].genWeight)
+                weights = (
+                    events[mask].genWeight * xsec_weight / abs(events[mask].genWeight)
+                )
             else:
                 weights = np.ones(len(region_met))
 
             if event_syst and process != "data":
-                weights = self.apply_event_weight_correction(weights, event_syst, direction, object_copies)
+                weights = self.apply_event_weight_correction(
+                    weights, event_syst, direction, object_copies
+                )
 
-            self.nD_hists_per_region[chname].fill(observable=mtt, process=process, variation=variation, weight=weights)
+            self.nD_hists_per_region[chname].fill(
+                observable=mtt, process=process, variation=variation, weight=weights
+            )
 
     def process(self, events, metadata):
         """
@@ -406,10 +480,19 @@ class ZprimeAnalysis:
         obj_copies = self.get_object_copies(events)
         # filter objects
         muons, jets, fatjets, met = self.get_good_objects(obj_copies)
-        obj_copies["Muon"], obj_copies["Jet"], obj_copies["FatJet"], obj_copies["PuppiMET"] = muons, jets, fatjets, met
+        (
+            obj_copies["Muon"],
+            obj_copies["Jet"],
+            obj_copies["FatJet"],
+            obj_copies["PuppiMET"],
+        ) = (muons, jets, fatjets, met)
         # apply nominal corrections
-        obj_copies = self.apply_object_corrections(obj_copies, self.corrections, direction="nominal")
-        self.apply_selection_and_fill(obj_copies, events, process, "nominal", hist_dict, xsec_weight, analysis)
+        obj_copies = self.apply_object_corrections(
+            obj_copies, self.corrections, direction="nominal"
+        )
+        self.apply_selection_and_fill(
+            obj_copies, events, process, "nominal", hist_dict, xsec_weight, analysis
+        )
 
         # Systematic variations
         for syst in self.systematics + self.corrections:
@@ -419,11 +502,28 @@ class ZprimeAnalysis:
                 obj_copies = self.get_object_copies(events)
                 # filter objects
                 muons, jets, fatjets, met = self.get_good_objects(obj_copies)
-                obj_copies["Muon"], obj_copies["Jet"], obj_copies["FatJet"], obj_copies["PuppiMET"] = muons, jets, fatjets, met
+                (
+                    obj_copies["Muon"],
+                    obj_copies["Jet"],
+                    obj_copies["FatJet"],
+                    obj_copies["PuppiMET"],
+                ) = (muons, jets, fatjets, met)
                 # apply corrections
-                obj_copies = self.apply_object_corrections(obj_copies, [syst], direction=direction)
+                obj_copies = self.apply_object_corrections(
+                    obj_copies, [syst], direction=direction
+                )
                 varname = f"{syst['name']}_{direction}"
-                self.apply_selection_and_fill(obj_copies, events, process, varname, hist_dict, xsec_weight, analysis, event_syst=syst, direction=direction)
+                self.apply_selection_and_fill(
+                    obj_copies,
+                    events,
+                    process,
+                    varname,
+                    hist_dict,
+                    xsec_weight,
+                    analysis,
+                    event_syst=syst,
+                    direction=direction,
+                )
 
 
 # -----------------------------
@@ -447,15 +547,32 @@ def main():
         logger.info(f"🚀 Processing dataset: {dataset}")
 
         for idx, (file_path, tree) in enumerate(content["files"].items()):
-            output_dir = f"output/{dataset}/file__{idx}/" if not config.general.preprocessed_dir else f"{config.general.preprocessed_dir}/{dataset}/file__{idx}/"
-            if config.general.max_files != -1 and idx >= config.general.max_files:  continue
+            output_dir = (
+                f"output/{dataset}/file__{idx}/"
+                if not config.general.preprocessed_dir
+                else f"{config.general.preprocessed_dir}/{dataset}/file__{idx}/"
+            )
+            if config.general.max_files != -1 and idx >= config.general.max_files:
+                continue
             if config.general.run_preprocessing:
                 logger.info(f"🔍 Preprocessing input file: {file_path}")
                 logger.info(f"➡️  Writing to: {output_dir}")
                 if config.general.preprocessor == "uproot":
-                    pre_process_uproot(file_path, tree, output_dir, config, logger=logger, is_mc=(dataset != "data"))
+                    pre_process_uproot(
+                        file_path,
+                        tree,
+                        output_dir,
+                        config,
+                        is_mc=(dataset != "data"),
+                    )
                 elif config.general.preprocessor == "dask":
-                    pre_process_dak(file_path, tree, output_dir+f"/part{idx}.root", config, logger=logger, is_mc=(dataset != "data"))
+                    pre_process_dak(
+                        file_path,
+                        tree,
+                        output_dir + f"/part{idx}.root",
+                        config,
+                        is_mc=(dataset != "data"),
+                    )
 
             skimmed_files = glob.glob(f"{output_dir}/part*.root")
             print(output_dir, f"Skimmed files: {skimmed_files}")
@@ -465,14 +582,20 @@ def main():
             if config.general.run_histogramming:
                 for skimmed in skimmed_files:
                     logger.info(f"📘 Processing skimmed file: {skimmed}")
-                    events = NanoEventsFactory.from_root(skimmed, schemaclass=NanoAODSchema, delayed=False).events()
+                    events = NanoEventsFactory.from_root(
+                        skimmed, schemaclass=NanoAODSchema, delayed=False
+                    ).events()
                     analysis.process(events, metadata)
                     logger.info("📈 Histogram filling complete.")
 
         logger.info(f"🏁 Finished dataset: {dataset}\n")
 
     logger.info("✅ All datasets processed.")
-    save_histograms(analysis.nD_hists_per_region, output_file=f"{config.general.output_dir}/histograms/histograms.root")
+    save_histograms(
+        analysis.nD_hists_per_region,
+        output_file=f"{config.general.output_dir}/histograms/histograms.root",
+    )
+
 
 if __name__ == "__main__":
     main()
