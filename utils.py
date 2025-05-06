@@ -2,11 +2,11 @@ import awkward as ak
 import numpy as np
 
 
-#https://github.com/cms-opendata-workshop/workshop2024-lesson-event-selection/blob/main/instructors/dpoa_workshop_utilities.py
+# https://github.com/cms-opendata-workshop/workshop2024-lesson-event-selection/blob/main/instructors/dpoa_workshop_utilities.py
 def build_lumi_mask(lumifile, tree, verbose=False):
 
     # lumifile should be the name/path of the file
-    good_luminosity_sections = ak.from_json(open(lumifile, 'rb'))
+    good_luminosity_sections = ak.from_json(open(lumifile, "rb"))
     # Pull out the good runs as integers
     good_runs = np.array(good_luminosity_sections.fields).astype(int)
 
@@ -20,9 +20,8 @@ def build_lumi_mask(lumifile, tree, verbose=False):
     all_good_blocks = ak.Array(all_good_blocks)
 
     # Get the runs and luminosity blocks from the tree
-    run = tree['run'].array()
-    lumiBlock = tree['luminosityBlock'].array()
-
+    run = tree["run"].array()
+    lumiBlock = tree["luminosityBlock"].array()
 
     # ChatGPT helped me with this part!
     # Find index of values in arr2 if those values appear in arr1
@@ -53,7 +52,6 @@ def build_lumi_mask(lumifile, tree, verbose=False):
     # and the good luminosity blocks for that run for that event
     diff = lumiBlock - all_good_blocks[good_runs_indices]
 
-
     # If the lumi block appears between any of those good block numbers,
     # then one difference will be positive and the other will be negative
     #
@@ -63,6 +61,6 @@ def build_lumi_mask(lumifile, tree, verbose=False):
     # The product will be negagive if the lumi block is in the range
     # and positive if it is not in the range
     prod_diff = ak.prod(diff, axis=2)
-    mask = ak.any(prod_diff<=0, axis=1)
+    mask = ak.any(prod_diff <= 0, axis=1)
 
     return mask
