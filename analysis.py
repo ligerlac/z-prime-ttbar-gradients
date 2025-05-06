@@ -353,10 +353,21 @@ class ZprimeAnalysis:
             "exactly_1mu": ak.num(muons) == 1,
             "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
             "met_cut": met.pt > 50,
-            "lep_ht_cut": ak.firsts(lep_ht) > 150,
+            "lep_ht_cut": ak.fill_none(ak.firsts(lep_ht) > 150, False),
             "exactly_1fatjet": ak.num(fatjets) == 1
         }
-        selections["Zprime_channel"] = jnp.prod([ak.to_jax(s) for s in selections.values()], dtype=float, axis=0)
+
+        jax_selections = [ak.to_jax(s) for s in selections.values()]
+
+        # If they're boolean masks, convert to float (0.0 or 1.0)
+        jax_selections = [jnp.array(s, dtype=float) for s in jax_selections]
+
+        # Stack into a single array along a new dimension
+        stacked = jnp.stack(jax_selections)
+
+        # Multiply along the first axis
+        selections["Zprime_channel"] = jnp.prod(stacked, axis=0)
+        # selections["Zprime_channel"] = jnp.prod([ak.to_jax(s) for s in selections.values()], dtype=float, axis=0)
         print(selections["Zprime_channel"].shape)
         selections["preselection"] = selections["dummy"]
 
