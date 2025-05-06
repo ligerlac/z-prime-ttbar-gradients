@@ -4,7 +4,7 @@ from . import build_fileset_json as build_fileset_json
 from . import configuration as configuration
 from . import input_files as input_files
 from . import output_files as output_files
-from . import prepproc as prepproc
+from . import preproc as preproc
 from . import schema as schema
 from . import systematics as systematics
 

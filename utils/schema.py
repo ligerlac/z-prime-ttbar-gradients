@@ -30,6 +30,12 @@ class GeneralConfig(SubscriptableModel):
     weights_branch: Annotated[
         str, Field(description="Branch name for event weight")
     ]
+    lumifile: Annotated[
+        str,
+        Field(
+            description="Path to JSON file with good luminosity sections",
+        ),
+    ]
     max_files: Annotated[
         Optional[int],
         Field(default=1, description="Maximum number of files to process"),

@@ -6,35 +6,37 @@ on NanoAOD ROOT files and producing histograms of observables like mtt. Supports
 correctionlib-based and function-based corrections.
 """
 
-import os
+import copy
 import glob
 import gzip
-import copy
+import logging
+import os
+import warnings
 
-import numpy as np
+
 import awkward as ak
-import uproot
-import hist
-
+import cabinetry
 from coffea.analysis_tools import PackedSelection
-from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
+from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 from correctionlib import CorrectionSet
+import hist
+import numpy as np
+import uproot
 
+from utils.configuration import config as ZprimeConfig
+from utils.cuts import lumi_mask
 from utils.input_files import construct_fileset
 from utils.output_files import save_histograms
-from utils.configuration import config as ZprimeConfig
 from utils.preproc import pre_process_dak, pre_process_uproot
 from utils.schema import Config
+from utils.stats import get_cabinetry_rebinning_router
 
 # -----------------------------
 # Logging Configuration
 # -----------------------------
-import logging
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger("ZprimeAnalysis")
-
-import warnings
 
 NanoAODSchema.warn_missing_crossrefs = False
 warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
@@ -53,12 +55,14 @@ def is_jagged(arraylike) -> bool:
 class ZprimeAnalysis:
     def __init__(self, config):
         """
-        Initialize ZprimeAnalysis with configuration for systematics, corrections, and channels.
+        Initialize ZprimeAnalysis with configuration for systematics, corrections,
+        and channels.
 
         Parameters
         ----------
         config : dict
-            Configuration dictionary with 'systematics', 'corrections', 'channels', and 'general'.
+            Configuration dictionary with 'systematics', 'corrections', 'channels',
+            and 'general'.
         """
         self.config = config
         self.channels = config["channels"]
@@ -88,7 +92,9 @@ class ZprimeAnalysis:
                     int(nbins), low, high, name="observable", label=label
                 )
             else:
-                axis = hist.axis.Variable(binning, name="observable", label=label)
+                axis = hist.axis.Variable(
+                    binning, name="observable", label=label
+                )
 
             histograms[name] = hist.Hist(
                 axis,
@@ -116,7 +122,9 @@ class ZprimeAnalysis:
 
             if path.endswith(".json.gz"):
                 with gzip.open(path, "rt") as f:
-                    evaluators[name] = CorrectionSet.from_string(f.read().strip())
+                    evaluators[name] = CorrectionSet.from_string(
+                        f.read().strip()
+                    )
             elif path.endswith(".json"):
                 evaluators[name] = CorrectionSet.from_file(path)
             else:
@@ -196,7 +204,9 @@ class ZprimeAnalysis:
             else:
                 flat_args.append(arg)
 
-        correction = self.corrlib_evaluators[name][key].evaluate(*flat_args, direction)
+        correction = self.corrlib_evaluators[name][key].evaluate(
+            *flat_args, direction
+        )
 
         if counts_to_unflatten:
             correction = ak.unflatten(correction, counts_to_unflatten[0])
@@ -252,7 +262,9 @@ class ZprimeAnalysis:
         for (obj, var), val in zip(targets, new_values):
             object_copies[obj][var] = val
 
-    def apply_object_corrections(self, object_copies, corrections, direction="nominal"):
+    def apply_object_corrections(
+        self, object_copies, corrections, direction="nominal"
+    ):
         """
         Apply object-level corrections to input object copies.
         """
@@ -321,11 +333,11 @@ class ZprimeAnalysis:
         events,
         process,
         variation,
-        hist_dict,
         xsec_weight,
         analysis,
         event_syst=None,
         direction="nominal",
+        tree="Events"
     ):
         """
         Apply physics selections and fill histograms.
@@ -340,8 +352,6 @@ class ZprimeAnalysis:
             Sample name.
         variation : str
             Systematic variation label.
-        hist_dict : dict
-            Dictionary of output histograms.
         xsec_weight : float
             Normalization weight.
         analysis : str
@@ -378,17 +388,25 @@ class ZprimeAnalysis:
         selections.add(
             "Zprime_channel",
             selections.all(
-                "exactly_1mu", "met_cut", "exactly_1fatjet", "atleast_1b", "lep_ht_cut"
+                "exactly_1mu",
+                "met_cut",
+                "exactly_1fatjet",
+                "atleast_1b",
+                "lep_ht_cut",
             ),
         )
         selections.add("preselection", selections.all("dummy"))
 
         for channel in self.channels:
             chname = channel["name"]
-            mask = selections.all(chname)
+            mask = ak.Array(selections.all(chname))
+            if process == "data":
+                mask = mask & lumi_mask(self.config.general.lumifile, events)
+
             if ak.sum(mask) == 0:
                 logger.warning(
-                    f"{analysis}:: No events left in {chname} for {process} with variation {variation}"
+                    f"{analysis}:: No events left in {chname} for {process} with "
+                    + "variation {variation}"
                 )
                 continue
 
@@ -408,7 +426,7 @@ class ZprimeAnalysis:
                 object_copies["Jet"],
                 object_copies["PuppiMET"],
             ) = (region_muons, region_fatjets, region_jets, region_met)
-            region_muons_4vec, region_jets_4vec, region_jets_4vec = [
+            region_muons_4vec, region_fatjets_4vec, region_jets_4vec = [
                 ak.zip(
                     {"pt": o.pt, "eta": o.eta, "phi": o.phi, "mass": o.mass},
                     with_name="Momentum4D",
@@ -428,7 +446,7 @@ class ZprimeAnalysis:
             mtt = ak.flatten(
                 (
                     region_muons_4vec
-                    + region_jets_4vec
+                    + region_fatjets_4vec
                     + region_jets_4vec
                     + region_met_4vec
                 ).mass
@@ -436,7 +454,9 @@ class ZprimeAnalysis:
 
             if process != "data":
                 weights = (
-                    events[mask].genWeight * xsec_weight / abs(events[mask].genWeight)
+                    events[mask].genWeight
+                    * xsec_weight
+                    / abs(events[mask].genWeight)
                 )
             else:
                 weights = np.ones(len(region_met))
@@ -447,10 +467,13 @@ class ZprimeAnalysis:
                 )
 
             self.nD_hists_per_region[chname].fill(
-                observable=mtt, process=process, variation=variation, weight=weights
+                observable=mtt,
+                process=process,
+                variation=variation,
+                weight=weights,
             )
 
-    def process(self, events, metadata):
+    def process(self, events, metadata, tree="Events"):
         """
         Run the full analysis logic on a batch of events.
 
@@ -471,6 +494,7 @@ class ZprimeAnalysis:
 
         process = metadata["process"]
         variation = metadata.get("variation", "nominal")
+        logger.debug(f"Processing {process} with variation {variation}")
         xsec = metadata["xsec"]
         n_gen = metadata["nevts"]
         lumi = self.config["general"]["lumi"]
@@ -491,7 +515,13 @@ class ZprimeAnalysis:
             obj_copies, self.corrections, direction="nominal"
         )
         self.apply_selection_and_fill(
-            obj_copies, events, process, "nominal", hist_dict, xsec_weight, analysis
+            obj_copies,
+            events,
+            process,
+            "nominal",
+            xsec_weight,
+            analysis,
+            tree=tree,
         )
 
         # Systematic variations
@@ -518,7 +548,6 @@ class ZprimeAnalysis:
                     events,
                     process,
                     varname,
-                    hist_dict,
                     xsec_weight,
                     analysis,
                     event_syst=syst,
@@ -536,7 +565,9 @@ def main():
     """
     config = Config(**ZprimeConfig)
     analysis = ZprimeAnalysis(config)
-    fileset = construct_fileset(n_files_max_per_sample=config.general.max_files)
+    fileset = construct_fileset(
+        n_files_max_per_sample=config.general.max_files
+    )
 
     for dataset, content in fileset.items():
         os.makedirs(f"{config.general.output_dir}/{dataset}", exist_ok=True)
@@ -552,7 +583,10 @@ def main():
                 if not config.general.preprocessed_dir
                 else f"{config.general.preprocessed_dir}/{dataset}/file__{idx}/"
             )
-            if config.general.max_files != -1 and idx >= config.general.max_files:
+            if (
+                config.general.max_files != -1
+                and idx >= config.general.max_files
+            ):
                 continue
             if config.general.run_preprocessing:
                 logger.info(f"🔍 Preprocessing input file: {file_path}")
@@ -575,7 +609,6 @@ def main():
                     )
 
             skimmed_files = glob.glob(f"{output_dir}/part*.root")
-            print(output_dir, f"Skimmed files: {skimmed_files}")
             skimmed_files = [f"{f}:{tree}" for f in skimmed_files]
             remaining = sum(uproot.open(f).num_entries for f in skimmed_files)
             logger.info(f"✅ Events retained after filtering: {remaining:,}")
@@ -585,15 +618,36 @@ def main():
                     events = NanoEventsFactory.from_root(
                         skimmed, schemaclass=NanoAODSchema, delayed=False
                     ).events()
-                    analysis.process(events, metadata)
+                    analysis.process(events, metadata, tree=tree)
                     logger.info("📈 Histogram filling complete.")
 
         logger.info(f"🏁 Finished dataset: {dataset}\n")
 
     logger.info("✅ All datasets processed.")
-    save_histograms(
-        analysis.nD_hists_per_region,
-        output_file=f"{config.general.output_dir}/histograms/histograms.root",
+    if config.general.run_histogramming:
+        save_histograms(
+            analysis.nD_hists_per_region,
+            output_file=f"{config.general.output_dir}/histograms/histograms.root",
+        )
+
+    cabinetry_config = cabinetry.configuration.load(
+        "cabinetry/cabinetry_config.yaml"
+    )
+    rebinning_router = get_cabinetry_rebinning_router(
+        cabinetry_config, rebinning=slice(110j, None, hist.rebin(2))
+    )
+    cabinetry.templates.build(
+        cabinetry_config, router=rebinning_router
+    )  # build the templates
+    cabinetry.templates.postprocess(
+        cabinetry_config
+    )  # optional post-processing (e.g. smoothing)
+    ws = cabinetry.workspace.build(cabinetry_config)
+    cabinetry.workspace.save(ws, "workspace.json")
+    model, data = cabinetry.model_utils.model_and_data(ws)
+    model_prediction = cabinetry.model_utils.prediction(model)
+    cabinetry.visualize.data_mc(
+        model_prediction, data, close_figure=False, config=cabinetry_config
     )
 
 

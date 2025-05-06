@@ -4,5 +4,6 @@ max-line-length = 88
 count = True
 statistics = True
 import-order-style = google
+application-import-names = utils
 # ignore whitespace before ':'
 extend-ignore = E203
