@@ -187,10 +187,12 @@ class ZprimeAnalysis:
 
         if target is not None and op is not None:
             if isinstance(target, list):
+                correction = ak.to_backend(correction, ak.backend(target[0]))
                 return [
                     self.apply_op(op, t, correction) for t in target
                 ]
             else:
+                correction = ak.to_backend(correction, ak.backend(target))
                 return self.apply_op(op, target, correction)
 
         return correction
