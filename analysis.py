@@ -345,30 +345,19 @@ class ZprimeAnalysis:
 
         lep_ht = muons.pt + met.pt
 
-        dumy = ak.num(muons) > -1
-        dumy.type.show()
-
         selections = {
             "dummy": ak.num(muons) > -1,
             "exactly_1mu": ak.num(muons) == 1,
             "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
-            "met_cut": met.pt > 50,
+            # "met_cut": met.pt > 50,
+            # "met_cut", relaxed.cut(met.pt, 50),  # fails - relaxed not compatible with awkward
+            "met_cut": 0.5*np.tanh((met.pt-50)/100)+0.5,
             "lep_ht_cut": ak.fill_none(ak.firsts(lep_ht) > 150, False),
             "exactly_1fatjet": ak.num(fatjets) == 1
         }
 
-        jax_selections = [ak.to_jax(s) for s in selections.values()]
-
-        # If they're boolean masks, convert to float (0.0 or 1.0)
-        jax_selections = [jnp.array(s, dtype=float) for s in jax_selections]
-
-        # Stack into a single array along a new dimension
-        stacked = jnp.stack(jax_selections)
-
-        # Multiply along the first axis
-        selections["Zprime_channel"] = jnp.prod(stacked, axis=0)
-        # selections["Zprime_channel"] = jnp.prod([ak.to_jax(s) for s in selections.values()], dtype=float, axis=0)
-        print(selections["Zprime_channel"].shape)
+        jax_selections = [jnp.array(ak.to_jax(s), dtype=float) for s in selections.values()]
+        selections["Zprime_channel"] = jnp.prod(jnp.stack(jax_selections), axis=0)
         selections["preselection"] = selections["dummy"]
 
         selections = PackedSelection(dtype='uint64')
@@ -376,8 +365,6 @@ class ZprimeAnalysis:
         selections.add("exactly_1mu", ak.num(muons) == 1)
         selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
         selections.add("met_cut", met.pt > 50)
-        # selections.add("met_cut", relaxed.cut(met.pt, 50))
-        # selections.add("met_cut", 0.5*np.tanh((met.pt-50)/2)+0.5)
         selections.add("lep_ht_cut", ak.firsts(lep_ht) > 150)
         selections.add("exactly_1fatjet", ak.num(fatjets) == 1)
         selections.add("Zprime_channel", selections.all("exactly_1mu", "met_cut", "exactly_1fatjet", "atleast_1b", "lep_ht_cut"))
