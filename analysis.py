@@ -308,7 +308,7 @@ class ZprimeAnalysis:
                 systematic["name"], fn, args, weights, op
             ) if fn else weights
 
-    def apply_selection_and_fill(self, object_copies, events, process, variation, hist_dict, xsec_weight, analysis, event_syst=None, direction="nominal"):
+    def apply_selection_and_fill(self, object_copies, events, process, variation, hist_dict, xsec_weight, analysis, met_cut, event_syst=None, direction="nominal"):
         """
         Apply physics selections and fill histograms.
 
@@ -343,40 +343,17 @@ class ZprimeAnalysis:
 
         muons, jets, fatjets, met = object_copies["Muon"], object_copies["Jet"], object_copies["FatJet"], object_copies["PuppiMET"]
 
-        lep_ht = muons.pt + met.pt
-
-        selections = {
-            "dummy": ak.num(muons) > -1,
-            "exactly_1mu": ak.num(muons) == 1,
-            "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
-            # "met_cut": met.pt > 50,
-            # "met_cut", relaxed.cut(met.pt, 50),  # fails - relaxed not compatible with awkward
-            "met_cut": 0.5*jnp.tanh((ak.to_jax(met.pt)-50)/100)+0.5,
-            "lep_ht_cut": ak.fill_none(ak.firsts(lep_ht) > 150, False),
-            "exactly_1fatjet": ak.num(fatjets) == 1
-        }
-
-        # Convert selections to JAX arrays with float dtype
-        selections = {k: jnp.array(ak.to_jax(v), dtype=float) for k, v in selections.items()}
-
-        selections["Zprime_channel"] = jnp.prod(jnp.stack(list(selections.values())), axis=0)
-        selections["preselection"] = selections["dummy"]
-
-        selections = PackedSelection(dtype='uint64')
-        selections.add("dummy", ak.num(muons) > -1)
-        selections.add("exactly_1mu", ak.num(muons) == 1)
-        selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
-        selections.add("met_cut", met.pt > 50)
-        selections.add("lep_ht_cut", ak.firsts(lep_ht) > 150)
-        selections.add("exactly_1fatjet", ak.num(fatjets) == 1)
-        selections.add("Zprime_channel", selections.all("exactly_1mu", "met_cut", "exactly_1fatjet", "atleast_1b", "lep_ht_cut"))
-        selections.add("preselection", selections.all("dummy"))
-
+        hard_cuts = PackedSelection(dtype='uint64')
+        hard_cuts.add("dummy", ak.num(muons) > -1)
+        hard_cuts.add("exactly_1mu", ak.num(muons) == 1)
+        hard_cuts.add("exactly_1fatjet", ak.num(fatjets) == 1)
+        hard_cuts.add("Zprime_channel", hard_cuts.all("exactly_1mu", "exactly_1fatjet"))
+        hard_cuts.add("preselection", hard_cuts.all("dummy"))
 
         for channel in self.channels:
-            print(f"channel {channel}")
+            print(channel)
             chname = channel["name"]
-            mask = selections.all(chname)
+            mask = hard_cuts.all(chname)
             if ak.sum(mask) == 0:
                 logger.warning(f"{analysis}:: No events left in {chname} for {process} with variation {variation}")
                 continue
@@ -392,16 +369,37 @@ class ZprimeAnalysis:
             )
 
             mtt = ak.flatten((region_muons_4vec + region_jets_4vec + region_jets_4vec + region_met_4vec).mass)
+            mtt.type.show()
+
+            region_lep_ht = region_muons.pt + region_met.pt
+
+            soft_cuts = {
+                "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1) > 0,
+                # "met_cut": met.pt > 50,
+                # "met_cut", relaxed.cut(met.pt, 50),  # fails - relaxed not compatible with awkward
+                # "met_cut": 0.5*jnp.tanh((ak.to_jax(region_met.pt)-50)/100)+0.5,
+                "met_cut": jax.nn.sigmoid((ak.to_jax(region_met.pt) - met_cut) / met_cut),
+                "lep_ht_cut": ak.fill_none(ak.firsts(region_lep_ht) > 150, False),
+            }
+
+            # Convert selections to JAX arrays with float dtype
+            soft_cuts = {k: jnp.array(ak.to_jax(v), dtype=float) for k, v in soft_cuts.items()}
+
+            weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
+
+            print("weights", weights)
 
             if process != "data":
-                weights = events[mask].genWeight * xsec_weight / abs(events[mask].genWeight)
+                weights *= events[mask].genWeight * xsec_weight / abs(events[mask].genWeight)
             else:
-                weights = np.ones(len(region_met))
+                weights *= np.ones(len(region_met))
 
             if event_syst and process != "data":
                 weights = self.apply_event_weight_correction(weights, event_syst, direction, object_copies)
 
             self.nD_hists_per_region[chname].fill(observable=mtt, process=process, variation=variation, weight=weights)
+            return sum(weights) # return some dummy value to test auto-diff
+
 
     def process(self, events, metadata):
         """
@@ -436,7 +434,10 @@ class ZprimeAnalysis:
         obj_copies["Muon"], obj_copies["Jet"], obj_copies["FatJet"], obj_copies["PuppiMET"] = muons, jets, fatjets, met
         # apply nominal corrections
         obj_copies = self.apply_object_corrections(obj_copies, self.corrections, direction="nominal")
-        self.apply_selection_and_fill(obj_copies, events, process, "nominal", hist_dict, xsec_weight, analysis)
+        apply_secetion_and_fill_grad = jax.value_and_grad(self.apply_selection_and_fill, argnums=7, has_aux=False)
+        val, grad = apply_secetion_and_fill_grad(obj_copies, events, process, variation, hist_dict, xsec_weight, analysis, 50.)
+        print(f"val: {val}, grad: {grad}")
+        self.apply_selection_and_fill(obj_copies, events, process, "nominal", hist_dict, xsec_weight, analysis, 50)
 
         # Systematic variations
         for syst in self.systematics + self.corrections:
