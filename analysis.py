@@ -15,8 +15,10 @@ import numpy as np
 import awkward as ak
 import vector
 import jax
+import jax.numpy as jnp
 import uproot
 import hist
+import relaxed
 
 vector.register_awkward()
 ak.jax.register_and_check()
@@ -343,11 +345,28 @@ class ZprimeAnalysis:
 
         lep_ht = muons.pt + met.pt
 
+        dumy = ak.num(muons) > -1
+        dumy.type.show()
+
+        selections = {
+            "dummy": ak.num(muons) > -1,
+            "exactly_1mu": ak.num(muons) == 1,
+            "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
+            "met_cut": met.pt > 50,
+            "lep_ht_cut": ak.firsts(lep_ht) > 150,
+            "exactly_1fatjet": ak.num(fatjets) == 1
+        }
+        selections["Zprime_channel"] = jnp.prod([ak.to_jax(s) for s in selections.values()], dtype=float, axis=0)
+        print(selections["Zprime_channel"].shape)
+        selections["preselection"] = selections["dummy"]
+
         selections = PackedSelection(dtype='uint64')
         selections.add("dummy", ak.num(muons) > -1)
         selections.add("exactly_1mu", ak.num(muons) == 1)
         selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
         selections.add("met_cut", met.pt > 50)
+        # selections.add("met_cut", relaxed.cut(met.pt, 50))
+        # selections.add("met_cut", 0.5*np.tanh((met.pt-50)/2)+0.5)
         selections.add("lep_ht_cut", ak.firsts(lep_ht) > 150)
         selections.add("exactly_1fatjet", ak.num(fatjets) == 1)
         selections.add("Zprime_channel", selections.all("exactly_1mu", "met_cut", "exactly_1fatjet", "atleast_1b", "lep_ht_cut"))
