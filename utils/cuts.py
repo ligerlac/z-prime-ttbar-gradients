@@ -3,7 +3,7 @@ import numpy as np
 
 
 # https://github.com/cms-opendata-workshop/workshop2024-lesson-event-selection/blob/main/instructors/dpoa_workshop_utilities.py
-def build_lumi_mask(lumifile, tree, verbose=False):
+def lumi_mask(lumifile, tree, verbose=False):
 
     # lumifile should be the name/path of the file
     good_luminosity_sections = ak.from_json(open(lumifile, "rb"))
