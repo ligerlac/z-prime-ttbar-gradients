@@ -351,13 +351,15 @@ class ZprimeAnalysis:
             "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
             # "met_cut": met.pt > 50,
             # "met_cut", relaxed.cut(met.pt, 50),  # fails - relaxed not compatible with awkward
-            "met_cut": 0.5*np.tanh((met.pt-50)/100)+0.5,
+            "met_cut": 0.5*jnp.tanh((ak.to_jax(met.pt)-50)/100)+0.5,
             "lep_ht_cut": ak.fill_none(ak.firsts(lep_ht) > 150, False),
             "exactly_1fatjet": ak.num(fatjets) == 1
         }
 
-        jax_selections = [jnp.array(ak.to_jax(s), dtype=float) for s in selections.values()]
-        selections["Zprime_channel"] = jnp.prod(jnp.stack(jax_selections), axis=0)
+        # Convert selections to JAX arrays with float dtype
+        selections = {k: jnp.array(ak.to_jax(v), dtype=float) for k, v in selections.items()}
+
+        selections["Zprime_channel"] = jnp.prod(jnp.stack(list(selections.values())), axis=0)
         selections["preselection"] = selections["dummy"]
 
         selections = PackedSelection(dtype='uint64')
@@ -372,6 +374,7 @@ class ZprimeAnalysis:
 
 
         for channel in self.channels:
+            print(f"channel {channel}")
             chname = channel["name"]
             mask = selections.all(chname)
             if ak.sum(mask) == 0:
