@@ -13,8 +13,13 @@ import copy
 
 import numpy as np
 import awkward as ak
+import vector
+import jax
 import uproot
 import hist
+
+vector.register_awkward()
+ak.jax.register_and_check()
 
 from coffea.analysis_tools import PackedSelection
 from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
@@ -353,7 +358,7 @@ class ZprimeAnalysis:
             if ak.sum(mask) == 0:
                 logger.warning(f"{analysis}:: No events left in {chname} for {process} with variation {variation}")
                 continue
-
+            mask = ak.to_backend(mask, "jax")
 
             object_copies = {collection: variable[mask] for collection, variable in object_copies.items()}
             region_muons, region_fatjets, region_jets, region_met = object_copies["Muon"], object_copies["FatJet"], object_copies["Jet"], object_copies["PuppiMET"]
@@ -439,6 +444,8 @@ def main():
     fileset = construct_fileset(n_files_max_per_sample=config.general.max_files)
 
     for dataset, content in fileset.items():
+        if not "signal" in dataset:
+            continue
         os.makedirs(f"{config.general.output_dir}/{dataset}", exist_ok=True)
         metadata = content["metadata"]
         metadata["dataset"] = dataset
@@ -466,6 +473,7 @@ def main():
                 for skimmed in skimmed_files:
                     logger.info(f"📘 Processing skimmed file: {skimmed}")
                     events = NanoEventsFactory.from_root(skimmed, schemaclass=NanoAODSchema, delayed=False).events()
+                    events = ak.to_backend(events, "jax")
                     analysis.process(events, metadata)
                     logger.info("📈 Histogram filling complete.")
 
