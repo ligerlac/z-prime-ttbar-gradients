@@ -1,0 +1,8 @@
+[flake8]
+max-complexity = 18
+max-line-length = 88
+count = True
+statistics = True
+import-order-style = google
+# ignore whitespace before ':'
+extend-ignore = E203

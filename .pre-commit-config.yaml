@@ -1,0 +1,23 @@
+repos:
+-   repo: https://github.com/psf/black-pre-commit-mirror
+    rev: 25.1.0
+    hooks:
+    -   id: black
+        files: ^(analysis.py/|utils/)
+-   repo: https://github.com/pycqa/flake8
+    rev: 7.1.2
+    hooks:
+    -   id: flake8
+        additional_dependencies: [flake8-bugbear, flake8-import-order, flake8-print]
+        files: ^(analysis.py/|utils/)
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+    -   id: check-added-large-files
+        args: ["--maxkb=100"]
+    -   id: trailing-whitespace
+-   repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+    -   id: codespell
+        files: ^(analysis.py/|utils/)
