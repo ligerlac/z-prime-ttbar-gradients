@@ -124,22 +124,6 @@ class ZprimeAnalysis:
 
         return evaluators
 
-    def get_object_copies(self, events):
-        """
-        Extract a dictionary of objects from the NanoEvents array.
-
-        Parameters
-        ----------
-        events : ak.Array
-            Input events.
-
-        Returns
-        -------
-        dict
-            Dictionary of field name to awkward array.
-        """
-        return {field: events[field] for field in events.fields}
-
     def get_good_objects(self, object_copies):
 
         muons, jets, fatjets, met = (
@@ -477,7 +461,7 @@ class ZprimeAnalysis:
         xsec_weight = (xsec * lumi / n_gen) if process != "data" else 1.0
 
         # Nominal processing
-        obj_copies = self.get_object_copies(events)
+        obj_copies = copy.deepcopy(events)
         # filter objects
         muons, jets, fatjets, met = self.get_good_objects(obj_copies)
         (
@@ -499,7 +483,7 @@ class ZprimeAnalysis:
             if syst["name"] == "nominal":
                 continue
             for direction in ["up", "down"]:
-                obj_copies = self.get_object_copies(events)
+                obj_copies = copy.deepcopy(events)
                 # filter objects
                 muons, jets, fatjets, met = self.get_good_objects(obj_copies)
                 (
