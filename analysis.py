@@ -473,6 +473,49 @@ class ZprimeAnalysis:
                 weight=weights,
             )
 
+    def run_fit(self, cabinetry_config):
+        """
+        Run the fit using cabinetry.
+
+        Parameters
+        ----------
+        cabinetry_config : dict
+            Configuration for cabinetry.
+        """
+
+        # what do we do with this
+        rebinning_router = get_cabinetry_rebinning_router(
+            cabinetry_config, rebinning=slice(110j, None, hist.rebin(2))
+        )
+        # build the templates
+        cabinetry.templates.build(
+            cabinetry_config, router=rebinning_router
+        )
+        # optional post-processing (e.g. smoothing, symmetrise)
+        cabinetry.templates.postprocess(
+            cabinetry_config
+        )
+        # build the workspace
+        ws = cabinetry.workspace.build(cabinetry_config)
+        # save the workspace
+        workspace_path = self.config.general.output_dir + "/statistics/"
+        os.makedirs(workspace_path, exist_ok=True)
+        workspace_path += "workspace.json"
+        cabinetry.workspace.save(ws, workspace_path)
+        # build the model and data
+        model, data = cabinetry.model_utils.model_and_data(ws)
+        # get pre-fit predictions
+        prefit_prediction = cabinetry.model_utils.prediction(model)
+        # perform the fit
+        results = cabinetry.fit.fit(
+            model,
+            data,
+        )  # perform the fit
+        postfit_prediction = cabinetry.model_utils.prediction(model, fit_results=results)
+
+        return data, results, prefit_prediction, postfit_prediction
+
+
     def process(self, events, metadata, tree="Events"):
         """
         Run the full analysis logic on a batch of events.
@@ -630,26 +673,22 @@ def main():
             output_file=f"{config.general.output_dir}/histograms/histograms.root",
         )
 
-    cabinetry_config = cabinetry.configuration.load(
-        "cabinetry/cabinetry_config.yaml"
-    )
-    rebinning_router = get_cabinetry_rebinning_router(
-        cabinetry_config, rebinning=slice(110j, None, hist.rebin(2))
-    )
-    cabinetry.templates.build(
-        cabinetry_config, router=rebinning_router
-    )  # build the templates
-    cabinetry.templates.postprocess(
-        cabinetry_config
-    )  # optional post-processing (e.g. smoothing)
-    ws = cabinetry.workspace.build(cabinetry_config)
-    cabinetry.workspace.save(ws, "workspace.json")
-    model, data = cabinetry.model_utils.model_and_data(ws)
-    model_prediction = cabinetry.model_utils.prediction(model)
-    cabinetry.visualize.data_mc(
-        model_prediction, data, close_figure=False, config=cabinetry_config
-    )
-
+    if config.general.run_statistics:
+        cabinetry_config = cabinetry.configuration.load(
+            config.statistics.cabinetry_config
+        )
+        data, fit_results, pre_fit_predictions, postfit_predictions = analysis.run_fit(
+            cabinetry_config=cabinetry_config
+        )
+        cabinetry.visualize.data_mc(
+            pre_fit_predictions, data, close_figure=False, config=cabinetry_config
+        )
+        cabinetry.visualize.data_mc(
+            postfit_predictions, data, close_figure=False, config=cabinetry_config
+        )
+        cabinetry.visualize.pulls(
+            fit_results, close_figure=False
+        )
 
 if __name__ == "__main__":
     main()

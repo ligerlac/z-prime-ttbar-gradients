@@ -46,10 +46,14 @@ Systematics:
       VariationPath: "_pu_weight_up"
     Down:
       VariationPath: "_pu_weight_down"
-    Samples: "ttbar"
 
 NormFactors:
   - Name: "zprime_norm"
     Samples: "signal"
+    Nominal: 1.0
+    Bounds: [0, 10]
+
+  - Name: "ttbar_norm"
+    Samples: ["ttbar_semilep","ttbar_had","ttbar_lep"]
     Nominal: 1.0
     Bounds: [0, 10]
