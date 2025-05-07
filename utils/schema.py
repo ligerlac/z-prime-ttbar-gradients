@@ -1,6 +1,8 @@
+import copy
 import re
 from typing import Annotated, Callable, List, Literal, Optional, Tuple, Union
 
+from omegaconf import OmegaConf
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -64,6 +66,20 @@ class GeneralConfig(SubscriptableModel):
         Optional[str],
         Field(
             default=None, description="Directory containing preprocessed files"
+        ),
+    ]
+    processes: Annotated[
+        Optional[List[str]],
+        Field(
+            default=None,
+            description="List of processes to include in the analysis",
+        ),
+    ]
+    channels: Annotated[
+        Optional[List[str]],
+        Field(
+            default=None,
+            description="List of channels to include in the analysis",
         ),
     ]
 
@@ -391,3 +407,54 @@ class Config(SubscriptableModel):
                 )
 
         return self
+
+
+def load_config_with_restricted_cli(base_cfg: dict, cli_args: list[str]) -> dict:
+    """
+    Load base config and override only `general`, `preprocess`, or `statistics`
+    keys via CLI arguments in dotlist form.
+
+    Parameters
+    ----------
+    base_cfg : dict
+        The full Python config with logic, lambdas, etc.
+    cli_args : list of str
+        CLI args in OmegaConf dotlist format (e.g. general.lumi=25000)
+
+    Returns
+    -------
+    dict
+        Full merged config (with overrides applied to whitelisted sections only).
+    """
+    ALLOWED_CLI_TOPLEVEL_KEYS = {"general", "preprocess", "statistics"}
+
+    # Deep copy so we don’t modify the original
+    base_copy = copy.deepcopy(base_cfg)
+
+    # Filter CLI args to allowed keys only
+    filtered_cli = []
+    for arg in cli_args:
+        top_key = arg.split("=", 1)[0].split(".", 1)[0]
+        if top_key in ALLOWED_CLI_TOPLEVEL_KEYS:
+            filtered_cli.append(arg)
+        else:
+            raise ValueError(
+                f"Override of top-level key `{top_key}` is not allowed. "
+                f"Allowed keys: {', '.join(ALLOWED_CLI_TOPLEVEL_KEYS)}"
+            )
+
+    # Merge CLI with OmegaConf
+    cli_cfg = OmegaConf.from_dotlist(filtered_cli)
+    safe_base = OmegaConf.create({
+        k: v for k, v in base_copy.items()
+        if k in ALLOWED_CLI_TOPLEVEL_KEYS
+    })
+    merged_cfg = OmegaConf.merge(safe_base, cli_cfg)
+    updated_subsections = OmegaConf.to_container(merged_cfg, resolve=True)
+
+    # Patch back into full config
+    for k in ALLOWED_CLI_TOPLEVEL_KEYS:
+        if k in updated_subsections:
+            base_copy[k] = updated_subsections[k]
+
+    return base_copy
