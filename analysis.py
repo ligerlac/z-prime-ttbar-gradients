@@ -11,6 +11,7 @@ import glob
 import gzip
 import logging
 import os
+import sys
 import warnings
 
 
@@ -21,6 +22,7 @@ from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 from correctionlib import CorrectionSet
 import hist
 import numpy as np
+from omegaconf import OmegaConf
 import uproot
 
 from utils.configuration import config as ZprimeConfig
@@ -28,7 +30,7 @@ from utils.cuts import lumi_mask
 from utils.input_files import construct_fileset
 from utils.output_files import save_histograms
 from utils.preproc import pre_process_dak, pre_process_uproot
-from utils.schema import Config
+from utils.schema import Config, load_config_with_restricted_cli
 from utils.stats import get_cabinetry_rebinning_router
 
 # -----------------------------
@@ -606,7 +608,13 @@ def main():
     Main driver function for running the Zprime analysis framework.
     Loads configuration, runs preprocessing, and dispatches analysis over datasets.
     """
-    config = Config(**ZprimeConfig)
+
+    cli_args = sys.argv[1:]
+    full_config = load_config_with_restricted_cli(ZprimeConfig, cli_args)
+    config = Config(**full_config)  # Pydantic validation
+    # ✅ You now have a fully validated config object
+    print(f"Luminosity: {config.general.lumi}")
+
     analysis = ZprimeAnalysis(config)
     fileset = construct_fileset(
         n_files_max_per_sample=config.general.max_files
