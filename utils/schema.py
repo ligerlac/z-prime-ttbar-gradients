@@ -30,6 +30,12 @@ class GeneralConfig(SubscriptableModel):
     weights_branch: Annotated[
         str, Field(description="Branch name for event weight")
     ]
+    lumifile: Annotated[
+        str,
+        Field(
+            description="Path to JSON file with good luminosity sections",
+        ),
+    ]
     max_files: Annotated[
         Optional[int],
         Field(default=1, description="Maximum number of files to process"),
@@ -41,6 +47,10 @@ class GeneralConfig(SubscriptableModel):
     run_histogramming: Annotated[
         bool,
         Field(default=True, description="Whether to run histogramming step"),
+    ]
+    run_statistics: Annotated[
+        bool,
+        Field(default=True, description="Whether to run statistical analysis step"),
     ]
     output_dir: Annotated[
         Optional[str],
@@ -56,7 +66,6 @@ class GeneralConfig(SubscriptableModel):
             default=None, description="Directory containing preprocessed files"
         ),
     ]
-
 
 # ------------------------
 # Preprocessing configuration
@@ -115,6 +124,17 @@ class PreprocessConfig(SubscriptableModel):
                     )
 
         return self
+
+# ------------------------
+# Statistical analysis configuration
+# ------------------------]
+class StatisticalConfig(SubscriptableModel):
+    cabinetry_config: Annotated[
+        str,
+        Field(
+            description="Path to YAML file with cabinetry settings",
+        ),
+    ]
 
 
 # ------------------------
@@ -333,6 +353,10 @@ class Config(SubscriptableModel):
         Optional[PreprocessConfig],
         Field(default=None, description="Preprocessing settings"),
     ]
+    statistics : Annotated[
+        Optional[StatisticalConfig],
+        Field(default=None, description="Statistical analysis settings"),
+    ]
 
     @model_validator(mode="after")
     def validate_config(self) -> "Config":
@@ -359,4 +383,11 @@ class Config(SubscriptableModel):
             raise ValueError(
                 "Preprocessing is enabled but no preprocess configuration provided."
             )
+
+        if self.statistics is not None:
+            if self.general.run_statistics and not self.statistics.cabinetry_config:
+                raise ValueError(
+                    "Statistical analysis run enabled but no cabinetry configuration provided."
+                )
+
         return self

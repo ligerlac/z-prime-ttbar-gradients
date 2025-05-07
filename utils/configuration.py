@@ -1,4 +1,5 @@
 import numpy as np
+
 from utils.systematics import jet_pt_resolution, jet_pt_scale
 
 config = {
@@ -7,10 +8,12 @@ config = {
         "weights_branch": "genWeight",
         "max_files": -1,
         "run_preprocessing": False,
-        "run_histogramming": True,
+        "run_histogramming": False,
+        "run_statistics": True,
         "output_dir": "output/",
         "preprocessed_dir": "./preproc_uproot/z-prime-ttbar-data/",
         "processor": "uproot",
+        "lumifile": "./corrections/Cert_271036-284044_13TeV_Legacy2016_Collisions16_JSON.txt"
     },
     "preprocess": {
         "branches": {
@@ -50,6 +53,9 @@ config = {
             "event": ["genWeight", "luminosityBlock"],
             "Pileup": ["nTrueInt"],
         },
+    },
+    "statistics": {
+        "cabinetry_config": "cabinetry/cabinetry_config.yaml"
     },
     "channels": [
         {
