@@ -68,6 +68,20 @@ class GeneralConfig(SubscriptableModel):
             default=None, description="Directory containing preprocessed files"
         ),
     ]
+    processes: Annotated[
+        Optional[List[str]],
+        Field(
+            default=None,
+            description="List of processes to include in the analysis",
+        ),
+    ]
+    channels: Annotated[
+        Optional[List[str]],
+        Field(
+            default=None,
+            description="List of channels to include in the analysis",
+        ),
+    ]
 
 # ------------------------
 # Preprocessing configuration

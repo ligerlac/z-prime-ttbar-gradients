@@ -400,6 +400,9 @@ class ZprimeAnalysis:
         selections.add("preselection", selections.all("dummy"))
 
         for channel in self.channels:
+            if (req_channels := self.config.general.channels) is not None:
+                if channel not in req_channels:    continue
+
             chname = channel["name"]
             mask = ak.Array(selections.all(chname))
             if process == "data":
@@ -621,9 +624,15 @@ def main():
     )
 
     for dataset, content in fileset.items():
-        os.makedirs(f"{config.general.output_dir}/{dataset}", exist_ok=True)
+
         metadata = content["metadata"]
         metadata["dataset"] = dataset
+        variation = metadata.get("variation", "nominal")
+
+        if (req_processes := config.general.processes) is not None:
+            if dataset.split("__")[0] not in req_processes:    continue
+
+        os.makedirs(f"{config.general.output_dir}/{dataset}", exist_ok=True)
 
         logger.info("========================================")
         logger.info(f"🚀 Processing dataset: {dataset}")
