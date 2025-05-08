@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 
 
 # Type alias for (object, variable) pairs
-ObjVar = Tuple[str, str]
+ObjVar = Tuple[str, Optional[str]]
 
 
 class SubscriptableModel(BaseModel):
@@ -179,7 +179,21 @@ class ChannelConfig(SubscriptableModel):
         Optional[List[ObjVar]],
         Field(
             default=None,
-            description="(object, variable) pairs for the function",
+            description="(object, variable) pairs for the function. If variable is None, object is passed.",
+        ),
+    ]
+    selection_function: Annotated[
+        Optional[Callable],
+        Field(
+            default=None,
+            description="Callable for event selection. If None, all events are selected.",
+        ),
+    ]
+    selection_use: Annotated[
+        Optional[List[ObjVar]],
+        Field(
+            default=None,
+            description="(object, variable) pairs for the function. If variable is None, object is passed.",
         ),
     ]
 
@@ -195,6 +209,12 @@ class ChannelConfig(SubscriptableModel):
                 raise ValueError(
                     "Cannot use 'observable_function' together with 'observable_name' "
                     + "or 'observable_binning'."
+                )
+        if self.selection_function:
+            if not self.selection_use:
+                raise ValueError(
+                    "If 'selection_funciton' is provided, 'selection_use' must "
+                    + "also be specified."
                 )
 
         if isinstance(self.observable_binning, str):
@@ -316,7 +336,7 @@ class SystematicConfig(SubscriptableModel):
     ]
     use: Annotated[
         Optional[Union[ObjVar, List[ObjVar]]],
-        Field(default=[], description="Inputs to the variation function"),
+        Field(default=[], description="(object, variable) inputs to variation functions. If variable is None, object is passed."),
     ]
     symmetrise: Annotated[
         bool,

@@ -16,8 +16,8 @@ import warnings
 
 import awkward as ak
 import cabinetry
-from coffea.analysis_tools import PackedSelection
 from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
+from coffea.analysis_tools import PackedSelection
 from correctionlib import CorrectionSet
 import hist
 import jax
@@ -111,7 +111,7 @@ class ZprimeAnalysis:
                     binning, name="observable", label=label
                 )
 
-            histograms[name] = hist.Hist(
+            histograms[chname] = hist.Hist(
                 axis,
                 hist.axis.StrCategory([], name="process", growth=True),
                 hist.axis.StrCategory([], name="variation", growth=True),
@@ -260,11 +260,12 @@ class ZprimeAnalysis:
         else:
             raise ValueError(f"Unsupported operation: {op}")
 
-    def _get_correction_arguments(self, use, object_copies):
+    def _get_function_arguments(self, use, object_copies):
         """
         Extract correction arguments from object_copies.
         """
-        return [object_copies[obj][var] for obj, var in use]
+        return [object_copies[obj][var] if var is not None
+                else object_copies[obj] for obj, var in use]
 
     def _get_targets(self, target, object_copies):
         """
@@ -290,7 +291,7 @@ class ZprimeAnalysis:
         for corr in corrections:
             if corr["type"] != "object":
                 continue
-            args = self._get_correction_arguments(corr["use"], object_copies)
+            args = self._get_function_arguments(corr["use"], object_copies)
             targets = self._get_targets(corr["target"], object_copies)
             op = corr["op"]
             key = corr.get("key")
@@ -327,7 +328,7 @@ class ZprimeAnalysis:
         if systematic["type"] != "event":
             return weights
 
-        args = self._get_correction_arguments(systematic["use"], object_copies)
+        args = self._get_function_arguments(systematic["use"], object_copies)
         op = systematic["op"]
         key = systematic.get("key")
         transform = systematic.get("transform", lambda *x: x)
@@ -354,7 +355,7 @@ class ZprimeAnalysis:
         variation,
         xsec_weight,
         analysis,
-        met_cut, 
+        met_cut,
         event_syst=None,
         direction="nominal",
         tree="Events"
@@ -396,23 +397,21 @@ class ZprimeAnalysis:
             object_copies["PuppiMET"],
         )
 
-        hard_cuts = PackedSelection(dtype='uint64')
-        hard_cuts.add("dummy", ak.num(muons) > -1)
-        hard_cuts.add("exactly_1mu", ak.num(muons) == 1)
-        hard_cuts.add("exactly_1fatjet", ak.num(fatjets) == 1)
-        hard_cuts.add("Zprime_channel", hard_cuts.all("exactly_1mu", "exactly_1fatjet"))
-        hard_cuts.add("preselection", hard_cuts.all("dummy"))
-        
         for channel in self.channels:
             chname = channel["name"]
-<<<<<<< HEAD
-            mask = ak.Array(hard_cuts.all(chname))
-=======
             if (req_channels := self.config.general.channels) is not None:
                 if chname not in req_channels:    continue
 
-            mask = ak.Array(selections.all(chname))
->>>>>>> 498cb9b (fix channels filter)
+            mask = 1
+            if (selection_funciton := channel["selection_function"]) is not None:
+                selection_args = self._get_function_arguments(channel["selection_use"], object_copies)
+                packed_selection = selection_funciton(*selection_args)
+                if not isinstance(packed_selection, PackedSelection):
+                    raise ValueError(
+                        f"PackedSelection expected, got {type(packed_selection)}"
+                    )
+                mask = ak.Array(packed_selection.all(chname))
+
             if process == "data":
                 mask = mask & lumi_mask(self.config.general.lumifile, events)
 
@@ -476,7 +475,7 @@ class ZprimeAnalysis:
 
             weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
             logger.info(f"Weights:: {weights} ")
-            
+
             if process != "data":
                 weights *= (
                     events[mask].genWeight
@@ -559,7 +558,6 @@ class ZprimeAnalysis:
             Histogram dictionary after processing.
         """
         analysis = self.__class__.__name__
-        hist_dict = copy.deepcopy(self.nD_hists_per_region)
 
         process = metadata["process"]
         variation = metadata.get("variation", "nominal")
@@ -585,13 +583,13 @@ class ZprimeAnalysis:
             obj_copies, self.corrections, direction="nominal"
         )
         apply_secetion_and_fill_grad = jax.value_and_grad(self.apply_selection_and_fill, argnums=7, has_aux=False)
-        val, grad = apply_secetion_and_fill_grad(obj_copies, 
-                                                 events, 
-                                                 process, 
-                                                 variation, 
-                                                 hist_dict, 
-                                                 xsec_weight, 
-                                                 analysis, 
+        val, grad = apply_secetion_and_fill_grad(obj_copies,
+                                                 events,
+                                                 process,
+                                                 variation,
+                                                 hist_dict,
+                                                 xsec_weight,
+                                                 analysis,
                                                  50.)
         logger.info(f"val: {val}, grad: {grad}")
         self.apply_selection_and_fill(

@@ -1,5 +1,6 @@
 import numpy as np
 
+from utils.cuts import (Zprime_workshop_selection, Zprime_workshop_selection_dummy)
 from utils.systematics import jet_pt_resolution, jet_pt_scale
 
 config = {
@@ -61,7 +62,28 @@ config = {
             "observable_name": "m_tt",
             "observable_binning": "0,3000,50",
             "observable_label": r"$m_{t\bar{t}}$ [GeV]",
-        }
+            "selection_function": Zprime_workshop_selection,
+            "selection_use": [
+                ("Muon", None),
+                ("Jet", None),
+                ("FatJet", None),
+                ("PuppiMET", None),
+            ],
+        },
+        {
+            "name": "Zprime_channel_2",
+            "observable_name": "m_tt",
+            "observable_binning": "0,3000,50",
+            "observable_label": r"$m_{t\bar{t}}$ [GeV]",
+            "selection_function": Zprime_workshop_selection_dummy,
+            "selection_use": [
+                ("Muon", None),
+                ("Jet", None),
+                ("FatJet", None),
+                ("PuppiMET", None),
+            ],
+        },
+
     ],
     "corrections": [
         {
