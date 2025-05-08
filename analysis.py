@@ -7,6 +7,7 @@ correctionlib-based and function-based corrections.
 """
 
 import copy
+from collections import defaultdict
 import glob
 import gzip
 import logging
@@ -93,30 +94,34 @@ class ZprimeAnalysis:
         dict
             Dictionary of channel name to hist.Hist object.
         """
-        histograms = {}
+        histograms = defaultdict(dict)
         for channel in self.channels:
             chname = channel["name"]
             if (req_channels := self.config.general.channels) is not None:
                 if chname not in req_channels:    continue
-            label = channel["observable_label"]
-            binning = channel["observable_binning"]
 
-            if isinstance(binning, str):
-                low, high, nbins = map(float, binning.split(","))
-                axis = hist.axis.Regular(
-                    int(nbins), low, high, name="observable", label=label
-                )
-            else:
-                axis = hist.axis.Variable(
-                    binning, name="observable", label=label
-                )
+            for observable in channel["observables"]:
 
-            histograms[chname] = hist.Hist(
-                axis,
-                hist.axis.StrCategory([], name="process", growth=True),
-                hist.axis.StrCategory([], name="variation", growth=True),
-                storage=hist.storage.Weight(),
-            )
+                observable_label = observable["label"]
+                observable_binning = observable["binning"]
+                observable_name = observable["name"]
+
+                if isinstance(observable_binning, str):
+                    low, high, nbins = map(float, observable_binning.split(","))
+                    axis = hist.axis.Regular(
+                        int(nbins), low, high, name="observable", label=observable_label
+                    )
+                else:
+                    axis = hist.axis.Variable(
+                        observable_binning, name="observable", label=observable_label
+                    )
+
+                histograms[chname][observable_name] = hist.Hist(
+                    axis,
+                    hist.axis.StrCategory([], name="process", growth=True),
+                    hist.axis.StrCategory([], name="variation", growth=True),
+                    storage=hist.storage.Weight(),
+                )
         return histograms
 
     def _load_correctionlib(self):
@@ -390,15 +395,6 @@ class ZprimeAnalysis:
         if process == "data" and variation != "nominal":
             return
 
-<<<<<<< HEAD
-        muons, jets, fatjets, met = (
-            object_copies["Muon"],
-            object_copies["Jet"],
-            object_copies["FatJet"],
-            object_copies["PuppiMET"],
-        )
-=======
->>>>>>> c3d0bf2 (observables specified from configuration now)
 
         for channel in self.channels:
             chname = channel["name"]
@@ -431,15 +427,6 @@ class ZprimeAnalysis:
                 for collection, variable in object_copies.items()
             }
 
-            observable_args = self._get_function_arguments(
-                channel["observable_use"], object_copies
-            )
-<<<<<<< HEAD
-
-=======
-            observable = channel["observable_function"](*observable_args)
-            observable.type.show()
-
             region_muons = object_copies["Muon"]
             region_jets = object_copies["Jet"]
             region_met = object_copies["PuppiMET"]
@@ -459,7 +446,6 @@ class ZprimeAnalysis:
 
             weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
             logger.info(f"Weights:: {weights} ")
->>>>>>> c3d0bf2 (observables specified from configuration now)
 
             if process != "data":
                 weights *= (
@@ -468,24 +454,28 @@ class ZprimeAnalysis:
                     / abs(events[mask].genWeight)
                 )
             else:
-<<<<<<< HEAD
-                weights *= np.ones(len(region_met))
-=======
-                weights = np.ones(len(ak.count_nonzero(mask)))
->>>>>>> c3d0bf2 (observables specified from configuration now)
+                weights *= np.ones(len(ak.count_nonzero(mask)))
 
             if event_syst and process != "data":
                 weights = self.apply_event_weight_correction(
                     weights, event_syst, direction, object_copies
                 )
 
-            self.nD_hists_per_region[chname].fill(
-                observable=observable,
-                process=process,
-                variation=variation,
-                weight=weights,
-            )
-            return sum(weights) # return some dummy value to test auto-diff
+            for observable in channel["observables"]:
+                observable_name = observable["name"]
+                observable_args = self._get_function_arguments(
+                    observable["use"], object_copies
+                )
+                observable_vals = observable["function"](*observable_args)
+                observable_vals.type.show()
+
+                self.nD_hists_per_region[chname][observable_name].fill(
+                    observable=observable_vals,
+                    process=process,
+                    variation=variation,
+                    weight=weights,
+                )
+                return sum(weights) # return some dummy value to test auto-diff
 
     def run_fit(self, cabinetry_config):
         """

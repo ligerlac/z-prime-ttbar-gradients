@@ -141,6 +141,7 @@ class PreprocessConfig(SubscriptableModel):
 
         return self
 
+
 # ------------------------
 # Statistical analysis configuration
 # ------------------------]
@@ -154,32 +155,59 @@ class StatisticalConfig(SubscriptableModel):
 
 
 # ------------------------
+# Observable configuration
+# ------------------------
+class ObservableConfig(SubscriptableModel):
+    name: Annotated[str, Field(description="Name of the observable")]
+    binning: Annotated[
+        Union[str, List[float]],
+        Field(description="Either a 'low,high,nbins' string or a list of bin edges"),
+    ]
+    function: Annotated[
+        Callable,
+        Field(description="Callable computing the observable"),
+    ]
+    use: Annotated[
+        List[ObjVar],
+        Field(
+            description="(object, variable) pairs for the function. "
+                        "If variable is None, object is passed.",
+        ),
+    ]
+    label: Annotated[
+        Optional[str],
+        Field(default="observable", description="LaTeX label for plots"),
+    ]
+
+    @model_validator(mode="after")
+    def validate_binning(self) -> "ObservableConfig":
+        if isinstance(self.binning, str):
+            if not re.match(r"^\s*[\d.]+\s*,\s*[\d.]+\s*,\s*\d+\s*$", self.binning):
+                raise ValueError(
+                    f"Invalid binning string: {self.binning}. "
+                    + "Expected format: 'low,high,nbins'"
+                )
+        elif isinstance(self.binning, list):
+            if len(self.binning) < 2:
+                raise ValueError("At least two bin edges required.")
+            if any(
+                b <= a for a, b in zip(self.binning, self.binning[1:])
+            ):
+                raise ValueError("Binning edges must be strictly increasing.")
+        return self
+
+# ------------------------
 # Channel configuration
 # ------------------------
 class ChannelConfig(SubscriptableModel):
     name: Annotated[str, Field(description="Name of the analysis channel")]
-    observable_name: Annotated[
-        str, Field(description="Name of the histogram observable")
+    observables: Annotated[
+        List[ObservableConfig],
+        Field(description="List of observables for this channel (must be ≥ 1)"),
     ]
-    observable_binning: Annotated[
-        Union[str, List[float]],
-        Field(
-            description="Either a 'low,high,nbins' string or a list of bin edges"
-        ),
-    ]
-    observable_function: Annotated[
-        Callable,
-        Field(description="Callable computing the observable"),
-    ]
-    observable_use: Annotated[
-        List[ObjVar],
-        Field(
-            description="(object, variable) pairs for the function. If variable is None, object is passed.",
-        ),
-    ]
-    observable_label: Annotated[
-        Optional[str],
-        Field(default="observable", description="LaTeX label for plots"),
+    fit_observable: Annotated[
+        str,
+        Field(description="Name of the observable to use for fitting"),
     ]
 
     selection_function: Annotated[
@@ -193,43 +221,33 @@ class ChannelConfig(SubscriptableModel):
         Optional[List[ObjVar]],
         Field(
             default=None,
-            description="(object, variable) pairs for the function. If variable is None, object is passed.",
+            description="(object, variable) pairs for the selection function.",
         ),
     ]
 
     @model_validator(mode="after")
-    def validate_observable_fields(self) -> "ChannelConfig":
+    def validate_fields(self) -> "ChannelConfig":
+        if self.selection_function and not self.selection_use:
+            raise ValueError(
+                "If 'selection_function' is provided, 'selection_use' must also be specified."
+            )
 
-        if self.selection_function:
-            if not self.selection_use:
-                raise ValueError(
-                    "If 'selection_funciton' is provided, 'selection_use' must "
-                    + "also be specified."
-                )
+        if not self.observables:
+            raise ValueError("Each channel must have at least one observable.")
 
-        if isinstance(self.observable_binning, str):
-            if not re.match(
-                r"^\s*[\d.]+\s*,\s*[\d.]+\s*,\s*\d+\s*$",
-                self.observable_binning,
-            ):
-                raise ValueError(
-                    f"Invalid binning string: {self.observable_binning}. "
-                    + "Expected format: 'low,high,nbins'"
-                )
+        obs_names = [obs.name for obs in self.observables]
+        if self.fit_observable not in obs_names:
+            raise ValueError(
+                f"'fit_observable'='{self.fit_observable}' is not in the list of observables: "
+                f"{sorted(obs_names)}"
+            )
 
-        if isinstance(self.observable_binning, list):
-            if len(self.observable_binning) < 2:
-                raise ValueError("At least two bin edges required.")
-            if any(
-                b <= a
-                for a, b in zip(
-                    self.observable_binning, self.observable_binning[1:]
-                )
-            ):
-                raise ValueError("Binning edges must be strictly increasing.")
+        if len(set(obs_names)) != len(obs_names):
+            raise ValueError(
+                "Duplicate observable names found in the channel configuration."
+            )
 
         return self
-
 
 # ------------------------
 # Corrections configuration
