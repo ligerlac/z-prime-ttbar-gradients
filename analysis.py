@@ -413,7 +413,7 @@ class ZprimeAnalysis:
                     raise ValueError(
                         f"PackedSelection expected, got {type(packed_selection)}"
                     )
-                mask = ak.Array(packed_selection.all(chname))
+                mask = ak.Array(packed_selection.all(packed_selection.names[-1]))
 
             if process == "data":
                 mask = mask & lumi_mask(self.config.general.lumifile, events)
