@@ -79,7 +79,7 @@ def Zprime_workshop_selection(muons, jets, fatjets, met):
     selections.add("lep_ht_cut", ak.firsts(lep_ht) > 150)
     selections.add("exactly_1fatjet", ak.num(fatjets) == 1)
     selections.add(
-        "Zprime_channel", # must match channel name in config
+        "Zprime_channel",
         selections.all(
             "exactly_1mu",
             "met_cut",
