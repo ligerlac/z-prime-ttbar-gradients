@@ -95,7 +95,9 @@ class ZprimeAnalysis:
         """
         histograms = {}
         for channel in self.channels:
-            name = channel["name"]
+            chname = channel["name"]
+            if (req_channels := self.config.general.channels) is not None:
+                if chname not in req_channels:    continue
             label = channel["observable_label"]
             binning = channel["observable_binning"]
 
@@ -402,11 +404,15 @@ class ZprimeAnalysis:
         hard_cuts.add("preselection", hard_cuts.all("dummy"))
         
         for channel in self.channels:
-            if (req_channels := self.config.general.channels) is not None:
-                if channel not in req_channels:    continue
-
             chname = channel["name"]
+<<<<<<< HEAD
             mask = ak.Array(hard_cuts.all(chname))
+=======
+            if (req_channels := self.config.general.channels) is not None:
+                if chname not in req_channels:    continue
+
+            mask = ak.Array(selections.all(chname))
+>>>>>>> 498cb9b (fix channels filter)
             if process == "data":
                 mask = mask & lumi_mask(self.config.general.lumifile, events)
 
