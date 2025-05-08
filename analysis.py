@@ -390,12 +390,15 @@ class ZprimeAnalysis:
         if process == "data" and variation != "nominal":
             return
 
+<<<<<<< HEAD
         muons, jets, fatjets, met = (
             object_copies["Muon"],
             object_copies["Jet"],
             object_copies["FatJet"],
             object_copies["PuppiMET"],
         )
+=======
+>>>>>>> c3d0bf2 (observables specified from configuration now)
 
         for channel in self.channels:
             chname = channel["name"]
@@ -427,38 +430,19 @@ class ZprimeAnalysis:
                 collection: variable[mask]
                 for collection, variable in object_copies.items()
             }
-            region_muons, region_fatjets, region_jets, region_met = (
-                object_copies["Muon"],
-                object_copies["FatJet"],
-                object_copies["Jet"],
-                object_copies["PuppiMET"],
-            )
-            region_muons_4vec, region_fatjets_4vec, region_jets_4vec = [
-                ak.zip(
-                    {"pt": o.pt, "eta": o.eta, "phi": o.phi, "mass": o.mass},
-                    with_name="Momentum4D",
-                )
-                for o in [region_muons, region_fatjets, region_jets[:, 0]]
-            ]
-            region_met_4vec = ak.zip(
-                {
-                    "pt": region_met.pt,
-                    "eta": 0 * region_met.pt,
-                    "phi": region_met.phi,
-                    "mass": 0,
-                },
-                with_name="Momentum4D",
-            )
 
-            mtt = ak.flatten(
-                (
-                    region_muons_4vec
-                    + region_fatjets_4vec
-                    + region_jets_4vec
-                    + region_met_4vec
-                ).mass
+            observable_args = self._get_function_arguments(
+                channel["observable_use"], object_copies
             )
-            mtt.type.show()
+<<<<<<< HEAD
+
+=======
+            observable = channel["observable_function"](*observable_args)
+            observable.type.show()
+
+            region_muons = object_copies["Muon"]
+            region_jets = object_copies["Jet"]
+            region_met = object_copies["PuppiMET"]
 
             region_lep_ht = region_muons.pt + region_met.pt
             soft_cuts = {
@@ -475,6 +459,7 @@ class ZprimeAnalysis:
 
             weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
             logger.info(f"Weights:: {weights} ")
+>>>>>>> c3d0bf2 (observables specified from configuration now)
 
             if process != "data":
                 weights *= (
@@ -483,7 +468,11 @@ class ZprimeAnalysis:
                     / abs(events[mask].genWeight)
                 )
             else:
+<<<<<<< HEAD
                 weights *= np.ones(len(region_met))
+=======
+                weights = np.ones(len(ak.count_nonzero(mask)))
+>>>>>>> c3d0bf2 (observables specified from configuration now)
 
             if event_syst and process != "data":
                 weights = self.apply_event_weight_correction(
@@ -491,7 +480,7 @@ class ZprimeAnalysis:
                 )
 
             self.nD_hists_per_region[chname].fill(
-                observable=mtt,
+                observable=observable,
                 process=process,
                 variation=variation,
                 weight=weights,

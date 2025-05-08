@@ -167,21 +167,21 @@ class ChannelConfig(SubscriptableModel):
             description="Either a 'low,high,nbins' string or a list of bin edges"
         ),
     ]
+    observable_function: Annotated[
+        Callable,
+        Field(description="Callable computing the observable"),
+    ]
+    observable_use: Annotated[
+        List[ObjVar],
+        Field(
+            description="(object, variable) pairs for the function. If variable is None, object is passed.",
+        ),
+    ]
     observable_label: Annotated[
         Optional[str],
         Field(default="observable", description="LaTeX label for plots"),
     ]
-    observable_function: Annotated[
-        Optional[Callable],
-        Field(default=None, description="Callable computing the observable"),
-    ]
-    use: Annotated[
-        Optional[List[ObjVar]],
-        Field(
-            default=None,
-            description="(object, variable) pairs for the function. If variable is None, object is passed.",
-        ),
-    ]
+
     selection_function: Annotated[
         Optional[Callable],
         Field(
@@ -199,17 +199,7 @@ class ChannelConfig(SubscriptableModel):
 
     @model_validator(mode="after")
     def validate_observable_fields(self) -> "ChannelConfig":
-        if self.observable_function:
-            if not self.use:
-                raise ValueError(
-                    "If 'observable_function' is provided, 'use' must "
-                    + "also be specified."
-                )
-            if self.observable_name or self.observable_binning:
-                raise ValueError(
-                    "Cannot use 'observable_function' together with 'observable_name' "
-                    + "or 'observable_binning'."
-                )
+
         if self.selection_function:
             if not self.selection_use:
                 raise ValueError(
