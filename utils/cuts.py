@@ -82,10 +82,10 @@ def Zprime_workshop_selection(muons, jets, fatjets, met):
         "Zprime_channel",
         selections.all(
             "exactly_1mu",
-            "met_cut",
+#            "met_cut",
             "exactly_1fatjet",
-            "atleast_1b",
-            "lep_ht_cut",
+            # "atleast_1b",
+            # "lep_ht_cut",
         ),
     )
 

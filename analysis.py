@@ -25,7 +25,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from omegaconf import OmegaConf
-import relaxed
+#import relaxed
 import uproot
 import vector
 
@@ -41,9 +41,8 @@ from utils.stats import get_cabinetry_rebinning_router
 # -----------------------------
 # Register backends
 # -----------------------------
-vector.register_awkward()
 ak.jax.register_and_check()
-
+vector.register_awkward()
 
 # -----------------------------
 # Logging Configuration
@@ -473,9 +472,10 @@ class ZprimeAnalysis:
                     observable=observable_vals,
                     process=process,
                     variation=variation,
-                    weight=weights,
+                    weight=jax.lax.stop_gradient(weights),
                 )
-                return sum(weights) # return some dummy value to test auto-diff
+
+                return ak.sum(weights) # return some dummy value to test auto-diff
 
     def run_fit(self, cabinetry_config):
         """
@@ -561,12 +561,11 @@ class ZprimeAnalysis:
         obj_copies = self.apply_object_corrections(
             obj_copies, self.corrections, direction="nominal"
         )
-        apply_secetion_and_fill_grad = jax.value_and_grad(self.apply_selection_and_fill, argnums=7, has_aux=False)
-        val, grad = apply_secetion_and_fill_grad(obj_copies,
+        apply_selection_and_fill_grad = jax.value_and_grad(self.apply_selection_and_fill, argnums=6, has_aux=False)
+        val, grad = apply_selection_and_fill_grad(obj_copies,
                                                  events,
                                                  process,
                                                  variation,
-                                                 hist_dict,
                                                  xsec_weight,
                                                  analysis,
                                                  50.)
@@ -608,6 +607,7 @@ class ZprimeAnalysis:
                     varname,
                     xsec_weight,
                     analysis,
+                    50.0,
                     event_syst=syst,
                     direction=direction,
                 )
