@@ -1,6 +1,7 @@
 import awkward as ak
 import numpy as np
 
+
 # functions creating systematic variations
 def jet_pt_resolution(pt):
     # normal distribution with 5% variations, shape matches jets
@@ -10,6 +11,7 @@ def jet_pt_resolution(pt):
     resolution_variation = ak.from_numpy(resolution_variation)
     resolution_variation = ak.to_backend(resolution_variation, ak.backend(pt_flat))
     return ak.unflatten(resolution_variation, counts)
+
 
 def jet_pt_scale():
     return 1.03

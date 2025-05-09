@@ -1,13 +1,14 @@
+import logging
 
-import glob
-import argparse
-from tqdm import tqdm
-
-import uproot
 import awkward as ak
-import numpy as np
+from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 import dask_awkward as dak
-from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
+import numpy as np
+from tqdm import tqdm
+import uproot
+
+logger = logging.getLogger(__name__)
+
 
 def build_branches_to_keep(config, mode="uproot", is_mc=False):
     """
@@ -33,7 +34,9 @@ def build_branches_to_keep(config, mode="uproot", is_mc=False):
 
     for obj, obj_branches in branches.items():
         if not is_mc:
-            filtered[obj] = [br for br in obj_branches if br not in mc_branches.get(obj, [])]
+            filtered[obj] = [
+                br for br in obj_branches if br not in mc_branches.get(obj, [])
+            ]
         else:
             filtered[obj] = obj_branches
 
@@ -43,15 +46,25 @@ def build_branches_to_keep(config, mode="uproot", is_mc=False):
     if mode == "uproot":
         flat = []
         for obj, brs in filtered.items():
-            flat.extend(brs if obj == "event" else [f"{obj}_{br}" for br in brs])
+            flat.extend(
+                brs if obj == "event" else [f"{obj}_{br}" for br in brs]
+            )
         return flat
 
     raise ValueError("Invalid mode: use 'dask' or 'uproot'.")
 
+
 # -----------------------------
 # Preprocessing Logic with dak
 # -----------------------------
-def pre_process_dak(input_path, tree, output_dir, configuration, step_size=100_000, logger=None, is_mc=True):
+def pre_process_dak(
+    input_path,
+    tree,
+    output_dir,
+    configuration,
+    step_size=100_000,
+    is_mc=True,
+):
     """
     Preprocess input ROOT file by applying basic filtering and reducing branches.
 
@@ -75,7 +88,9 @@ def pre_process_dak(input_path, tree, output_dir, configuration, step_size=100_0
         total_events = f.num_entries
 
     logger.info("========================================")
-    logger.info(f"📂 Preprocessing file: {input_path} with {total_events:,} events")
+    logger.info(
+        f"📂 Preprocessing file: {input_path} with {total_events:,} events"
+    )
 
     branches = build_branches_to_keep(configuration, mode="dak", is_mc=is_mc)
     selected = None
@@ -89,20 +104,18 @@ def pre_process_dak(input_path, tree, output_dir, configuration, step_size=100_0
             entry_start=start,
             entry_stop=stop,
             delayed=True,
-            #xrootd_handler= uproot.source.xrootd.MultithreadedXRootDSource,
+            # xrootd_handler= uproot.source.xrootd.MultithreadedXRootDSource,
         ).events()
 
         mu_sel = (
-            (events.Muon.pt > 55) &
-            (abs(events.Muon.eta) < 2.4) &
-            events.Muon.tightId &
-            (events.Muon.miniIsoId > 1)
+            (events.Muon.pt > 55)
+            & (abs(events.Muon.eta) < 2.4)
+            & events.Muon.tightId
+            & (events.Muon.miniIsoId > 1)
         )
         muon_count = ak.sum(mu_sel, axis=1)
         mask = (
-            events.HLT.TkMu50 &
-            (muon_count == 1) &
-            (events.PuppiMET.pt > 50)
+            events.HLT.TkMu50 & (muon_count == 1) & (events.PuppiMET.pt > 50)
         )
 
         filtered = events[mask]
@@ -110,21 +123,47 @@ def pre_process_dak(input_path, tree, output_dir, configuration, step_size=100_0
         subset = {}
         for obj, obj_branches in branches.items():
             if obj == "event":
-                subset.update({br: filtered[br] for br in obj_branches if br in filtered.fields})
+                subset.update(
+                    {
+                        br: filtered[br]
+                        for br in obj_branches
+                        if br in filtered.fields
+                    }
+                )
             elif obj in filtered.fields:
-                subset.update({f"{obj}_{br}": filtered[obj][br] for br in obj_branches if br in filtered[obj].fields})
+                subset.update(
+                    {
+                        f"{obj}_{br}": filtered[obj][br]
+                        for br in obj_branches
+                        if br in filtered[obj].fields
+                    }
+                )
 
         compact = dak.zip(subset, depth_limit=1)
-        selected = compact if selected is None else ak.concatenate([selected, compact])
+        selected = (
+            compact
+            if selected is None
+            else ak.concatenate([selected, compact])
+        )
 
     logger.info(f"💾 Writing skimmed output to: {output_dir}")
-    uproot.dask_write(selected, destination=output_dir, compute=True, tree_name=tree)
+    uproot.dask_write(
+        selected, destination=output_dir, compute=True, tree_name=tree
+    )
     return total_events
+
 
 # -----------------------------
 # Preprocessing Logic with uproot
 # -----------------------------
-def pre_process_uproot(input_path, tree, output_path, configuration, step_size=100_000, logger=None, is_mc=True):
+def pre_process_uproot(
+    input_path,
+    tree,
+    output_path,
+    configuration,
+    step_size=100_000,
+    is_mc=True,
+):
     """
     Process a ROOT file by applying a selection function on chunks of data
     and saving the filtered results to a new file, with a progress bar.
@@ -141,8 +180,6 @@ def pre_process_uproot(input_path, tree, output_path, configuration, step_size=1
         Configuration object containing branch selection and other settings.
     step_size : int
         Number of entries to process in each chunk.
-    logger : object
-        Logger object for logging messages.
     is_mc : bool
         Flag indicating whether the input data is from MC or not.
     Returns
@@ -152,17 +189,29 @@ def pre_process_uproot(input_path, tree, output_path, configuration, step_size=1
     """
 
     cut_str = "HLT_TkMu50*(PuppiMET_pt>50)"
-    branches = build_branches_to_keep(configuration, mode="uproot", is_mc=is_mc)
+    branches = build_branches_to_keep(
+        configuration, mode="uproot", is_mc=is_mc
+    )
 
-    # First, get the total number of entries for the progress bar (takes ~3min for 170M events)
-    total_events = len(uproot.concatenate(f"{input_path}:{tree}", ["run"], library="np", how=tuple)[0])
+    # First, get the total number of entries for the
+    # progress bar (takes ~3min for 170M events)
+    total_events = len(
+        uproot.concatenate(
+            f"{input_path}:{tree}", ["run"], library="np", how=tuple
+        )[0]
+    )
     logger.info("========================================")
-    logger.info(f"📂 Preprocessing file: {input_path} with {total_events:,} events")
+    logger.info(
+        f"📂 Preprocessing file: {input_path} with {total_events:,} events"
+    )
 
     iterable = uproot.iterate(
         f"{input_path}:{tree}",
         branches,
-        step_size=step_size, cut=cut_str, library="ak", num_workers=1,  # for some reason, more workers are slower
+        step_size=step_size,
+        cut=cut_str,
+        library="ak",
+        num_workers=1,  # for some reason, more workers are slower
     )
 
     n_chunks = (total_events + step_size - 1) // step_size  # Ceiling division
@@ -193,7 +242,9 @@ def pre_process_uproot(input_path, tree, output_path, configuration, step_size=1
         # Make sure we only write available branches that match the output tree
         # This handles the case where some branches might be missing in later chunks
         available_branches = set(branches) & set(branch_types.keys())
-        filtered_data_to_write = {branch: arrays[branch] for branch in available_branches}
+        filtered_data_to_write = {
+            branch: arrays[branch] for branch in available_branches
+        }
 
         # Write the filtered data for available branches only
         output_tree.extend(filtered_data_to_write)

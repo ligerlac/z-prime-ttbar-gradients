@@ -6,46 +6,54 @@ on NanoAOD ROOT files and producing histograms of observables like mtt. Supports
 correctionlib-based and function-based corrections.
 """
 
-import os
+import copy
 import glob
 import gzip
-import copy
+import logging
+import os
+import sys
+import warnings
 
-import numpy as np
 import awkward as ak
-import vector
+import cabinetry
+from coffea.analysis_tools import PackedSelection
+from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
+from correctionlib import CorrectionSet
+import hist
 import jax
 import jax.numpy as jnp
-import uproot
-import hist
+import numpy as np
+from omegaconf import OmegaConf
 import relaxed
+import uproot
+import vector
 
+from utils.configuration import config as ZprimeConfig
+from utils.cuts import lumi_mask
+from utils.input_files import construct_fileset
+from utils.output_files import save_histograms
+from utils.preproc import pre_process_dak, pre_process_uproot
+from utils.schema import Config, load_config_with_restricted_cli
+from utils.stats import get_cabinetry_rebinning_router
+
+
+# -----------------------------
+# Register backends
+# -----------------------------
 vector.register_awkward()
 ak.jax.register_and_check()
 
-from coffea.analysis_tools import PackedSelection
-from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
-from correctionlib import CorrectionSet
-
-from utils.input_files import construct_fileset
-from utils.output_files import save_histograms
-from utils.configuration import config as ZprimeConfig
-from utils.preproc import pre_process_dak, pre_process_uproot
-from utils.schema import Config
 
 # -----------------------------
 # Logging Configuration
 # -----------------------------
-import logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(levelname)s] %(message)s"
-)
+
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger("ZprimeAnalysis")
 
-import warnings
 NanoAODSchema.warn_missing_crossrefs = False
 warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
+
 
 def is_jagged(arraylike) -> bool:
     try:
@@ -60,12 +68,14 @@ def is_jagged(arraylike) -> bool:
 class ZprimeAnalysis:
     def __init__(self, config):
         """
-        Initialize ZprimeAnalysis with configuration for systematics, corrections, and channels.
+        Initialize ZprimeAnalysis with configuration for systematics, corrections,
+        and channels.
 
         Parameters
         ----------
         config : dict
-            Configuration dictionary with 'systematics', 'corrections', 'channels', and 'general'.
+            Configuration dictionary with 'systematics', 'corrections', 'channels',
+            and 'general'.
         """
         self.config = config
         self.channels = config["channels"]
@@ -91,15 +101,19 @@ class ZprimeAnalysis:
 
             if isinstance(binning, str):
                 low, high, nbins = map(float, binning.split(","))
-                axis = hist.axis.Regular(int(nbins), low, high, name="observable", label=label)
+                axis = hist.axis.Regular(
+                    int(nbins), low, high, name="observable", label=label
+                )
             else:
-                axis = hist.axis.Variable(binning, name="observable", label=label)
+                axis = hist.axis.Variable(
+                    binning, name="observable", label=label
+                )
 
             histograms[name] = hist.Hist(
                 axis,
                 hist.axis.StrCategory([], name="process", growth=True),
                 hist.axis.StrCategory([], name="variation", growth=True),
-                storage=hist.storage.Weight()
+                storage=hist.storage.Weight(),
             )
         return histograms
 
@@ -121,14 +135,15 @@ class ZprimeAnalysis:
 
             if path.endswith(".json.gz"):
                 with gzip.open(path, "rt") as f:
-                    evaluators[name] = CorrectionSet.from_string(f.read().strip())
+                    evaluators[name] = CorrectionSet.from_string(
+                        f.read().strip()
+                    )
             elif path.endswith(".json"):
                 evaluators[name] = CorrectionSet.from_file(path)
             else:
                 raise ValueError(f"Unsupported correctionlib format: {path}")
 
         return evaluators
-
 
     def get_object_copies(self, events):
         """
@@ -148,17 +163,41 @@ class ZprimeAnalysis:
 
     def get_good_objects(self, object_copies):
 
-        muons, jets, fatjets, met = object_copies["Muon"], object_copies["Jet"], object_copies["FatJet"], object_copies["PuppiMET"]
-        muons = muons[(muons.pt > 55) & (abs(muons.eta) < 2.4) & muons.tightId & (muons.miniIsoId > 1)]
-        jets = jets[(jets.pt > 30) & (abs(jets.eta) < 2.4) & jets.isTightLeptonVeto & (jets.jetId >= 4)]
-        fatjets = fatjets[(fatjets.pt > 200) & (abs(fatjets.eta) < 2.4) & (fatjets.particleNet_TvsQCD > 0.5)]
+        muons, jets, fatjets, met = (
+            object_copies["Muon"],
+            object_copies["Jet"],
+            object_copies["FatJet"],
+            object_copies["PuppiMET"],
+        )
+        muons = muons[
+            (muons.pt > 55)
+            & (abs(muons.eta) < 2.4)
+            & muons.tightId
+            & (muons.miniIsoId > 1)
+        ]
+        jets = jets[
+            (jets.pt > 30)
+            & (abs(jets.eta) < 2.4)
+            & jets.isTightLeptonVeto
+            & (jets.jetId >= 4)
+        ]
+        fatjets = fatjets[
+            (fatjets.pt > 200)
+            & (abs(fatjets.eta) < 2.4)
+            & (fatjets.particleNet_TvsQCD > 0.5)
+        ]
 
         return muons, jets, fatjets, met
 
-
     def apply_correctionlib(
-        self, name, key, direction, correction_arguments,
-        target=None, op=None, transform=None
+        self,
+        name,
+        key,
+        direction,
+        correction_arguments,
+        target=None,
+        op=None,
+        transform=None,
     ):
         """
         Apply a correction using correctionlib.
@@ -183,9 +222,7 @@ class ZprimeAnalysis:
         )
 
         if counts_to_unflatten:
-            correction = ak.unflatten(
-                correction, counts_to_unflatten[0]
-            )
+            correction = ak.unflatten(correction, counts_to_unflatten[0])
 
         if target is not None and op is not None:
             if isinstance(target, list):
@@ -206,9 +243,7 @@ class ZprimeAnalysis:
         logger.debug(f"Applying function-based systematic: {name}")
         correction = fn(*args)
         if isinstance(affects, list):
-            return [
-                self.apply_op(op, a, correction) for a in affects
-            ]
+            return [self.apply_op(op, a, correction) for a in affects]
         else:
             return self.apply_op(op, affects, correction)
 
@@ -253,27 +288,29 @@ class ZprimeAnalysis:
         for corr in corrections:
             if corr["type"] != "object":
                 continue
-            args = self._get_correction_arguments(
-                corr["use"], object_copies
-            )
+            args = self._get_correction_arguments(corr["use"], object_copies)
             targets = self._get_targets(corr["target"], object_copies)
             op = corr["op"]
             key = corr.get("key")
             transform = corr.get("transform", lambda *x: x)
             dir_map = corr.get("up_and_down_idx", ["up", "down"])
-            corr_dir = dir_map[0 if direction == "up" else 1] \
-                if direction in ["up", "down"] else "nominal"
+            corr_dir = (
+                dir_map[0 if direction == "up" else 1]
+                if direction in ["up", "down"]
+                else "nominal"
+            )
 
             if corr.get("use_correctionlib", False):
                 corrected = self.apply_correctionlib(
-                    corr["name"], key, corr_dir, args,
-                    targets, op, transform
+                    corr["name"], key, corr_dir, args, targets, op, transform
                 )
             else:
                 fn = corr.get(f"{direction}_function")
-                corrected = self.apply_syst_fn(
-                    corr["name"], fn, args, targets, op
-                ) if fn else targets
+                corrected = (
+                    self.apply_syst_fn(corr["name"], fn, args, targets, op)
+                    if fn
+                    else targets
+                )
 
             self._set_targets(corr["target"], object_copies, corrected)
 
@@ -288,9 +325,7 @@ class ZprimeAnalysis:
         if systematic["type"] != "event":
             return weights
 
-        args = self._get_correction_arguments(
-            systematic["use"], object_copies
-        )
+        args = self._get_correction_arguments(systematic["use"], object_copies)
         op = systematic["op"]
         key = systematic.get("key")
         transform = systematic.get("transform", lambda *x: x)
@@ -299,16 +334,29 @@ class ZprimeAnalysis:
 
         if systematic.get("use_correctionlib", False):
             return self.apply_correctionlib(
-                systematic["name"], key, corr_dir, args,
-                weights, op, transform
+                systematic["name"], key, corr_dir, args, weights, op, transform
             )
         else:
             fn = systematic.get(f"{direction}_function")
-            return self.apply_syst_fn(
-                systematic["name"], fn, args, weights, op
-            ) if fn else weights
+            return (
+                self.apply_syst_fn(systematic["name"], fn, args, weights, op)
+                if fn
+                else weights
+            )
 
-    def apply_selection_and_fill(self, object_copies, events, process, variation, hist_dict, xsec_weight, analysis, met_cut, event_syst=None, direction="nominal"):
+    def apply_selection_and_fill(
+        self,
+        object_copies,
+        events,
+        process,
+        variation,
+        xsec_weight,
+        analysis,
+        met_cut, 
+        event_syst=None,
+        direction="nominal",
+        tree="Events"
+    ):
         """
         Apply physics selections and fill histograms.
 
@@ -322,8 +370,6 @@ class ZprimeAnalysis:
             Sample name.
         variation : str
             Systematic variation label.
-        hist_dict : dict
-            Dictionary of output histograms.
         xsec_weight : float
             Normalization weight.
         analysis : str
@@ -341,7 +387,12 @@ class ZprimeAnalysis:
         if process == "data" and variation != "nominal":
             return
 
-        muons, jets, fatjets, met = object_copies["Muon"], object_copies["Jet"], object_copies["FatJet"], object_copies["PuppiMET"]
+        muons, jets, fatjets, met = (
+            object_copies["Muon"],
+            object_copies["Jet"],
+            object_copies["FatJet"],
+            object_copies["PuppiMET"],
+        )
 
         hard_cuts = PackedSelection(dtype='uint64')
         hard_cuts.add("dummy", ak.num(muons) > -1)
@@ -349,30 +400,62 @@ class ZprimeAnalysis:
         hard_cuts.add("exactly_1fatjet", ak.num(fatjets) == 1)
         hard_cuts.add("Zprime_channel", hard_cuts.all("exactly_1mu", "exactly_1fatjet"))
         hard_cuts.add("preselection", hard_cuts.all("dummy"))
-
+        
         for channel in self.channels:
-            print(channel)
-            chname = channel["name"]
-            mask = hard_cuts.all(chname)
-            if ak.sum(mask) == 0:
-                logger.warning(f"{analysis}:: No events left in {chname} for {process} with variation {variation}")
-                continue
-            mask = ak.to_backend(mask, "jax")
+            if (req_channels := self.config.general.channels) is not None:
+                if channel not in req_channels:    continue
 
-            object_copies = {collection: variable[mask] for collection, variable in object_copies.items()}
-            region_muons, region_fatjets, region_jets, region_met = object_copies["Muon"], object_copies["FatJet"], object_copies["Jet"], object_copies["PuppiMET"]
-            object_copies["Muon"], object_copies["FatJet"], object_copies["Jet"], object_copies["PuppiMET"] = region_muons, region_fatjets, region_jets, region_met
-            region_muons_4vec, region_jets_4vec, region_jets_4vec = [ak.zip({"pt": o.pt, "eta": o.eta, "phi": o.phi, "mass": o.mass}, with_name="Momentum4D") for o in [region_muons, region_fatjets, region_jets[:, 0]]]
+            chname = channel["name"]
+            mask = ak.Array(hard_cuts.all(chname))
+            if process == "data":
+                mask = mask & lumi_mask(self.config.general.lumifile, events)
+
+            if ak.sum(mask) == 0:
+                logger.warning(
+                    f"{analysis}:: No events left in {chname} for {process} with "
+                    + "variation {variation}"
+                )
+                continue
+
+            mask = ak.to_backend(mask, "jax")
+            object_copies = {
+                collection: variable[mask]
+                for collection, variable in object_copies.items()
+            }
+            region_muons, region_fatjets, region_jets, region_met = (
+                object_copies["Muon"],
+                object_copies["FatJet"],
+                object_copies["Jet"],
+                object_copies["PuppiMET"],
+            )
+            region_muons_4vec, region_fatjets_4vec, region_jets_4vec = [
+                ak.zip(
+                    {"pt": o.pt, "eta": o.eta, "phi": o.phi, "mass": o.mass},
+                    with_name="Momentum4D",
+                )
+                for o in [region_muons, region_fatjets, region_jets[:, 0]]
+            ]
             region_met_4vec = ak.zip(
-                {"pt": region_met.pt, "eta": 0 * region_met.pt, "phi": region_met.phi, "mass": 0},
+                {
+                    "pt": region_met.pt,
+                    "eta": 0 * region_met.pt,
+                    "phi": region_met.phi,
+                    "mass": 0,
+                },
                 with_name="Momentum4D",
             )
 
-            mtt = ak.flatten((region_muons_4vec + region_jets_4vec + region_jets_4vec + region_met_4vec).mass)
+            mtt = ak.flatten(
+                (
+                    region_muons_4vec
+                    + region_fatjets_4vec
+                    + region_jets_4vec
+                    + region_met_4vec
+                ).mass
+            )
             mtt.type.show()
 
             region_lep_ht = region_muons.pt + region_met.pt
-
             soft_cuts = {
                 "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1) > 0,
                 # "met_cut": met.pt > 50,
@@ -386,22 +469,74 @@ class ZprimeAnalysis:
             soft_cuts = {k: jnp.array(ak.to_jax(v), dtype=float) for k, v in soft_cuts.items()}
 
             weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
-
-            print("weights", weights)
-
+            logger.info(f"Weights:: {weights} ")
+            
             if process != "data":
-                weights *= events[mask].genWeight * xsec_weight / abs(events[mask].genWeight)
+                weights *= (
+                    events[mask].genWeight
+                    * xsec_weight
+                    / abs(events[mask].genWeight)
+                )
             else:
                 weights *= np.ones(len(region_met))
 
             if event_syst and process != "data":
-                weights = self.apply_event_weight_correction(weights, event_syst, direction, object_copies)
+                weights = self.apply_event_weight_correction(
+                    weights, event_syst, direction, object_copies
+                )
 
-            self.nD_hists_per_region[chname].fill(observable=mtt, process=process, variation=variation, weight=weights)
+            self.nD_hists_per_region[chname].fill(
+                observable=mtt,
+                process=process,
+                variation=variation,
+                weight=weights,
+            )
             return sum(weights) # return some dummy value to test auto-diff
 
+    def run_fit(self, cabinetry_config):
+        """
+        Run the fit using cabinetry.
 
-    def process(self, events, metadata):
+        Parameters
+        ----------
+        cabinetry_config : dict
+            Configuration for cabinetry.
+        """
+
+        # what do we do with this
+        rebinning_router = get_cabinetry_rebinning_router(
+            cabinetry_config, rebinning=slice(110j, None, hist.rebin(2))
+        )
+        # build the templates
+        cabinetry.templates.build(
+            cabinetry_config, router=rebinning_router
+        )
+        # optional post-processing (e.g. smoothing, symmetrise)
+        cabinetry.templates.postprocess(
+            cabinetry_config
+        )
+        # build the workspace
+        ws = cabinetry.workspace.build(cabinetry_config)
+        # save the workspace
+        workspace_path = self.config.general.output_dir + "/statistics/"
+        os.makedirs(workspace_path, exist_ok=True)
+        workspace_path += "workspace.json"
+        cabinetry.workspace.save(ws, workspace_path)
+        # build the model and data
+        model, data = cabinetry.model_utils.model_and_data(ws)
+        # get pre-fit predictions
+        prefit_prediction = cabinetry.model_utils.prediction(model)
+        # perform the fit
+        results = cabinetry.fit.fit(
+            model,
+            data,
+        )  # perform the fit
+        postfit_prediction = cabinetry.model_utils.prediction(model, fit_results=results)
+
+        return data, results, prefit_prediction, postfit_prediction
+
+
+    def process(self, events, metadata, tree="Events"):
         """
         Run the full analysis logic on a batch of events.
 
@@ -422,6 +557,7 @@ class ZprimeAnalysis:
 
         process = metadata["process"]
         variation = metadata.get("variation", "nominal")
+        logger.debug(f"Processing {process} with variation {variation}")
         xsec = metadata["xsec"]
         n_gen = metadata["nevts"]
         lumi = self.config["general"]["lumi"]
@@ -431,13 +567,37 @@ class ZprimeAnalysis:
         obj_copies = self.get_object_copies(events)
         # filter objects
         muons, jets, fatjets, met = self.get_good_objects(obj_copies)
-        obj_copies["Muon"], obj_copies["Jet"], obj_copies["FatJet"], obj_copies["PuppiMET"] = muons, jets, fatjets, met
+        (
+            obj_copies["Muon"],
+            obj_copies["Jet"],
+            obj_copies["FatJet"],
+            obj_copies["PuppiMET"],
+        ) = (muons, jets, fatjets, met)
         # apply nominal corrections
-        obj_copies = self.apply_object_corrections(obj_copies, self.corrections, direction="nominal")
+
+        obj_copies = self.apply_object_corrections(
+            obj_copies, self.corrections, direction="nominal"
+        )
         apply_secetion_and_fill_grad = jax.value_and_grad(self.apply_selection_and_fill, argnums=7, has_aux=False)
-        val, grad = apply_secetion_and_fill_grad(obj_copies, events, process, variation, hist_dict, xsec_weight, analysis, 50.)
-        print(f"val: {val}, grad: {grad}")
-        self.apply_selection_and_fill(obj_copies, events, process, "nominal", hist_dict, xsec_weight, analysis, 50)
+        val, grad = apply_secetion_and_fill_grad(obj_copies, 
+                                                 events, 
+                                                 process, 
+                                                 variation, 
+                                                 hist_dict, 
+                                                 xsec_weight, 
+                                                 analysis, 
+                                                 50.)
+        logger.info(f"val: {val}, grad: {grad}")
+        self.apply_selection_and_fill(
+            obj_copies,
+            events,
+            process,
+            "nominal",
+            xsec_weight,
+            analysis,
+            50.,
+            tree=tree,
+        )
 
         # Systematic variations
         for syst in self.systematics + self.corrections:
@@ -447,11 +607,27 @@ class ZprimeAnalysis:
                 obj_copies = self.get_object_copies(events)
                 # filter objects
                 muons, jets, fatjets, met = self.get_good_objects(obj_copies)
-                obj_copies["Muon"], obj_copies["Jet"], obj_copies["FatJet"], obj_copies["PuppiMET"] = muons, jets, fatjets, met
+                (
+                    obj_copies["Muon"],
+                    obj_copies["Jet"],
+                    obj_copies["FatJet"],
+                    obj_copies["PuppiMET"],
+                ) = (muons, jets, fatjets, met)
                 # apply corrections
-                obj_copies = self.apply_object_corrections(obj_copies, [syst], direction=direction)
+                obj_copies = self.apply_object_corrections(
+                    obj_copies, [syst], direction=direction
+                )
                 varname = f"{syst['name']}_{direction}"
-                self.apply_selection_and_fill(obj_copies, events, process, varname, hist_dict, xsec_weight, analysis, event_syst=syst, direction=direction)
+                self.apply_selection_and_fill(
+                    obj_copies,
+                    events,
+                    process,
+                    varname,
+                    xsec_weight,
+                    analysis,
+                    event_syst=syst,
+                    direction=direction,
+                )
 
 
 # -----------------------------
@@ -462,48 +638,101 @@ def main():
     Main driver function for running the Zprime analysis framework.
     Loads configuration, runs preprocessing, and dispatches analysis over datasets.
     """
-    config = Config(**ZprimeConfig)
+
+    cli_args = sys.argv[1:]
+    full_config = load_config_with_restricted_cli(ZprimeConfig, cli_args)
+    config = Config(**full_config)  # Pydantic validation
+    # ✅ You now have a fully validated config object
+    print(f"Luminosity: {config.general.lumi}")
+
     analysis = ZprimeAnalysis(config)
-    fileset = construct_fileset(n_files_max_per_sample=config.general.max_files)
+    fileset = construct_fileset(
+        n_files_max_per_sample=config.general.max_files
+    )
 
     for dataset, content in fileset.items():
-        if not "signal" in dataset:
-            continue
-        os.makedirs(f"{config.general.output_dir}/{dataset}", exist_ok=True)
         metadata = content["metadata"]
         metadata["dataset"] = dataset
+        variation = metadata.get("variation", "nominal")
+
+        if (req_processes := config.general.processes) is not None:
+            if dataset.split("__")[0] not in req_processes:    continue
+
+        os.makedirs(f"{config.general.output_dir}/{dataset}", exist_ok=True)
 
         logger.info("========================================")
         logger.info(f"🚀 Processing dataset: {dataset}")
 
         for idx, (file_path, tree) in enumerate(content["files"].items()):
-            output_dir = f"output/{dataset}/file__{idx}/" if not config.general.preprocessed_dir else f"{config.general.preprocessed_dir}/{dataset}/file__{idx}/"
-            if config.general.max_files != -1 and idx >= config.general.max_files:  continue
+            output_dir = (
+                f"output/{dataset}/file__{idx}/"
+                if not config.general.preprocessed_dir
+                else f"{config.general.preprocessed_dir}/{dataset}/file__{idx}/"
+            )
+            if (
+                config.general.max_files != -1
+                and idx >= config.general.max_files
+            ):
+                continue
             if config.general.run_preprocessing:
                 logger.info(f"🔍 Preprocessing input file: {file_path}")
                 logger.info(f"➡️  Writing to: {output_dir}")
                 if config.general.preprocessor == "uproot":
-                    pre_process_uproot(file_path, tree, output_dir, config, logger=logger, is_mc=(dataset != "data"))
+                    pre_process_uproot(
+                        file_path,
+                        tree,
+                        output_dir,
+                        config,
+                        is_mc=(dataset != "data"),
+                    )
                 elif config.general.preprocessor == "dask":
-                    pre_process_dak(file_path, tree, output_dir+f"/part{idx}.root", config, logger=logger, is_mc=(dataset != "data"))
+                    pre_process_dak(
+                        file_path,
+                        tree,
+                        output_dir + f"/part{idx}.root",
+                        config,
+                        is_mc=(dataset != "data"),
+                    )
 
             skimmed_files = glob.glob(f"{output_dir}/part*.root")
-            print(output_dir, f"Skimmed files: {skimmed_files}")
             skimmed_files = [f"{f}:{tree}" for f in skimmed_files]
             remaining = sum(uproot.open(f).num_entries for f in skimmed_files)
             logger.info(f"✅ Events retained after filtering: {remaining:,}")
             if config.general.run_histogramming:
                 for skimmed in skimmed_files:
                     logger.info(f"📘 Processing skimmed file: {skimmed}")
-                    events = NanoEventsFactory.from_root(skimmed, schemaclass=NanoAODSchema, delayed=False).events()
+                    events = NanoEventsFactory.from_root(
+                        skimmed, schemaclass=NanoAODSchema, delayed=False
+                    ).events()
                     events = ak.to_backend(events, "jax")
-                    analysis.process(events, metadata)
+                    analysis.process(events, metadata, tree=tree)
                     logger.info("📈 Histogram filling complete.")
 
         logger.info(f"🏁 Finished dataset: {dataset}\n")
 
     logger.info("✅ All datasets processed.")
-    save_histograms(analysis.nD_hists_per_region, output_file=f"{config.general.output_dir}/histograms/histograms.root")
+    if config.general.run_histogramming:
+        save_histograms(
+            analysis.nD_hists_per_region,
+            output_file=f"{config.general.output_dir}/histograms/histograms.root",
+        )
+
+    if config.general.run_statistics:
+        cabinetry_config = cabinetry.configuration.load(
+            config.statistics.cabinetry_config
+        )
+        data, fit_results, pre_fit_predictions, postfit_predictions = analysis.run_fit(
+            cabinetry_config=cabinetry_config
+        )
+        cabinetry.visualize.data_mc(
+            pre_fit_predictions, data, close_figure=False, config=cabinetry_config
+        )
+        cabinetry.visualize.data_mc(
+            postfit_predictions, data, close_figure=False, config=cabinetry_config
+        )
+        cabinetry.visualize.pulls(
+            fit_results, close_figure=False
+        )
 
 if __name__ == "__main__":
     main()

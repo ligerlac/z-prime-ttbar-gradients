@@ -9,25 +9,34 @@ import awkward as ak
 import uproot
 
 
-def process_with_selection(input_file, output_file, tree_name, branches, cut_str="", chunk_size=100_000):
+def process_with_selection(
+    input_file, output_file, tree_name, branches, cut_str="", chunk_size=100_000
+):
     """
     Process a ROOT file by applying a selection function on chunks of data
     and saving the filtered results to a new file, with a progress bar.
     """
 
     # First, get the total number of entries for the progress bar (takes ~3min for 170M events)
-    total_entries = len(uproot.concatenate(f"{input_file}:{tree_name}", ["run"], library="np", how=tuple)[0])
+    total_entries = len(
+        uproot.concatenate(
+            f"{input_file}:{tree_name}", ["run"], library="np", how=tuple
+        )[0]
+    )
     print(f"Found {total_entries} entries")
 
     iterable = uproot.iterate(
         f"{input_file}:{tree_name}",
         branches,
-        step_size=chunk_size, cut=cut_str, library="ak", num_workers=1,  # for some reason, more workers are slower
+        step_size=chunk_size,
+        cut=cut_str,
+        library="ak",
+        num_workers=1,  # for some reason, more workers are slower
     )
 
     n_chunks = (total_entries + chunk_size - 1) // chunk_size  # Ceiling division
     pbar = tqdm(iterable, total=n_chunks, desc="Processing events")
-    
+
     # Initialize output file and tree
     output = None
     output_tree = None
@@ -35,7 +44,7 @@ def process_with_selection(input_file, output_file, tree_name, branches, cut_str
 
     for arrays in pbar:
         branches = arrays.fields
-        
+
         # For the first chunk, create the output file
         if output is None:
             output = uproot.recreate(output_file)
@@ -44,23 +53,25 @@ def process_with_selection(input_file, output_file, tree_name, branches, cut_str
             for branch in arrays.fields:
                 if isinstance(arrays[branch], ak.Array):
                     branch_types[branch] = arrays[branch].type
-                else:   
+                else:
                     branch_types[branch] = np.dtype(arrays[branch].dtype)
-                        
+
             # Create the output tree with proper types
             output_tree = output.mktree(tree_name, branch_types)
-        
+
         # Make sure we only write available branches that match the output tree
         # This handles the case where some branches might be missing in later chunks
         available_branches = set(branches) & set(branch_types.keys())
-        filtered_data_to_write = {branch: arrays[branch] for branch in available_branches}
-        
+        filtered_data_to_write = {
+            branch: arrays[branch] for branch in available_branches
+        }
+
         # Write the filtered data for available branches only
         output_tree.extend(filtered_data_to_write)
-    
+
     # Close the progress bar
     pbar.close()
-    
+
     # Close the output file if it was created
     if output is not None:
         output.close()
@@ -74,13 +85,26 @@ def process_with_selection(input_file, output_file, tree_name, branches, cut_str
 def main(args):
 
     branches = [
-        "Muon_pt", "Muon_eta", "Muon_phi", "Muon_mass",
-        "Muon_miniIsoId", "Muon_tightId",
-        "FatJet_particleNet_TvsQCD", "FatJet_pt", "FatJet_eta",
-        "FatJet_phi", "FatJet_mass",
-        "Jet_btagDeepB", "Jet_jetId", "Jet_pt", "Jet_eta",
-        "Jet_phi", "Jet_mass",
-        "PuppiMET_pt", "PuppiMET_pt", "PuppiMET_phi",
+        "Muon_pt",
+        "Muon_eta",
+        "Muon_phi",
+        "Muon_mass",
+        "Muon_miniIsoId",
+        "Muon_tightId",
+        "FatJet_particleNet_TvsQCD",
+        "FatJet_pt",
+        "FatJet_eta",
+        "FatJet_phi",
+        "FatJet_mass",
+        "Jet_btagDeepB",
+        "Jet_jetId",
+        "Jet_pt",
+        "Jet_eta",
+        "Jet_phi",
+        "Jet_mass",
+        "PuppiMET_pt",
+        "PuppiMET_pt",
+        "PuppiMET_phi",
     ]
 
     if args.is_mc:
@@ -92,7 +116,7 @@ def main(args):
         tree_name="Events",
         branches=branches,
         cut_str="HLT_TkMu50*(PuppiMET_pt>50)",
-        chunk_size=100_000
+        chunk_size=100_000,
     )
 
 
