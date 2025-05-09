@@ -362,7 +362,6 @@ class ZprimeAnalysis:
         met_cut,
         event_syst=None,
         direction="nominal",
-        tree="Events",
         tracing=False,
     ):
         """
@@ -521,7 +520,7 @@ class ZprimeAnalysis:
         return data, results, prefit_prediction, postfit_prediction
 
 
-    def process(self, events, metadata, tree="Events"):
+    def process(self, events, metadata):
         """
         Run the full analysis logic on a batch of events.
 
@@ -581,7 +580,6 @@ class ZprimeAnalysis:
             xsec_weight,
             analysis,
             50.,
-            tree=tree,
             tracing=False,
         )
 
@@ -693,7 +691,7 @@ def main():
                         skimmed, schemaclass=NanoAODSchema, delayed=False
                     ).events()
                     events = ak.to_backend(events, "jax")
-                    analysis.process(events, metadata, tree=tree)
+                    analysis.process(events, metadata)
                     logger.info("📈 Histogram filling complete.")
 
         logger.info(f"🏁 Finished dataset: {dataset}\n")
