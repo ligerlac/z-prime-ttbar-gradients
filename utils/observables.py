@@ -27,27 +27,6 @@ def get_mtt(muons, jets, fatjets, met):
         },
         with_name="Momentum4D",
     )
-    print("xx")
-    print(
-        ak.backend(region_muons_4vec),
-        ak.backend(region_fatjets_4vec),
-        ak.backend(region_jets_4vec),
-        ak.backend(region_met_4vec),
-    )
-    print(
-        ak.backend(muons),
-        ak.backend(fatjets),
-        ak.backend(jets),
-        ak.backend(met),
-    )
-    print(
-        region_muons_4vec.type.show(),
-        region_fatjets_4vec.type.show(),
-        region_jets_4vec.type.show(),
-        region_met_4vec.type.show(),
-    )
-
-    print(region_muons_4vec, region_fatjets_4vec, region_jets_4vec, region_met_4vec)
 
     mtt = ak.flatten(
         (

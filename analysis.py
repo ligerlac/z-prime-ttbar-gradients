@@ -25,7 +25,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from omegaconf import OmegaConf
-#import relaxed
 import uproot
 import vector
 
@@ -50,6 +49,7 @@ vector.register_awkward()
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger("ZprimeAnalysis")
+logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 
 NanoAODSchema.warn_missing_crossrefs = False
 warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
@@ -362,7 +362,8 @@ class ZprimeAnalysis:
         met_cut,
         event_syst=None,
         direction="nominal",
-        tree="Events"
+        tree="Events",
+        tracing=False,
     ):
         """
         Apply physics selections and fill histograms.
@@ -444,7 +445,8 @@ class ZprimeAnalysis:
             soft_cuts = {k: jnp.array(ak.to_jax(v), dtype=float) for k, v in soft_cuts.items()}
 
             weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
-            logger.info(f"Weights:: {weights} ")
+            if tracing:
+                logger.info(f"Weights:: {weights} ")
 
             if process != "data":
                 weights *= (
@@ -466,16 +468,15 @@ class ZprimeAnalysis:
                     observable["use"], object_copies
                 )
                 observable_vals = observable["function"](*observable_args)
-                observable_vals.type.show()
-
-                self.nD_hists_per_region[chname][observable_name].fill(
-                    observable=observable_vals,
-                    process=process,
-                    variation=variation,
-                    weight=jax.lax.stop_gradient(weights),
-                )
-
-                return ak.sum(weights) # return some dummy value to test auto-diff
+                if not tracing:
+                    self.nD_hists_per_region[chname][observable_name].fill(
+                        observable=observable_vals,
+                        process=process,
+                        variation=variation,
+                        weight=jax.lax.stop_gradient(weights),
+                    )
+                else:
+                    return ak.sum(weights) # return some dummy value to test auto-diff
 
     def run_fit(self, cabinetry_config):
         """
@@ -568,8 +569,10 @@ class ZprimeAnalysis:
                                                  variation,
                                                  xsec_weight,
                                                  analysis,
-                                                 50.)
+                                                 50.,
+                                                 tracing=True)
         logger.info(f"val: {val}, grad: {grad}")
+
         self.apply_selection_and_fill(
             obj_copies,
             events,
@@ -579,6 +582,7 @@ class ZprimeAnalysis:
             analysis,
             50.,
             tree=tree,
+            tracing=False,
         )
 
         # Systematic variations
@@ -610,6 +614,7 @@ class ZprimeAnalysis:
                     50.0,
                     event_syst=syst,
                     direction=direction,
+                    tracing=False,
                 )
 
 
