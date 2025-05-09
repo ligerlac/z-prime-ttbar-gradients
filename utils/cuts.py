@@ -1,6 +1,7 @@
 import awkward as ak
-import numpy as np
 from coffea.analysis_tools import PackedSelection
+import numpy as np
+
 
 # https://github.com/cms-opendata-workshop/workshop2024-lesson-event-selection/blob/main/instructors/dpoa_workshop_utilities.py
 def lumi_mask(lumifile, events, verbose=False):
@@ -82,7 +83,7 @@ def Zprime_workshop_selection(muons, jets, fatjets, met):
         "Zprime_channel",
         selections.all(
             "exactly_1mu",
-#            "met_cut",
+            #            "met_cut",
             "exactly_1fatjet",
             # "atleast_1b",
             # "lep_ht_cut",
@@ -90,6 +91,7 @@ def Zprime_workshop_selection(muons, jets, fatjets, met):
     )
 
     return selections
+
 
 def Zprime_workshop_selection_dummy(muons, jets, fatjets, met):
     """

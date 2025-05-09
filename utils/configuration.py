@@ -1,6 +1,9 @@
 import numpy as np
 
-from utils.cuts import (Zprime_workshop_selection, Zprime_workshop_selection_dummy)
+from utils.cuts import (
+    Zprime_workshop_selection,
+    Zprime_workshop_selection_dummy,
+)
 from utils.observables import get_mtt, get_mtt_sq
 from utils.systematics import jet_pt_resolution, jet_pt_scale
 
@@ -15,7 +18,7 @@ config = {
         "output_dir": "output/",
         "preprocessed_dir": "./preproc_uproot/z-prime-ttbar-data/",
         "processor": "uproot",
-        "lumifile": "./corrections/Cert_271036-284044_13TeV_Legacy2016_Collisions16_JSON.txt"
+        "lumifile": "./corrections/Cert_271036-284044_13TeV_Legacy2016_Collisions16_JSON.txt",
     },
     "preprocess": {
         "branches": {
@@ -54,9 +57,7 @@ config = {
             "Pileup": ["nTrueInt"],
         },
     },
-    "statistics": {
-        "cabinetry_config": "cabinetry/cabinetry_config.yaml"
-    },
+    "statistics": {"cabinetry_config": "cabinetry/cabinetry_config.yaml"},
     "channels": [
         {
             "name": "Zprime_channel",
@@ -85,7 +86,7 @@ config = {
                         ("FatJet", None),
                         ("PuppiMET", None),
                     ],
-                }
+                },
             ],
             "selection_function": Zprime_workshop_selection,
             "selection_use": [

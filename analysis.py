@@ -6,7 +6,6 @@ on NanoAOD ROOT files and producing histograms of observables like mtt. Supports
 correctionlib-based and function-based corrections.
 """
 
-import copy
 from collections import defaultdict
 import glob
 import gzip
@@ -17,14 +16,13 @@ import warnings
 
 import awkward as ak
 import cabinetry
-from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 from coffea.analysis_tools import PackedSelection
+from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 from correctionlib import CorrectionSet
 import hist
 import jax
 import jax.numpy as jnp
 import numpy as np
-from omegaconf import OmegaConf
 import uproot
 import vector
 
@@ -97,7 +95,8 @@ class ZprimeAnalysis:
         for channel in self.channels:
             chname = channel["name"]
             if (req_channels := self.config.general.channels) is not None:
-                if chname not in req_channels:    continue
+                if chname not in req_channels:
+                    continue
 
             for observable in channel["observables"]:
 
@@ -106,13 +105,21 @@ class ZprimeAnalysis:
                 observable_name = observable["name"]
 
                 if isinstance(observable_binning, str):
-                    low, high, nbins = map(float, observable_binning.split(","))
+                    low, high, nbins = map(
+                        float, observable_binning.split(",")
+                    )
                     axis = hist.axis.Regular(
-                        int(nbins), low, high, name="observable", label=observable_label
+                        int(nbins),
+                        low,
+                        high,
+                        name="observable",
+                        label=observable_label,
                     )
                 else:
                     axis = hist.axis.Variable(
-                        observable_binning, name="observable", label=observable_label
+                        observable_binning,
+                        name="observable",
+                        label=observable_label,
                     )
 
                 histograms[chname][observable_name] = hist.Hist(
@@ -233,9 +240,7 @@ class ZprimeAnalysis:
         if target is not None and op is not None:
             if isinstance(target, list):
                 correction = ak.to_backend(correction, ak.backend(target[0]))
-                return [
-                    self.apply_op(op, t, correction) for t in target
-                ]
+                return [self.apply_op(op, t, correction) for t in target]
             else:
                 correction = ak.to_backend(correction, ak.backend(target))
                 return self.apply_op(op, target, correction)
@@ -268,8 +273,10 @@ class ZprimeAnalysis:
         """
         Extract correction arguments from object_copies.
         """
-        return [object_copies[obj][var] if var is not None
-                else object_copies[obj] for obj, var in use]
+        return [
+            object_copies[obj][var] if var is not None else object_copies[obj]
+            for obj, var in use
+        ]
 
     def _get_targets(self, target, object_copies):
         """
@@ -394,21 +401,27 @@ class ZprimeAnalysis:
         if process == "data" and variation != "nominal":
             return
 
-
         for channel in self.channels:
             chname = channel["name"]
             if (req_channels := self.config.general.channels) is not None:
-                if chname not in req_channels:    continue
+                if chname not in req_channels:
+                    continue
 
             mask = 1
-            if (selection_funciton := channel["selection_function"]) is not None:
-                selection_args = self._get_function_arguments(channel["selection_use"], object_copies)
+            if (
+                selection_funciton := channel["selection_function"]
+            ) is not None:
+                selection_args = self._get_function_arguments(
+                    channel["selection_use"], object_copies
+                )
                 packed_selection = selection_funciton(*selection_args)
                 if not isinstance(packed_selection, PackedSelection):
                     raise ValueError(
                         f"PackedSelection expected, got {type(packed_selection)}"
                     )
-                mask = ak.Array(packed_selection.all(packed_selection.names[-1]))
+                mask = ak.Array(
+                    packed_selection.all(packed_selection.names[-1])
+                )
 
             if process == "data":
                 mask = mask & lumi_mask(self.config.general.lumifile, events)
@@ -434,14 +447,20 @@ class ZprimeAnalysis:
             soft_cuts = {
                 "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1) > 0,
                 # "met_cut": met.pt > 50,
-                # "met_cut", relaxed.cut(met.pt, 50),  # fails - relaxed not compatible with awkward
                 # "met_cut": 0.5*jnp.tanh((ak.to_jax(region_met.pt)-50)/100)+0.5,
-                "met_cut": jax.nn.sigmoid((ak.to_jax(region_met.pt) - met_cut) / met_cut),
-                "lep_ht_cut": ak.fill_none(ak.firsts(region_lep_ht) > 150, False),
+                "met_cut": jax.nn.sigmoid(
+                    (ak.to_jax(region_met.pt) - met_cut) / met_cut
+                ),
+                "lep_ht_cut": ak.fill_none(
+                    ak.firsts(region_lep_ht) > 150, False
+                ),
             }
 
             # Convert selections to JAX arrays with float dtype
-            soft_cuts = {k: jnp.array(ak.to_jax(v), dtype=float) for k, v in soft_cuts.items()}
+            soft_cuts = {
+                k: jnp.array(ak.to_jax(v), dtype=float)
+                for k, v in soft_cuts.items()
+            }
 
             weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
             if tracing:
@@ -475,7 +494,9 @@ class ZprimeAnalysis:
                         weight=jax.lax.stop_gradient(weights),
                     )
                 else:
-                    return ak.sum(weights) # return some dummy value to test auto-diff
+                    return ak.sum(
+                        weights
+                    )  # return some dummy value to test auto-diff
 
     def run_fit(self, cabinetry_config):
         """
@@ -492,13 +513,9 @@ class ZprimeAnalysis:
             cabinetry_config, rebinning=slice(110j, None, hist.rebin(2))
         )
         # build the templates
-        cabinetry.templates.build(
-            cabinetry_config, router=rebinning_router
-        )
+        cabinetry.templates.build(cabinetry_config, router=rebinning_router)
         # optional post-processing (e.g. smoothing, symmetrise)
-        cabinetry.templates.postprocess(
-            cabinetry_config
-        )
+        cabinetry.templates.postprocess(cabinetry_config)
         # build the workspace
         ws = cabinetry.workspace.build(cabinetry_config)
         # save the workspace
@@ -515,10 +532,11 @@ class ZprimeAnalysis:
             model,
             data,
         )  # perform the fit
-        postfit_prediction = cabinetry.model_utils.prediction(model, fit_results=results)
+        postfit_prediction = cabinetry.model_utils.prediction(
+            model, fit_results=results
+        )
 
         return data, results, prefit_prediction, postfit_prediction
-
 
     def process(self, events, metadata):
         """
@@ -561,15 +579,19 @@ class ZprimeAnalysis:
         obj_copies = self.apply_object_corrections(
             obj_copies, self.corrections, direction="nominal"
         )
-        apply_selection_and_fill_grad = jax.value_and_grad(self.apply_selection_and_fill, argnums=6, has_aux=False)
-        val, grad = apply_selection_and_fill_grad(obj_copies,
-                                                 events,
-                                                 process,
-                                                 variation,
-                                                 xsec_weight,
-                                                 analysis,
-                                                 50.,
-                                                 tracing=True)
+        apply_selection_and_fill_grad = jax.value_and_grad(
+            self.apply_selection_and_fill, argnums=6, has_aux=False
+        )
+        val, grad = apply_selection_and_fill_grad(
+            obj_copies,
+            events,
+            process,
+            variation,
+            xsec_weight,
+            analysis,
+            50.0,
+            tracing=True,
+        )
         logger.info(f"val: {val}, grad: {grad}")
 
         self.apply_selection_and_fill(
@@ -579,7 +601,7 @@ class ZprimeAnalysis:
             "nominal",
             xsec_weight,
             analysis,
-            50.,
+            50.0,
             tracing=False,
         )
 
@@ -629,7 +651,7 @@ def main():
     full_config = load_config_with_restricted_cli(ZprimeConfig, cli_args)
     config = Config(**full_config)  # Pydantic validation
     # ✅ You now have a fully validated config object
-    print(f"Luminosity: {config.general.lumi}")
+    logger.info(f"Luminosity: {config.general.lumi}")
 
     analysis = ZprimeAnalysis(config)
     fileset = construct_fileset(
@@ -639,10 +661,10 @@ def main():
     for dataset, content in fileset.items():
         metadata = content["metadata"]
         metadata["dataset"] = dataset
-        variation = metadata.get("variation", "nominal")
 
         if (req_processes := config.general.processes) is not None:
-            if dataset.split("__")[0] not in req_processes:    continue
+            if dataset.split("__")[0] not in req_processes:
+                continue
 
         os.makedirs(f"{config.general.output_dir}/{dataset}", exist_ok=True)
 
@@ -707,18 +729,23 @@ def main():
         cabinetry_config = cabinetry.configuration.load(
             config.statistics.cabinetry_config
         )
-        data, fit_results, pre_fit_predictions, postfit_predictions = analysis.run_fit(
-            cabinetry_config=cabinetry_config
+        data, fit_results, pre_fit_predictions, postfit_predictions = (
+            analysis.run_fit(cabinetry_config=cabinetry_config)
         )
         cabinetry.visualize.data_mc(
-            pre_fit_predictions, data, close_figure=False, config=cabinetry_config
+            pre_fit_predictions,
+            data,
+            close_figure=False,
+            config=cabinetry_config,
         )
         cabinetry.visualize.data_mc(
-            postfit_predictions, data, close_figure=False, config=cabinetry_config
+            postfit_predictions,
+            data,
+            close_figure=False,
+            config=cabinetry_config,
         )
-        cabinetry.visualize.pulls(
-            fit_results, close_figure=False
-        )
+        cabinetry.visualize.pulls(fit_results, close_figure=False)
+
 
 if __name__ == "__main__":
     main()
