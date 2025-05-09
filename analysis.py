@@ -6,7 +6,7 @@ on NanoAOD ROOT files and producing histograms of observables like mtt. Supports
 correctionlib-based and function-based corrections.
 """
 
-import copy
+from collections import defaultdict
 import glob
 import gzip
 import logging
@@ -23,8 +23,6 @@ import hist
 import jax
 import jax.numpy as jnp
 import numpy as np
-from omegaconf import OmegaConf
-import relaxed
 import uproot
 import vector
 
@@ -40,9 +38,8 @@ from utils.stats import get_cabinetry_rebinning_router
 # -----------------------------
 # Register backends
 # -----------------------------
-vector.register_awkward()
 ak.jax.register_and_check()
-
+vector.register_awkward()
 
 # -----------------------------
 # Logging Configuration
@@ -50,6 +47,7 @@ ak.jax.register_and_check()
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger("ZprimeAnalysis")
+logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 
 NanoAODSchema.warn_missing_crossrefs = False
 warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
@@ -93,28 +91,43 @@ class ZprimeAnalysis:
         dict
             Dictionary of channel name to hist.Hist object.
         """
-        histograms = {}
+        histograms = defaultdict(dict)
         for channel in self.channels:
-            name = channel["name"]
-            label = channel["observable_label"]
-            binning = channel["observable_binning"]
+            chname = channel["name"]
+            if (req_channels := self.config.general.channels) is not None:
+                if chname not in req_channels:
+                    continue
 
-            if isinstance(binning, str):
-                low, high, nbins = map(float, binning.split(","))
-                axis = hist.axis.Regular(
-                    int(nbins), low, high, name="observable", label=label
-                )
-            else:
-                axis = hist.axis.Variable(
-                    binning, name="observable", label=label
-                )
+            for observable in channel["observables"]:
 
-            histograms[name] = hist.Hist(
-                axis,
-                hist.axis.StrCategory([], name="process", growth=True),
-                hist.axis.StrCategory([], name="variation", growth=True),
-                storage=hist.storage.Weight(),
-            )
+                observable_label = observable["label"]
+                observable_binning = observable["binning"]
+                observable_name = observable["name"]
+
+                if isinstance(observable_binning, str):
+                    low, high, nbins = map(
+                        float, observable_binning.split(",")
+                    )
+                    axis = hist.axis.Regular(
+                        int(nbins),
+                        low,
+                        high,
+                        name="observable",
+                        label=observable_label,
+                    )
+                else:
+                    axis = hist.axis.Variable(
+                        observable_binning,
+                        name="observable",
+                        label=observable_label,
+                    )
+
+                histograms[chname][observable_name] = hist.Hist(
+                    axis,
+                    hist.axis.StrCategory([], name="process", growth=True),
+                    hist.axis.StrCategory([], name="variation", growth=True),
+                    storage=hist.storage.Weight(),
+                )
         return histograms
 
     def _load_correctionlib(self):
@@ -227,9 +240,7 @@ class ZprimeAnalysis:
         if target is not None and op is not None:
             if isinstance(target, list):
                 correction = ak.to_backend(correction, ak.backend(target[0]))
-                return [
-                    self.apply_op(op, t, correction) for t in target
-                ]
+                return [self.apply_op(op, t, correction) for t in target]
             else:
                 correction = ak.to_backend(correction, ak.backend(target))
                 return self.apply_op(op, target, correction)
@@ -258,11 +269,14 @@ class ZprimeAnalysis:
         else:
             raise ValueError(f"Unsupported operation: {op}")
 
-    def _get_correction_arguments(self, use, object_copies):
+    def _get_function_arguments(self, use, object_copies):
         """
         Extract correction arguments from object_copies.
         """
-        return [object_copies[obj][var] for obj, var in use]
+        return [
+            object_copies[obj][var] if var is not None else object_copies[obj]
+            for obj, var in use
+        ]
 
     def _get_targets(self, target, object_copies):
         """
@@ -288,7 +302,7 @@ class ZprimeAnalysis:
         for corr in corrections:
             if corr["type"] != "object":
                 continue
-            args = self._get_correction_arguments(corr["use"], object_copies)
+            args = self._get_function_arguments(corr["use"], object_copies)
             targets = self._get_targets(corr["target"], object_copies)
             op = corr["op"]
             key = corr.get("key")
@@ -325,7 +339,7 @@ class ZprimeAnalysis:
         if systematic["type"] != "event":
             return weights
 
-        args = self._get_correction_arguments(systematic["use"], object_copies)
+        args = self._get_function_arguments(systematic["use"], object_copies)
         op = systematic["op"]
         key = systematic.get("key")
         transform = systematic.get("transform", lambda *x: x)
@@ -352,10 +366,10 @@ class ZprimeAnalysis:
         variation,
         xsec_weight,
         analysis,
-        met_cut, 
+        met_cut,
         event_syst=None,
         direction="nominal",
-        tree="Events"
+        tracing=False,
     ):
         """
         Apply physics selections and fill histograms.
@@ -387,26 +401,28 @@ class ZprimeAnalysis:
         if process == "data" and variation != "nominal":
             return
 
-        muons, jets, fatjets, met = (
-            object_copies["Muon"],
-            object_copies["Jet"],
-            object_copies["FatJet"],
-            object_copies["PuppiMET"],
-        )
-
-        hard_cuts = PackedSelection(dtype='uint64')
-        hard_cuts.add("dummy", ak.num(muons) > -1)
-        hard_cuts.add("exactly_1mu", ak.num(muons) == 1)
-        hard_cuts.add("exactly_1fatjet", ak.num(fatjets) == 1)
-        hard_cuts.add("Zprime_channel", hard_cuts.all("exactly_1mu", "exactly_1fatjet"))
-        hard_cuts.add("preselection", hard_cuts.all("dummy"))
-        
         for channel in self.channels:
-            if (req_channels := self.config.general.channels) is not None:
-                if channel not in req_channels:    continue
-
             chname = channel["name"]
-            mask = ak.Array(hard_cuts.all(chname))
+            if (req_channels := self.config.general.channels) is not None:
+                if chname not in req_channels:
+                    continue
+
+            mask = 1
+            if (
+                selection_funciton := channel["selection_function"]
+            ) is not None:
+                selection_args = self._get_function_arguments(
+                    channel["selection_use"], object_copies
+                )
+                packed_selection = selection_funciton(*selection_args)
+                if not isinstance(packed_selection, PackedSelection):
+                    raise ValueError(
+                        f"PackedSelection expected, got {type(packed_selection)}"
+                    )
+                mask = ak.Array(
+                    packed_selection.all(packed_selection.names[-1])
+                )
+
             if process == "data":
                 mask = mask & lumi_mask(self.config.general.lumifile, events)
 
@@ -422,55 +438,34 @@ class ZprimeAnalysis:
                 collection: variable[mask]
                 for collection, variable in object_copies.items()
             }
-            region_muons, region_fatjets, region_jets, region_met = (
-                object_copies["Muon"],
-                object_copies["FatJet"],
-                object_copies["Jet"],
-                object_copies["PuppiMET"],
-            )
-            region_muons_4vec, region_fatjets_4vec, region_jets_4vec = [
-                ak.zip(
-                    {"pt": o.pt, "eta": o.eta, "phi": o.phi, "mass": o.mass},
-                    with_name="Momentum4D",
-                )
-                for o in [region_muons, region_fatjets, region_jets[:, 0]]
-            ]
-            region_met_4vec = ak.zip(
-                {
-                    "pt": region_met.pt,
-                    "eta": 0 * region_met.pt,
-                    "phi": region_met.phi,
-                    "mass": 0,
-                },
-                with_name="Momentum4D",
-            )
 
-            mtt = ak.flatten(
-                (
-                    region_muons_4vec
-                    + region_fatjets_4vec
-                    + region_jets_4vec
-                    + region_met_4vec
-                ).mass
-            )
-            mtt.type.show()
+            region_muons = object_copies["Muon"]
+            region_jets = object_copies["Jet"]
+            region_met = object_copies["PuppiMET"]
 
             region_lep_ht = region_muons.pt + region_met.pt
             soft_cuts = {
                 "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1) > 0,
                 # "met_cut": met.pt > 50,
-                # "met_cut", relaxed.cut(met.pt, 50),  # fails - relaxed not compatible with awkward
                 # "met_cut": 0.5*jnp.tanh((ak.to_jax(region_met.pt)-50)/100)+0.5,
-                "met_cut": jax.nn.sigmoid((ak.to_jax(region_met.pt) - met_cut) / met_cut),
-                "lep_ht_cut": ak.fill_none(ak.firsts(region_lep_ht) > 150, False),
+                "met_cut": jax.nn.sigmoid(
+                    (ak.to_jax(region_met.pt) - met_cut) / met_cut
+                ),
+                "lep_ht_cut": ak.fill_none(
+                    ak.firsts(region_lep_ht) > 150, False
+                ),
             }
 
             # Convert selections to JAX arrays with float dtype
-            soft_cuts = {k: jnp.array(ak.to_jax(v), dtype=float) for k, v in soft_cuts.items()}
+            soft_cuts = {
+                k: jnp.array(ak.to_jax(v), dtype=float)
+                for k, v in soft_cuts.items()
+            }
 
             weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
-            logger.info(f"Weights:: {weights} ")
-            
+            if tracing:
+                logger.info(f"Weights:: {weights} ")
+
             if process != "data":
                 weights *= (
                     events[mask].genWeight
@@ -478,20 +473,30 @@ class ZprimeAnalysis:
                     / abs(events[mask].genWeight)
                 )
             else:
-                weights *= np.ones(len(region_met))
+                weights *= np.ones(len(ak.count_nonzero(mask)))
 
             if event_syst and process != "data":
                 weights = self.apply_event_weight_correction(
                     weights, event_syst, direction, object_copies
                 )
 
-            self.nD_hists_per_region[chname].fill(
-                observable=mtt,
-                process=process,
-                variation=variation,
-                weight=weights,
-            )
-            return sum(weights) # return some dummy value to test auto-diff
+            for observable in channel["observables"]:
+                observable_name = observable["name"]
+                observable_args = self._get_function_arguments(
+                    observable["use"], object_copies
+                )
+                observable_vals = observable["function"](*observable_args)
+                if not tracing:
+                    self.nD_hists_per_region[chname][observable_name].fill(
+                        observable=observable_vals,
+                        process=process,
+                        variation=variation,
+                        weight=jax.lax.stop_gradient(weights),
+                    )
+                else:
+                    return ak.sum(
+                        weights
+                    )  # return some dummy value to test auto-diff
 
     def run_fit(self, cabinetry_config):
         """
@@ -508,13 +513,9 @@ class ZprimeAnalysis:
             cabinetry_config, rebinning=slice(110j, None, hist.rebin(2))
         )
         # build the templates
-        cabinetry.templates.build(
-            cabinetry_config, router=rebinning_router
-        )
+        cabinetry.templates.build(cabinetry_config, router=rebinning_router)
         # optional post-processing (e.g. smoothing, symmetrise)
-        cabinetry.templates.postprocess(
-            cabinetry_config
-        )
+        cabinetry.templates.postprocess(cabinetry_config)
         # build the workspace
         ws = cabinetry.workspace.build(cabinetry_config)
         # save the workspace
@@ -531,12 +532,13 @@ class ZprimeAnalysis:
             model,
             data,
         )  # perform the fit
-        postfit_prediction = cabinetry.model_utils.prediction(model, fit_results=results)
+        postfit_prediction = cabinetry.model_utils.prediction(
+            model, fit_results=results
+        )
 
         return data, results, prefit_prediction, postfit_prediction
 
-
-    def process(self, events, metadata, tree="Events"):
+    def process(self, events, metadata):
         """
         Run the full analysis logic on a batch of events.
 
@@ -553,7 +555,6 @@ class ZprimeAnalysis:
             Histogram dictionary after processing.
         """
         analysis = self.__class__.__name__
-        hist_dict = copy.deepcopy(self.nD_hists_per_region)
 
         process = metadata["process"]
         variation = metadata.get("variation", "nominal")
@@ -578,16 +579,21 @@ class ZprimeAnalysis:
         obj_copies = self.apply_object_corrections(
             obj_copies, self.corrections, direction="nominal"
         )
-        apply_secetion_and_fill_grad = jax.value_and_grad(self.apply_selection_and_fill, argnums=7, has_aux=False)
-        val, grad = apply_secetion_and_fill_grad(obj_copies, 
-                                                 events, 
-                                                 process, 
-                                                 variation, 
-                                                 hist_dict, 
-                                                 xsec_weight, 
-                                                 analysis, 
-                                                 50.)
+        apply_selection_and_fill_grad = jax.value_and_grad(
+            self.apply_selection_and_fill, argnums=6, has_aux=False
+        )
+        val, grad = apply_selection_and_fill_grad(
+            obj_copies,
+            events,
+            process,
+            variation,
+            xsec_weight,
+            analysis,
+            50.0,
+            tracing=True,
+        )
         logger.info(f"val: {val}, grad: {grad}")
+
         self.apply_selection_and_fill(
             obj_copies,
             events,
@@ -595,8 +601,8 @@ class ZprimeAnalysis:
             "nominal",
             xsec_weight,
             analysis,
-            50.,
-            tree=tree,
+            50.0,
+            tracing=False,
         )
 
         # Systematic variations
@@ -625,8 +631,10 @@ class ZprimeAnalysis:
                     varname,
                     xsec_weight,
                     analysis,
+                    50.0,
                     event_syst=syst,
                     direction=direction,
+                    tracing=False,
                 )
 
 
@@ -643,7 +651,7 @@ def main():
     full_config = load_config_with_restricted_cli(ZprimeConfig, cli_args)
     config = Config(**full_config)  # Pydantic validation
     # ✅ You now have a fully validated config object
-    print(f"Luminosity: {config.general.lumi}")
+    logger.info(f"Luminosity: {config.general.lumi}")
 
     analysis = ZprimeAnalysis(config)
     fileset = construct_fileset(
@@ -653,10 +661,10 @@ def main():
     for dataset, content in fileset.items():
         metadata = content["metadata"]
         metadata["dataset"] = dataset
-        variation = metadata.get("variation", "nominal")
 
         if (req_processes := config.general.processes) is not None:
-            if dataset.split("__")[0] not in req_processes:    continue
+            if dataset.split("__")[0] not in req_processes:
+                continue
 
         os.makedirs(f"{config.general.output_dir}/{dataset}", exist_ok=True)
 
@@ -705,7 +713,7 @@ def main():
                         skimmed, schemaclass=NanoAODSchema, delayed=False
                     ).events()
                     events = ak.to_backend(events, "jax")
-                    analysis.process(events, metadata, tree=tree)
+                    analysis.process(events, metadata)
                     logger.info("📈 Histogram filling complete.")
 
         logger.info(f"🏁 Finished dataset: {dataset}\n")
@@ -721,18 +729,23 @@ def main():
         cabinetry_config = cabinetry.configuration.load(
             config.statistics.cabinetry_config
         )
-        data, fit_results, pre_fit_predictions, postfit_predictions = analysis.run_fit(
-            cabinetry_config=cabinetry_config
+        data, fit_results, pre_fit_predictions, postfit_predictions = (
+            analysis.run_fit(cabinetry_config=cabinetry_config)
         )
         cabinetry.visualize.data_mc(
-            pre_fit_predictions, data, close_figure=False, config=cabinetry_config
+            pre_fit_predictions,
+            data,
+            close_figure=False,
+            config=cabinetry_config,
         )
         cabinetry.visualize.data_mc(
-            postfit_predictions, data, close_figure=False, config=cabinetry_config
+            postfit_predictions,
+            data,
+            close_figure=False,
+            config=cabinetry_config,
         )
-        cabinetry.visualize.pulls(
-            fit_results, close_figure=False
-        )
+        cabinetry.visualize.pulls(fit_results, close_figure=False)
+
 
 if __name__ == "__main__":
     main()
