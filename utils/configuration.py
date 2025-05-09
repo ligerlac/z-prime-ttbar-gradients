@@ -32,7 +32,6 @@ config = {
                 "eta",
                 "phi",
                 "mass",
-                "charge",
             ],
             "Jet": [
                 "btagDeepB",
@@ -41,7 +40,6 @@ config = {
                 "eta",
                 "phi",
                 "mass",
-                "charge",
             ],
             "PuppiMET": ["pt", "phi"],
             "HLT": ["TkMu50"],
