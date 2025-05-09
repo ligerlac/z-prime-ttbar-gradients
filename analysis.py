@@ -434,36 +434,153 @@ class ZprimeAnalysis:
                 )
                 continue
 
-            mask = ak.to_backend(mask, "jax")
-            object_copies = {
-                collection: variable[mask]
-                for collection, variable in object_copies.items()
-            }
+            if tracing:
+                mask = ak.to_backend(mask, "jax")
+                object_copies = {
+                    collection: variable[mask]
+                    for collection, variable in object_copies.items()
+                }
 
-            region_muons = object_copies["Muon"]
-            region_jets = object_copies["Jet"]
-            region_met = object_copies["PuppiMET"]
+                region_muons = object_copies["Muon"]
+                region_jets = object_copies["Jet"]
+                region_met = object_copies["PuppiMET"]
+                region_fatjets = object_copies["FatJet"]
 
-            region_lep_ht = region_muons.pt + region_met.pt
-            soft_cuts = {
-                "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1) > 0,
-                # "met_cut": met.pt > 50,
-                # "met_cut": 0.5*jnp.tanh((ak.to_jax(region_met.pt)-50)/100)+0.5,
-                "met_cut": jax.nn.sigmoid(
-                    (ak.to_jax(region_met.pt) - met_cut) / met_cut
-                ),
-                "lep_ht_cut": ak.fill_none(
-                    ak.firsts(region_lep_ht) > 150, False
-                ),
-            }
+                region_lep_ht = region_muons.pt + region_met.pt
+                soft_cuts = {
+                    "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1) > 0,
+                    # "met_cut": met.pt > 50,
+                    # "met_cut": 0.5*jnp.tanh((ak.to_jax(region_met.pt)-50)/100)+0.5,
+                    "met_cut": jax.nn.sigmoid(
+                        (ak.to_jax(region_met.pt) - met_cut) / met_cut
+                    ),
+                    "lep_ht_cut": ak.fill_none(
+                        ak.firsts(region_lep_ht) > 150, False
+                    ),
+                }
 
-            # Convert selections to JAX arrays with float dtype
-            soft_cuts = {
-                k: jnp.array(ak.to_jax(v), dtype=float)
-                for k, v in soft_cuts.items()
-            }
+                # Convert selections to JAX arrays with float dtype
+                soft_cuts = {
+                    k: jnp.array(ak.to_jax(v), dtype=float)
+                    for k, v in soft_cuts.items()
+                }
 
-            weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
+                weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
+            else:
+                object_copies = {
+                    collection: variable[mask]
+                    for collection, variable in object_copies.items()
+                }
+
+                region_muons = object_copies["Muon"]
+                region_jets = object_copies["Jet"]
+                region_met = object_copies["PuppiMET"]
+                region_fatjets = object_copies["FatJet"]
+                region_lep_ht = region_muons.pt + region_met.pt
+
+                soft_cuts = {
+                                "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1) > 0,
+                                "met_cut": region_met.pt > 50,
+                                "lep_ht_cut": ak.fill_none(
+                                    ak.firsts(region_lep_ht) > 150, False
+                                ),
+                                }
+
+                mask = mask[mask] & (soft_cuts["atleast_1b"]) & (soft_cuts["met_cut"]) & (soft_cuts["lep_ht_cut"])
+
+            if not tracing:
+                # ------------------------------
+                # ttbar system reconstruction
+                # ------------------------------
+                has_fatjet = ak.num(region_fatjets) > 0
+
+                mean_mlep=172.5
+                sigma_mlep=20.0
+                mean_mhad=172.5
+                sigma_mhad=20.0
+
+                ## ---------------------------------------
+                ## Events with fatjet
+                ## ---------------------------------------
+                fatjet = region_fatjets[:, 0:1]
+                fatjet_4vec = ak.zip(
+                    {x: fatjet[x] for x in ["pt", "eta", "phi", "mass"]}, with_name="Momentum4D"
+                )
+                fatjet_4vec = ak.firsts(fatjet_4vec)
+
+                # Get AK4 jets far from fatjet
+                # Compute ΔR between each jet and leading fatjet
+                dR = region_jets.deltaR(fatjet_4vec)
+                jets_far = region_jets[dR > 1.2]
+
+                # Broadcast the single muon and met to match jets_far structure
+                muon_4vec = ak.zip({x: region_muons[x] for x in ["pt", "eta", "phi", "mass"]}, with_name="Momentum4D")
+                met_4vec = ak.zip({"pt": region_met.pt, "eta": 0.0 * region_met.pt, "phi": region_met.phi, "mass": 0.0}, with_name="Momentum4D")
+
+                # Broadcast to match jets_far's jagged structure
+                lep_jets = ak.zip({x: jets_far[x] for x in ["pt", "eta", "phi", "mass"]}, with_name="Momentum4D")
+                muon_b, lep_jets_b = ak.broadcast_arrays(lep_jets, muon_4vec, )
+                met_b, lep_jets_b = ak.broadcast_arrays(lep_jets, met_4vec, )
+
+                # Compute lepton-side top candidates
+                tlep = lep_jets_b + muon_b + met_b
+                thad = ak.firsts(fatjet_4vec)
+
+                chi2_with_fatjet = ((tlep.mass - mean_mlep) / sigma_mlep) ** 2 + \
+                                ((thad.mass - mean_mhad) / sigma_mhad) ** 2
+
+                best_idx_fatjet = ak.argmin(chi2_with_fatjet, axis=1)
+                tlep_with_fatjet = tlep[best_idx_fatjet]
+                thad_with_fatjet = ak.firsts(thad)
+                mtt_with_fatjet = (tlep_with_fatjet + thad_with_fatjet).mass
+                chi2_min_fatjet = chi2_with_fatjet[best_idx_fatjet]
+
+                ## ---------------------------------------
+                ## Events without fatjet
+                ## ---------------------------------------
+                jets4 = ak.combinations(region_jets, 4, axis=1, fields=["a", "b", "c", "d"])
+                muon_exp = ak.broadcast_arrays(jets4["a"], region_muons)[1]
+                met_exp = ak.broadcast_arrays(jets4["a"], region_met)[1]
+                muon_4vec = ak.zip({x: muon_exp[x] for x in ["pt", "eta", "phi", "mass"]}, with_name="Momentum4D")
+                met_4vec = ak.zip({"pt": met_exp.pt, "eta": 0.0 * met_exp.pt, "phi": met_exp.phi, "mass": 0.0}, with_name="Momentum4D")
+
+                def build_tops(had_keys, lep_key):
+                    had = jets4[had_keys[0]] + jets4[had_keys[1]] + jets4[had_keys[2]]
+                    lep = jets4[lep_key] + muon_4vec + met_4vec
+                    chi2 = ((lep.mass - mean_mlep) / sigma_mlep) ** 2 + ((had.mass - mean_mhad) / sigma_mhad) ** 2
+                    return lep, had, chi2
+
+                permutations = [
+                    (["a", "b", "c"], "d"),
+                    (["a", "b", "d"], "c"),
+                    (["a", "c", "d"], "b"),
+                    (["b", "c", "d"], "a"),
+                ]
+
+                lep_all, had_all, chi2_all = [], [], []
+                for had_keys, lep_key in permutations:
+                    lep, had, chi2 = build_tops(had_keys, lep_key)
+                    lep_all.append(lep)
+                    had_all.append(had)
+                    chi2_all.append(chi2)
+
+                lep_stack = ak.stack(lep_all, axis=1)
+                had_stack = ak.stack(had_all, axis=1)
+                chi2_stack = ak.stack(chi2_all, axis=1)
+
+                best_idx_no_fatjet = ak.argmin(chi2_stack, axis=1)
+                tlep_no_fatjet = lep_stack[ak.arange(len(lep_stack)), best_idx_no_fatjet]
+                thad_no_fatjet = had_stack[ak.arange(len(had_stack)), best_idx_no_fatjet]
+                mtt_no_fatjet = (tlep_no_fatjet + thad_no_fatjet).mass
+                chi2_min_no_fatjet = chi2_stack[ak.arange(len(chi2_stack)), best_idx_no_fatjet]
+
+                ## ---------------------------------------
+                ## Combine both cases
+                ## ---------------------------------------
+                mtt_best = ak.where(has_fatjet, mtt_with_fatjet, mtt_no_fatjet)
+                chi2_best = ak.where(has_fatjet, chi2_min_fatjet, chi2_min_no_fatjet)
+                print(mtt_best, chi2_best)
+
             if tracing:
                 logger.info(f"Weights:: {weights} ")
 
@@ -595,6 +712,8 @@ class ZprimeAnalysis:
         )
         logger.info(f"val: {val}, grad: {grad}")
 
+        events = ak.to_backend(events, "cpu")
+        obj_copies = {obj: ak.to_backend(var, "cpu") for obj, var in obj_copies.items()}
         self.apply_selection_and_fill(
             obj_copies,
             events,
