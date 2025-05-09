@@ -14,16 +14,19 @@ import os
 import sys
 import warnings
 
-
 import awkward as ak
 import cabinetry
 from coffea.analysis_tools import PackedSelection
 from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 from correctionlib import CorrectionSet
 import hist
+import jax
+import jax.numpy as jnp
 import numpy as np
 from omegaconf import OmegaConf
+import relaxed
 import uproot
+import vector
 
 from utils.configuration import config as ZprimeConfig
 from utils.cuts import lumi_mask
@@ -32,6 +35,14 @@ from utils.output_files import save_histograms
 from utils.preproc import pre_process_dak, pre_process_uproot
 from utils.schema import Config, load_config_with_restricted_cli
 from utils.stats import get_cabinetry_rebinning_router
+
+
+# -----------------------------
+# Register backends
+# -----------------------------
+vector.register_awkward()
+ak.jax.register_and_check()
+
 
 # -----------------------------
 # Logging Configuration
@@ -215,8 +226,12 @@ class ZprimeAnalysis:
 
         if target is not None and op is not None:
             if isinstance(target, list):
-                return [self.apply_op(op, t, correction) for t in target]
+                correction = ak.to_backend(correction, ak.backend(target[0]))
+                return [
+                    self.apply_op(op, t, correction) for t in target
+                ]
             else:
+                correction = ak.to_backend(correction, ak.backend(target))
                 return self.apply_op(op, target, correction)
 
         return correction
@@ -337,6 +352,7 @@ class ZprimeAnalysis:
         variation,
         xsec_weight,
         analysis,
+        met_cut, 
         event_syst=None,
         direction="nominal",
         tree="Events"
@@ -378,33 +394,19 @@ class ZprimeAnalysis:
             object_copies["PuppiMET"],
         )
 
-        lep_ht = muons.pt + met.pt
-
-        selections = PackedSelection(dtype="uint64")
-        selections.add("dummy", ak.num(muons) > -1)
-        selections.add("exactly_1mu", ak.num(muons) == 1)
-        selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
-        selections.add("met_cut", met.pt > 50)
-        selections.add("lep_ht_cut", ak.firsts(lep_ht) > 150)
-        selections.add("exactly_1fatjet", ak.num(fatjets) == 1)
-        selections.add(
-            "Zprime_channel",
-            selections.all(
-                "exactly_1mu",
-                "met_cut",
-                "exactly_1fatjet",
-                "atleast_1b",
-                "lep_ht_cut",
-            ),
-        )
-        selections.add("preselection", selections.all("dummy"))
-
+        hard_cuts = PackedSelection(dtype='uint64')
+        hard_cuts.add("dummy", ak.num(muons) > -1)
+        hard_cuts.add("exactly_1mu", ak.num(muons) == 1)
+        hard_cuts.add("exactly_1fatjet", ak.num(fatjets) == 1)
+        hard_cuts.add("Zprime_channel", hard_cuts.all("exactly_1mu", "exactly_1fatjet"))
+        hard_cuts.add("preselection", hard_cuts.all("dummy"))
+        
         for channel in self.channels:
             if (req_channels := self.config.general.channels) is not None:
                 if channel not in req_channels:    continue
 
             chname = channel["name"]
-            mask = ak.Array(selections.all(chname))
+            mask = ak.Array(hard_cuts.all(chname))
             if process == "data":
                 mask = mask & lumi_mask(self.config.general.lumifile, events)
 
@@ -415,6 +417,7 @@ class ZprimeAnalysis:
                 )
                 continue
 
+            mask = ak.to_backend(mask, "jax")
             object_copies = {
                 collection: variable[mask]
                 for collection, variable in object_copies.items()
@@ -425,12 +428,6 @@ class ZprimeAnalysis:
                 object_copies["Jet"],
                 object_copies["PuppiMET"],
             )
-            (
-                object_copies["Muon"],
-                object_copies["FatJet"],
-                object_copies["Jet"],
-                object_copies["PuppiMET"],
-            ) = (region_muons, region_fatjets, region_jets, region_met)
             region_muons_4vec, region_fatjets_4vec, region_jets_4vec = [
                 ak.zip(
                     {"pt": o.pt, "eta": o.eta, "phi": o.phi, "mass": o.mass},
@@ -456,15 +453,32 @@ class ZprimeAnalysis:
                     + region_met_4vec
                 ).mass
             )
+            mtt.type.show()
 
+            region_lep_ht = region_muons.pt + region_met.pt
+            soft_cuts = {
+                "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1) > 0,
+                # "met_cut": met.pt > 50,
+                # "met_cut", relaxed.cut(met.pt, 50),  # fails - relaxed not compatible with awkward
+                # "met_cut": 0.5*jnp.tanh((ak.to_jax(region_met.pt)-50)/100)+0.5,
+                "met_cut": jax.nn.sigmoid((ak.to_jax(region_met.pt) - met_cut) / met_cut),
+                "lep_ht_cut": ak.fill_none(ak.firsts(region_lep_ht) > 150, False),
+            }
+
+            # Convert selections to JAX arrays with float dtype
+            soft_cuts = {k: jnp.array(ak.to_jax(v), dtype=float) for k, v in soft_cuts.items()}
+
+            weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
+            logger.info(f"Weights:: {weights} ")
+            
             if process != "data":
-                weights = (
+                weights *= (
                     events[mask].genWeight
                     * xsec_weight
                     / abs(events[mask].genWeight)
                 )
             else:
-                weights = np.ones(len(region_met))
+                weights *= np.ones(len(region_met))
 
             if event_syst and process != "data":
                 weights = self.apply_event_weight_correction(
@@ -477,6 +491,7 @@ class ZprimeAnalysis:
                 variation=variation,
                 weight=weights,
             )
+            return sum(weights) # return some dummy value to test auto-diff
 
     def run_fit(self, cabinetry_config):
         """
@@ -559,9 +574,20 @@ class ZprimeAnalysis:
             obj_copies["PuppiMET"],
         ) = (muons, jets, fatjets, met)
         # apply nominal corrections
+
         obj_copies = self.apply_object_corrections(
             obj_copies, self.corrections, direction="nominal"
         )
+        apply_secetion_and_fill_grad = jax.value_and_grad(self.apply_selection_and_fill, argnums=7, has_aux=False)
+        val, grad = apply_secetion_and_fill_grad(obj_copies, 
+                                                 events, 
+                                                 process, 
+                                                 variation, 
+                                                 hist_dict, 
+                                                 xsec_weight, 
+                                                 analysis, 
+                                                 50.)
+        logger.info(f"val: {val}, grad: {grad}")
         self.apply_selection_and_fill(
             obj_copies,
             events,
@@ -569,6 +595,7 @@ class ZprimeAnalysis:
             "nominal",
             xsec_weight,
             analysis,
+            50.,
             tree=tree,
         )
 
@@ -624,7 +651,6 @@ def main():
     )
 
     for dataset, content in fileset.items():
-
         metadata = content["metadata"]
         metadata["dataset"] = dataset
         variation = metadata.get("variation", "nominal")
@@ -678,6 +704,7 @@ def main():
                     events = NanoEventsFactory.from_root(
                         skimmed, schemaclass=NanoAODSchema, delayed=False
                     ).events()
+                    events = ak.to_backend(events, "jax")
                     analysis.process(events, metadata, tree=tree)
                     logger.info("📈 Histogram filling complete.")
 
