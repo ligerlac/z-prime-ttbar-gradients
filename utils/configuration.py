@@ -4,7 +4,7 @@ from utils.cuts import (
     Zprime_workshop_selection,
     Zprime_workshop_selection_dummy,
 )
-from utils.observables import get_mtt, get_mtt_sq
+from utils.observables import get_mtt, get_mtt_sq, ttbar_chi2, mtt_from_chi2
 from utils.systematics import jet_pt_resolution, jet_pt_scale
 
 config = {
@@ -76,10 +76,10 @@ config = {
                     ],
                 },
                 {
-                    "name": "m_tt_sq",
-                    "binning": "0,9000000,50",
-                    "label": r"$m_{t\bar{t}}$ [GeV]",
-                    "function": get_mtt_sq,
+                    "name": "ttbar_chi2",
+                    "binning": "0,100,50",
+                    "label": r"$\chi^2_{ttbar}$",
+                    "function": ttbar_chi2,
                     "use": [
                         ("Muon", None),
                         ("Jet", None),
@@ -87,6 +87,18 @@ config = {
                         ("PuppiMET", None),
                     ],
                 },
+                {
+                    "name": "mtt_chi2",
+                    "binning": "0,3000,50",
+                    "label": r"m_{t\bar{t}}(\chi^2_{t\bar{t}})",
+                    "function": mtt_from_chi2,
+                    "use": [
+                        ("Muon", None),
+                        ("Jet", None),
+                        ("FatJet", None),
+                        ("PuppiMET", None),
+                    ],
+                }
             ],
             "selection_function": Zprime_workshop_selection,
             "selection_use": [
