@@ -35,6 +35,7 @@ from utils.output_files import save_histograms
 from utils.preproc import pre_process_dak, pre_process_uproot
 from utils.schema import Config, load_config_with_restricted_cli
 from utils.stats import get_cabinetry_rebinning_router
+from utils.mva import decorate_mva_scores
 
 
 # -----------------------------
@@ -698,6 +699,11 @@ def main():
             skimmed_files = [f"{f}:{tree}" for f in skimmed_files]
             remaining = sum(uproot.open(f).num_entries for f in skimmed_files)
             logger.info(f"✅ Events retained after filtering: {remaining:,}")
+            if config.general.decorate_mva_score:
+                for skimmed in skimmed_files:
+                    logger.info(f"📘 Decorating MVA score to skimmed file: {skimmed}")
+                    decorate_mva_scores(skimmed, config.general.mva_model_path)
+                    logger.info("✅ MVA variables added.")
             if config.general.run_histogramming:
                 for skimmed in skimmed_files:
                     logger.info(f"📘 Processing skimmed file: {skimmed}")

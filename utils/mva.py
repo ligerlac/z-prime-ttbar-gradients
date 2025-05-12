@@ -3,6 +3,7 @@ import uproot
 import warnings
 import numpy as np
 import awkward as ak
+from tensorflow.keras.models import load_model
 from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 
 
@@ -57,6 +58,39 @@ def get_mva_vars(jets: ak.Array, muons: ak.Array) -> dict[str, np.ndarray]:
     d["deltaR_times_pt"] = (min_delta_r * closest_jet_pt).to_numpy().flatten()
 
     return d
+
+
+def decorate_mva_scores(file_path: str, model_path: str) -> None:
+    """
+    Decorate the MVA score in the file with the given path and save it to the file.
+    Since mva vars can only be calculated for more than 2 jets and exactly 1 muon,
+    the mva score is set to -1 for all other events.
+    Args:
+        file_path (str): Path to the file.
+    """
+    model = load_model(model_path)
+
+    with uproot.open(file_path) as f:
+        tree = f["Events"]
+
+        # Set all scores to -1 for now, replace valid ones later
+        scores = np.zeros(tree.num_entries, dtype=np.float32) - 1
+
+        jets = tree.arrays("Jet", library="ak")
+        muons = tree.arrays("Muon", library="ak")
+
+        idx = ak.num(jets, axis=1) >= 2
+        idx *= ak.num(muons, axis=1) == 1
+
+        jets = jets[idx]
+        muons = muons[idx]
+
+        mva_vars = get_mva_vars(jets, muons)
+        X = np.column_stack(mva_vars.values()).astype(float)
+
+        scores[idx] = model.predict(X, batch_size=1024)
+
+        tree["mva_score"] = scores.flatten()
 
 
 if __name__ == "__main__":
