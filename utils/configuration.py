@@ -4,7 +4,7 @@ from utils.cuts import (
     Zprime_baseline,
     Zprime_workshop_selection,
 )
-from utils.observables import mtt_from_ttbar_reco, ttbar_reco, ttbar_reco_single_out
+from utils.observables import compute_mva_scores, mtt_from_ttbar_reco, ttbar_reco, get_mva_scores
 from utils.systematics import jet_pt_resolution, jet_pt_scale
 
 config = {
@@ -81,7 +81,17 @@ config = {
                         ("ttbar_reco", None),
                     ],
                     "works_with_jax": True,
-                }
+                },
+                {
+                    "name": "mva_score",
+                    "binning": "0,1,50",
+                    "label": r"NN score",
+                    "function": get_mva_scores,
+                    "use": [
+                        ("mva", None),
+                    ],
+                    "works_with_jax": True,
+                },
             ],
             "selection_function": Zprime_workshop_selection,
             "selection_use": [
@@ -89,7 +99,7 @@ config = {
                 ("Jet", None),
                 ("FatJet", None),
                 ("PuppiMET", None),
-                ("reco", None),
+                ("ttbar_reco", None),
             ],
         },
     ],
@@ -106,6 +116,15 @@ config = {
             ],
             "works_with_jax": False,
         },
+        {
+            "names": "nn_score",
+            "collections": "mva",
+            "function": compute_mva_scores,
+            "use": [
+                ("Muon", None),
+                ("Jet", None),
+            ],
+        }
     ],
     "corrections": [
         {

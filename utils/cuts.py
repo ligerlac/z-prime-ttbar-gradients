@@ -77,7 +77,7 @@ def Zprime_workshop_selection(muons, jets, fatjets, met, reco):
     selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
     selections.add("met_cut", met.pt > 50)
     selections.add("lep_ht_cut", ak.firsts(lep_ht) > 150)
-    selections.add("chi2_cut", reco.ttbar_chi2 < 30)
+    selections.add("chi2_cut", reco.chi2 < 30)
     selections.add("exactly_1fatjet", ak.num(fatjets) == 1)
     selections.add(
         "Zprime_channel",
