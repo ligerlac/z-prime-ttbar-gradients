@@ -1,4 +1,5 @@
 import awkward as ak
+from coffea.analysis_tools import PackedSelection
 import numpy as np
 
 
@@ -64,3 +65,55 @@ def lumi_mask(lumifile, events, verbose=False):
     mask = ak.any(prod_diff <= 0, axis=1)
 
     return mask
+
+
+def Zprime_workshop_selection(muons, jets, fatjets, met):
+    """
+    Select events based on the Zprime workshop selection criteria.
+    """
+
+    lep_ht = muons.pt + met.pt
+    selections = PackedSelection(dtype="uint64")
+    selections.add("exactly_1mu", ak.num(muons) == 1)
+    selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
+    selections.add("met_cut", met.pt > 50)
+    selections.add("lep_ht_cut", ak.firsts(lep_ht) > 150)
+    selections.add("exactly_1fatjet", ak.num(fatjets) == 1)
+    selections.add(
+        "Zprime_channel",
+        selections.all(
+            "exactly_1mu",
+            #            "met_cut",
+            "exactly_1fatjet",
+            # "atleast_1b",
+            # "lep_ht_cut",
+        ),
+    )
+
+    return selections
+
+
+def Zprime_workshop_selection_dummy(muons, jets, fatjets, met):
+    """
+    Select events based on the Zprime workshop selection criteria (dummy).
+    """
+
+    lep_ht = muons.pt + met.pt
+    selections = PackedSelection(dtype="uint64")
+    selections.add("exactly_1mu", ak.num(muons) == 1)
+    selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
+    selections.add("met_cut", met.pt > 50)
+    selections.add("lep_ht_cut", ak.firsts(lep_ht) > 450)
+    selections.add("exactly_1fatjet", ak.num(fatjets) == 1)
+    selections.add(
+        "Zprime_channel_2",
+        selections.all(
+            "exactly_1mu",
+            "met_cut",
+            "exactly_1fatjet",
+            "atleast_1b",
+            "lep_ht_cut",
+        ),
+    )
+
+    return selections

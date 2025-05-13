@@ -6,7 +6,6 @@ https://github.com/MoAly98/analysis-grand-challenge/blob/main/analyses/cms-open-
 """
 
 import json
-import os
 
 
 def construct_fileset(n_files_max_per_sample, preprocessor="uproot"):

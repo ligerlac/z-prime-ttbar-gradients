@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 
 
 # Type alias for (object, variable) pairs
-ObjVar = Tuple[str, str]
+ObjVar = Tuple[str, Optional[str]]
 
 
 class SubscriptableModel(BaseModel):
@@ -52,7 +52,10 @@ class GeneralConfig(SubscriptableModel):
     ]
     run_statistics: Annotated[
         bool,
-        Field(default=True, description="Whether to run statistical analysis step"),
+        Field(
+            default=True,
+            description="Whether to run statistical analysis step",
+        ),
     ]
     output_dir: Annotated[
         Optional[str],
@@ -82,6 +85,7 @@ class GeneralConfig(SubscriptableModel):
             description="List of channels to include in the analysis",
         ),
     ]
+
 
 # ------------------------
 # Preprocessing configuration
@@ -141,6 +145,7 @@ class PreprocessConfig(SubscriptableModel):
 
         return self
 
+
 # ------------------------
 # Statistical analysis configuration
 # ------------------------]
@@ -154,69 +159,104 @@ class StatisticalConfig(SubscriptableModel):
 
 
 # ------------------------
-# Channel configuration
+# Observable configuration
 # ------------------------
-class ChannelConfig(SubscriptableModel):
-    name: Annotated[str, Field(description="Name of the analysis channel")]
-    observable_name: Annotated[
-        str, Field(description="Name of the histogram observable")
-    ]
-    observable_binning: Annotated[
+class ObservableConfig(SubscriptableModel):
+    name: Annotated[str, Field(description="Name of the observable")]
+    binning: Annotated[
         Union[str, List[float]],
         Field(
             description="Either a 'low,high,nbins' string or a list of bin edges"
         ),
     ]
-    observable_label: Annotated[
+    function: Annotated[
+        Callable,
+        Field(description="Callable computing the observable"),
+    ]
+    use: Annotated[
+        List[ObjVar],
+        Field(
+            description="(object, variable) pairs for the function. "
+            "If variable is None, object is passed.",
+        ),
+    ]
+    label: Annotated[
         Optional[str],
         Field(default="observable", description="LaTeX label for plots"),
     ]
-    observable_function: Annotated[
-        Optional[Callable],
-        Field(default=None, description="Callable computing the observable"),
+
+    @model_validator(mode="after")
+    def validate_binning(self) -> "ObservableConfig":
+        if isinstance(self.binning, str):
+            if not re.match(
+                r"^\s*[\d.]+\s*,\s*[\d.]+\s*,\s*\d+\s*$", self.binning
+            ):
+                raise ValueError(
+                    f"Invalid binning string: {self.binning}. "
+                    + "Expected format: 'low,high,nbins'"
+                )
+        elif isinstance(self.binning, list):
+            if len(self.binning) < 2:
+                raise ValueError("At least two bin edges required.")
+            if any(b <= a for a, b in zip(self.binning, self.binning[1:])):
+                raise ValueError("Binning edges must be strictly increasing.")
+        return self
+
+
+# ------------------------
+# Channel configuration
+# ------------------------
+class ChannelConfig(SubscriptableModel):
+    name: Annotated[str, Field(description="Name of the analysis channel")]
+    observables: Annotated[
+        List[ObservableConfig],
+        Field(
+            description="List of observables for this channel (must be ≥ 1)"
+        ),
     ]
-    use: Annotated[
+    fit_observable: Annotated[
+        str,
+        Field(description="Name of the observable to use for fitting"),
+    ]
+
+    selection_function: Annotated[
+        Optional[Callable],
+        Field(
+            default=None,
+            description="Callable for event selection. If None, all events are "
+            + "selected.",
+        ),
+    ]
+    selection_use: Annotated[
         Optional[List[ObjVar]],
         Field(
             default=None,
-            description="(object, variable) pairs for the function",
+            description="(object, variable) pairs for the selection function.",
         ),
     ]
 
     @model_validator(mode="after")
-    def validate_observable_fields(self) -> "ChannelConfig":
-        if self.observable_function:
-            if not self.use:
-                raise ValueError(
-                    "If 'observable_function' is provided, 'use' must "
-                    + "also be specified."
-                )
-            if self.observable_name or self.observable_binning:
-                raise ValueError(
-                    "Cannot use 'observable_function' together with 'observable_name' "
-                    + "or 'observable_binning'."
-                )
+    def validate_fields(self) -> "ChannelConfig":
+        if self.selection_function and not self.selection_use:
+            raise ValueError(
+                "If 'selection_function' is provided, 'selection_use' must also "
+                + "be specified."
+            )
 
-        if isinstance(self.observable_binning, str):
-            if not re.match(
-                r"^\s*[\d.]+\s*,\s*[\d.]+\s*,\s*\d+\s*$",
-                self.observable_binning,
-            ):
-                raise ValueError(
-                    f"Invalid binning string: {self.observable_binning}. "
-                    + "Expected format: 'low,high,nbins'"
-                )
+        if not self.observables:
+            raise ValueError("Each channel must have at least one observable.")
 
-        if isinstance(self.observable_binning, list):
-            if len(self.observable_binning) < 2:
-                raise ValueError("At least two bin edges required.")
-            if any(
-                b <= a
-                for a, b in zip(
-                    self.observable_binning, self.observable_binning[1:]
-                )
-            ):
-                raise ValueError("Binning edges must be strictly increasing.")
+        obs_names = [obs.name for obs in self.observables]
+        if self.fit_observable not in obs_names:
+            raise ValueError(
+                f"'fit_observable'='{self.fit_observable}' is not in the list of "
+                + f"observables: {sorted(obs_names)}"
+            )
+
+        if len(set(obs_names)) != len(obs_names):
+            raise ValueError(
+                "Duplicate observable names found in the channel configuration."
+            )
 
         return self
 
@@ -316,7 +356,11 @@ class SystematicConfig(SubscriptableModel):
     ]
     use: Annotated[
         Optional[Union[ObjVar, List[ObjVar]]],
-        Field(default=[], description="Inputs to the variation function"),
+        Field(
+            default=[],
+            description="(object, variable) inputs to variation functions. If variable "
+            + "is None, object is passed.",
+        ),
     ]
     symmetrise: Annotated[
         bool,
@@ -369,7 +413,7 @@ class Config(SubscriptableModel):
         Optional[PreprocessConfig],
         Field(default=None, description="Preprocessing settings"),
     ]
-    statistics : Annotated[
+    statistics: Annotated[
         Optional[StatisticalConfig],
         Field(default=None, description="Statistical analysis settings"),
     ]
@@ -401,15 +445,21 @@ class Config(SubscriptableModel):
             )
 
         if self.statistics is not None:
-            if self.general.run_statistics and not self.statistics.cabinetry_config:
+            if (
+                self.general.run_statistics
+                and not self.statistics.cabinetry_config
+            ):
                 raise ValueError(
-                    "Statistical analysis run enabled but no cabinetry configuration provided."
+                    "Statistical analysis run enabled but no cabinetry configuration "
+                    + "provided."
                 )
 
         return self
 
 
-def load_config_with_restricted_cli(base_cfg: dict, cli_args: list[str]) -> dict:
+def load_config_with_restricted_cli(
+    base_cfg: dict, cli_args: list[str]
+) -> dict:
     """
     Load base config and override only `general`, `preprocess`, or `statistics`
     keys via CLI arguments in dotlist form.
@@ -445,10 +495,9 @@ def load_config_with_restricted_cli(base_cfg: dict, cli_args: list[str]) -> dict
 
     # Merge CLI with OmegaConf
     cli_cfg = OmegaConf.from_dotlist(filtered_cli)
-    safe_base = OmegaConf.create({
-        k: v for k, v in base_copy.items()
-        if k in ALLOWED_CLI_TOPLEVEL_KEYS
-    })
+    safe_base = OmegaConf.create(
+        {k: v for k, v in base_copy.items() if k in ALLOWED_CLI_TOPLEVEL_KEYS}
+    )
     merged_cfg = OmegaConf.merge(safe_base, cli_cfg)
     updated_subsections = OmegaConf.to_container(merged_cfg, resolve=True)
 

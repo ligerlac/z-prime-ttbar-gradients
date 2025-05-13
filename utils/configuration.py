@@ -1,5 +1,10 @@
 import numpy as np
 
+from utils.cuts import (
+    Zprime_workshop_selection,
+    Zprime_workshop_selection_dummy,
+)
+from utils.observables import get_mtt, get_mtt_sq
 from utils.systematics import jet_pt_resolution, jet_pt_scale
 
 config = {
@@ -13,7 +18,7 @@ config = {
         "output_dir": "output/",
         "preprocessed_dir": "./preproc_uproot/z-prime-ttbar-data/",
         "processor": "uproot",
-        "lumifile": "./corrections/Cert_271036-284044_13TeV_Legacy2016_Collisions16_JSON.txt"
+        "lumifile": "./corrections/Cert_271036-284044_13TeV_Legacy2016_Collisions16_JSON.txt",
     },
     "preprocess": {
         "branches": {
@@ -52,16 +57,70 @@ config = {
             "Pileup": ["nTrueInt"],
         },
     },
-    "statistics": {
-        "cabinetry_config": "cabinetry/cabinetry_config.yaml"
-    },
+    "statistics": {"cabinetry_config": "cabinetry/cabinetry_config.yaml"},
     "channels": [
         {
             "name": "Zprime_channel",
-            "observable_name": "m_tt",
-            "observable_binning": "0,3000,50",
-            "observable_label": r"$m_{t\bar{t}}$ [GeV]",
-        }
+            "fit_observable": "m_tt",
+            "observables": [
+                {
+                    "name": "m_tt",
+                    "binning": "0,3000,50",
+                    "label": r"$m_{t\bar{t}}$ [GeV]",
+                    "function": get_mtt,
+                    "use": [
+                        ("Muon", None),
+                        ("Jet", None),
+                        ("FatJet", None),
+                        ("PuppiMET", None),
+                    ],
+                },
+                {
+                    "name": "m_tt_sq",
+                    "binning": "0,9000000,50",
+                    "label": r"$m_{t\bar{t}}$ [GeV]",
+                    "function": get_mtt_sq,
+                    "use": [
+                        ("Muon", None),
+                        ("Jet", None),
+                        ("FatJet", None),
+                        ("PuppiMET", None),
+                    ],
+                },
+            ],
+            "selection_function": Zprime_workshop_selection,
+            "selection_use": [
+                ("Muon", None),
+                ("Jet", None),
+                ("FatJet", None),
+                ("PuppiMET", None),
+            ],
+        },
+        {
+            "name": "Zprime_channel_2",
+            "fit_observable": "m_tt",
+            "observables": [
+                {
+                    "name": "m_tt",
+                    "binning": "0,3000,50",
+                    "label": r"$m_{t\bar{t}}$ [GeV]",
+                    "function": get_mtt,
+                    "use": [
+                        ("Muon", None),
+                        ("Jet", None),
+                        ("FatJet", None),
+                        ("PuppiMET", None),
+                    ],
+                }
+            ],
+            "selection_function": Zprime_workshop_selection_dummy,
+            "selection_use": [
+                ("Muon", None),
+                ("Jet", None),
+                ("FatJet", None),
+                ("PuppiMET", None),
+            ],
+        },
     ],
     "corrections": [
         {
