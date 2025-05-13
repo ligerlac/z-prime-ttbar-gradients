@@ -24,6 +24,23 @@ class SubscriptableModel(BaseModel):
         return getattr(self, key, default)
 
 
+class BaselineSelectionConfig(SubscriptableModel):
+    function: Annotated[
+        Callable,
+        Field(
+            description="Function to compute the baseline selection. "
+            "Must return a PackedSelection object."
+        ),
+    ]
+    use: Annotated[
+        Optional[List[ObjVar]],
+        Field(
+            default=None,
+            description="(object, variable) pairs for the selection function.",
+        ),
+    ]
+
+
 # ------------------------
 # General configuration
 # ------------------------
@@ -184,6 +201,13 @@ class ObservableConfig(SubscriptableModel):
         Optional[str],
         Field(default="observable", description="LaTeX label for plots"),
     ]
+    works_with_jax: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Whether the function works with JAX backend",
+        ),
+    ]
 
     @model_validator(mode="after")
     def validate_binning(self) -> "ObservableConfig":
@@ -201,6 +225,23 @@ class ObservableConfig(SubscriptableModel):
             if any(b <= a for a, b in zip(self.binning, self.binning[1:])):
                 raise ValueError("Binning edges must be strictly increasing.")
         return self
+
+
+# ------------------------
+# Ghost observable configuration
+# ------------------------
+class GhostObservable(SubscriptableModel):
+    names: Union[str, List[str]]
+    collections: Union[str, List[str]]
+    function: Callable
+    use: List[ObjVar]
+    works_with_jax: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Whether the function works with JAX backend",
+        ),
+    ]
 
 
 # ------------------------
@@ -398,6 +439,24 @@ class Config(SubscriptableModel):
     general: Annotated[
         GeneralConfig, Field(description="Global settings for the analysis")
     ]
+    ghost_observables: Annotated[
+        Optional[List[GhostObservable]],
+        Field(
+            default=[],
+            description="Variables to compute and store ahead of channel selection."
+            "This variables will not be histogrammed unless specified as observable in "
+            "a channel.",
+        ),
+    ]
+    baseline_selection: Annotated[
+        Optional[BaselineSelectionConfig],
+        Field(
+            default=None,
+            description="Baseline event selection applied before "
+            "channel-specific logic",
+        ),
+    ]
+
     channels: Annotated[
         List[ChannelConfig], Field(description="List of analysis channels")
     ]
@@ -453,6 +512,29 @@ class Config(SubscriptableModel):
                     "Statistical analysis run enabled but no cabinetry configuration "
                     + "provided."
                 )
+
+        seen_ghost_obs = set()
+        for obs in self.ghost_observables:
+            names = obs.name if isinstance(obs.names, list) else [obs.names]
+            colls = (
+                obs.collections
+                if isinstance(obs.collections, list)
+                else [obs.collections] * len(names)
+            )
+
+            if len(names) != len(colls):
+                raise ValueError(
+                    f"In GhostObservable with function `{obs.function}`, "
+                    f"number of names and collections must match if both are lists."
+                )
+
+            for name, coll in zip(names, colls):
+                pair = (coll, name)
+                if pair in seen_ghost_obs:
+                    raise ValueError(
+                        f"Duplicate (collection, name) pair: {pair}"
+                    )
+                seen_ghost_obs.add(pair)
 
         return self
 

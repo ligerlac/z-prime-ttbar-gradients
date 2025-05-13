@@ -444,11 +444,11 @@ class ZprimeAnalysis:
                 region_muons = object_copies["Muon"]
                 region_jets = object_copies["Jet"]
                 region_met = object_copies["PuppiMET"]
-                region_fatjets = object_copies["FatJet"]
 
                 region_lep_ht = region_muons.pt + region_met.pt
                 soft_cuts = {
-                    "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1) > 0,
+                    "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1)
+                    > 0,
                     # "met_cut": met.pt > 50,
                     # "met_cut": 0.5*jnp.tanh((ak.to_jax(region_met.pt)-50)/100)+0.5,
                     "met_cut": jax.nn.sigmoid(
@@ -479,20 +479,25 @@ class ZprimeAnalysis:
                 region_lep_ht = region_muons.pt + region_met.pt
 
                 soft_cuts = {
-                                "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1) > 0,
-                                "met_cut": region_met.pt > 50,
-                                "lep_ht_cut": ak.fill_none(
-                                    ak.firsts(region_lep_ht) > 150, False
-                                ),
-                                }
+                    "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1)
+                    > 0,
+                    "met_cut": region_met.pt > 50,
+                    "lep_ht_cut": ak.fill_none(
+                        ak.firsts(region_lep_ht) > 150, False
+                    ),
+                }
 
-                mask = mask[mask] & (soft_cuts["atleast_1b"]) & (soft_cuts["met_cut"]) & (soft_cuts["lep_ht_cut"])
+                mask = (
+                    mask[mask]
+                    & (soft_cuts["atleast_1b"])
+                    & (soft_cuts["met_cut"])
+                    & (soft_cuts["lep_ht_cut"])
+                )
                 object_copies = {
                     collection: variable[mask]
                     for collection, variable in object_copies.items()
                 }
-                weights = 1.
-
+                weights = 1.0
 
             if process != "data":
                 weights *= (
@@ -512,6 +517,10 @@ class ZprimeAnalysis:
                 logger.info(
                     f"Filling histogram for {observable['name']} in {chname}"
                 )
+                # do not compute if this function is being traced by JAX
+                # and observable function is not compatible with JAX
+                if not observable.works_with_jax and tracing:
+                    return ak.sum(weights)
                 observable_name = observable["name"]
                 observable_args = self._get_function_arguments(
                     observable["use"], object_copies
@@ -569,7 +578,42 @@ class ZprimeAnalysis:
 
         return data, results, prefit_prediction, postfit_prediction
 
-    def process(self, events, metadata):
+    def compute_ghost_observables(self, obj_copies, tracing=False):
+        for ghost in self.config.ghost_observables:
+            # do not compute if this function is being traced by JAX
+            # and observable function is not compatible with JAX
+            if not ghost.works_with_jax and tracing:
+                continue
+            ghost_args = self._get_function_arguments(ghost["use"], obj_copies)
+            ghost_outputs = ghost["function"](*ghost_args)
+
+            if not isinstance(ghost_outputs, (list, tuple)):
+                ghost_outputs = [ghost_outputs]
+
+            names = (
+                ghost.names if isinstance(ghost.names, list) else [ghost.names]
+            )
+            colls = (
+                ghost.collections
+                if isinstance(ghost.collections, list)
+                else [ghost.collections] * len(names)
+            )
+            # update object_copies with ghost outputs
+            for out, name, coll in zip(ghost_outputs, names, colls):
+                if coll in obj_copies:
+                    try:
+                        # add new field to existing awkward array
+                        obj_copies[coll][name] = out
+                    # happens if we are adding a field to an awkward
+                    # array with no fields (scalar fields)
+                    except ValueError as e:
+                        raise e
+                else:
+                    # create new awkward array with single field
+                    obj_copies[coll] = ak.Array({name: out})
+        return obj_copies
+
+    def process(self, events, metadata, tracing=False):
         """
         Run the full analysis logic on a batch of events.
 
@@ -605,11 +649,37 @@ class ZprimeAnalysis:
             obj_copies["FatJet"],
             obj_copies["PuppiMET"],
         ) = (muons, jets, fatjets, met)
-        # apply nominal corrections
 
+        # Apply baseline selection
+        baseline_args = self._get_function_arguments(
+            self.config.baseline_selection["use"], obj_copies
+        )
+
+        packed_selection = self.config.baseline_selection["function"](
+            *baseline_args
+        )
+        mask = ak.Array(packed_selection.all(packed_selection.names[-1]))
+        obj_copies = {
+            collection: variable[mask]
+            for collection, variable in obj_copies.items()
+        }
+
+        # apply ghost observables
+        obj_copies = self.compute_ghost_observables(
+            obj_copies, tracing=tracing
+        )
+
+        # apply event-level corrections
+        # apply nominal corrections
         obj_copies = self.apply_object_corrections(
             obj_copies, self.corrections, direction="nominal"
         )
+        # apply selection and fill histograms
+        # JAX tracing with no filling for autodiff
+        events = ak.to_backend(events, "jax")
+        obj_copies = {
+            obj: ak.to_backend(var, "jax") for obj, var in obj_copies.items()
+        }
         apply_selection_and_fill_grad = jax.value_and_grad(
             self.apply_selection_and_fill, argnums=6, has_aux=False
         )
@@ -625,8 +695,11 @@ class ZprimeAnalysis:
         )
         logger.info(f"val: {val}, grad: {grad}")
 
+        # convert to CPU for actual histogram filling
         events = ak.to_backend(events, "cpu")
-        obj_copies = {obj: ak.to_backend(var, "cpu") for obj, var in obj_copies.items()}
+        obj_copies = {
+            obj: ak.to_backend(var, "cpu") for obj, var in obj_copies.items()
+        }
         self.apply_selection_and_fill(
             obj_copies,
             events,
@@ -644,6 +717,14 @@ class ZprimeAnalysis:
                 continue
             for direction in ["up", "down"]:
                 obj_copies = self.get_object_copies(events)
+                obj_copies = {
+                    collection: variable[mask]
+                    for collection, variable in obj_copies.items()
+                }
+                obj_copies = self.compute_ghost_observables(
+                    obj_copies, tracing=tracing
+                )
+
                 # filter objects
                 muons, jets, fatjets, met = self.get_good_objects(obj_copies)
                 (
@@ -652,6 +733,7 @@ class ZprimeAnalysis:
                     obj_copies["FatJet"],
                     obj_copies["PuppiMET"],
                 ) = (muons, jets, fatjets, met)
+
                 # apply corrections
                 obj_copies = self.apply_object_corrections(
                     obj_copies, [syst], direction=direction
@@ -750,7 +832,6 @@ def main():
                     events = NanoEventsFactory.from_root(
                         skimmed, schemaclass=NanoAODSchema, delayed=False
                     ).events()
-                    events = ak.to_backend(events, "jax")
                     analysis.process(events, metadata)
                     logger.info("📈 Histogram filling complete.")
 

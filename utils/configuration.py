@@ -1,10 +1,10 @@
 import numpy as np
 
 from utils.cuts import (
+    Zprime_baseline,
     Zprime_workshop_selection,
-    Zprime_workshop_selection_dummy,
 )
-from utils.observables import get_mtt, get_mtt_sq, ttbar_chi2, mtt_from_chi2
+from utils.observables import mtt_from_chi2, ttbar_chi2
 from utils.systematics import jet_pt_resolution, jet_pt_scale
 
 config = {
@@ -19,6 +19,15 @@ config = {
         "preprocessed_dir": "./preproc_uproot/z-prime-ttbar-data/",
         "processor": "uproot",
         "lumifile": "./corrections/Cert_271036-284044_13TeV_Legacy2016_Collisions16_JSON.txt",
+    },
+    "baseline_selection": {
+        "function": Zprime_baseline,
+        "use": [
+            ("Muon", None),
+            ("Jet", None),
+            ("FatJet", None),
+            ("PuppiMET", None),
+        ],
     },
     "preprocess": {
         "branches": {
@@ -49,9 +58,9 @@ config = {
             "PuppiMET": ["pt", "phi"],
             "HLT": ["TkMu50"],
             "Pileup": ["nTrueInt"],
-            "event": ["genWeight", "event", "run", "luminosityBlock"],
+            "event": ["genWeight", "run", "luminosityBlock"],
         },
-        "ignore_missing": False,
+        "ignore_missing": False,  # is this implemented?
         "mc_branches": {
             "event": ["genWeight", "luminosityBlock"],
             "Pileup": ["nTrueInt"],
@@ -61,32 +70,8 @@ config = {
     "channels": [
         {
             "name": "Zprime_channel",
-            "fit_observable": "m_tt",
+            "fit_observable": "mtt_chi2",
             "observables": [
-                {
-                    "name": "m_tt",
-                    "binning": "0,3000,50",
-                    "label": r"$m_{t\bar{t}}$ [GeV]",
-                    "function": get_mtt,
-                    "use": [
-                        ("Muon", None),
-                        ("Jet", None),
-                        ("FatJet", None),
-                        ("PuppiMET", None),
-                    ],
-                },
-                {
-                    "name": "ttbar_chi2",
-                    "binning": "0,100,50",
-                    "label": r"$\chi^2_{ttbar}$",
-                    "function": ttbar_chi2,
-                    "use": [
-                        ("Muon", None),
-                        ("Jet", None),
-                        ("FatJet", None),
-                        ("PuppiMET", None),
-                    ],
-                },
                 {
                     "name": "mtt_chi2",
                     "binning": "0,3000,50",
@@ -98,6 +83,7 @@ config = {
                         ("FatJet", None),
                         ("PuppiMET", None),
                     ],
+                    "works_with_jax": False,
                 }
             ],
             "selection_function": Zprime_workshop_selection,
@@ -106,32 +92,34 @@ config = {
                 ("Jet", None),
                 ("FatJet", None),
                 ("PuppiMET", None),
+                ("reco", None),
             ],
         },
+    ],
+    "ghost_observables": [
         {
-            "name": "Zprime_channel_2",
-            "fit_observable": "m_tt",
-            "observables": [
-                {
-                    "name": "m_tt",
-                    "binning": "0,3000,50",
-                    "label": r"$m_{t\bar{t}}$ [GeV]",
-                    "function": get_mtt,
-                    "use": [
-                        ("Muon", None),
-                        ("Jet", None),
-                        ("FatJet", None),
-                        ("PuppiMET", None),
-                    ],
-                }
-            ],
-            "selection_function": Zprime_workshop_selection_dummy,
-            "selection_use": [
+            "names": "ttbar_chi2",
+            "collections": "reco",
+            "function": ttbar_chi2,
+            "use": [
                 ("Muon", None),
                 ("Jet", None),
                 ("FatJet", None),
                 ("PuppiMET", None),
             ],
+            "works_with_jax": False,
+        },
+        {
+            "names": "ttbar_chi22",
+            "collections": "reco",
+            "function": ttbar_chi2,
+            "use": [
+                ("Muon", None),
+                ("Jet", None),
+                ("FatJet", None),
+                ("PuppiMET", None),
+            ],
+            "works_with_jax": False,
         },
     ],
     "corrections": [

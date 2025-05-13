@@ -67,17 +67,17 @@ def lumi_mask(lumifile, events, verbose=False):
     return mask
 
 
-def Zprime_workshop_selection(muons, jets, fatjets, met):
+def Zprime_workshop_selection(muons, jets, fatjets, met, reco):
     """
     Select events based on the Zprime workshop selection criteria.
     """
-
     lep_ht = muons.pt + met.pt
     selections = PackedSelection(dtype="uint64")
     selections.add("exactly_1mu", ak.num(muons) == 1)
     selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
     selections.add("met_cut", met.pt > 50)
     selections.add("lep_ht_cut", ak.firsts(lep_ht) > 150)
+    selections.add("chi2_cut", reco.ttbar_chi2 < 30)
     selections.add("exactly_1fatjet", ak.num(fatjets) == 1)
     selections.add(
         "Zprime_channel",
@@ -87,32 +87,24 @@ def Zprime_workshop_selection(muons, jets, fatjets, met):
             "exactly_1fatjet",
             # "atleast_1b",
             # "lep_ht_cut",
+            "chi2_cut",
         ),
     )
 
     return selections
 
 
-def Zprime_workshop_selection_dummy(muons, jets, fatjets, met):
+def Zprime_baseline(muons, jets, fatjets, met):
     """
-    Select events based on the Zprime workshop selection criteria (dummy).
+    Select events based on the Zprime workshop selection criteria.
     """
-
-    lep_ht = muons.pt + met.pt
     selections = PackedSelection(dtype="uint64")
     selections.add("exactly_1mu", ak.num(muons) == 1)
-    selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
-    selections.add("met_cut", met.pt > 50)
-    selections.add("lep_ht_cut", ak.firsts(lep_ht) > 450)
     selections.add("exactly_1fatjet", ak.num(fatjets) == 1)
     selections.add(
-        "Zprime_channel_2",
+        "baseline",
         selections.all(
             "exactly_1mu",
-            "met_cut",
-            "exactly_1fatjet",
-            "atleast_1b",
-            "lep_ht_cut",
         ),
     )
 

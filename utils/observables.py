@@ -158,48 +158,56 @@ def get_mva_score(
 
 def ttbar_chi2(muons, jets, fatjets, met):
     # ==========================
-    # ttbar reconstruction
+    # ttbar reconstruction settings
     # ==========================
     mean_mlep = 172.5
     sigma_mlep = 20.0
     mean_mhad = 172.5
     sigma_mhad = 20.0
 
-    # Split into events with and without fatjets
     has_fatjet = ak.num(fatjets, axis=1) > 0
     no_fatjet = ~has_fatjet
 
     # ==========================
     # Fatjet-based reconstruction
     # ==========================
+    fatjets_masked = ak.mask(fatjets, has_fatjet)
+    jets_masked = ak.mask(jets, has_fatjet)
+    muons_masked = ak.mask(muons, has_fatjet)
+    met_masked = ak.mask(met, has_fatjet)
 
-    fatjets_sel = fatjets[has_fatjet]
-    jets_sel = jets[has_fatjet]
-    muons_sel = muons[has_fatjet]
-    met_sel = met[has_fatjet]
+    leading_fatjet = fatjets_masked[:, 0]
+    leading_fatjet = ak.zip(
+        {
+            "pt": leading_fatjet.pt,
+            "eta": leading_fatjet.eta,
+            "phi": leading_fatjet.phi,
+            "mass": leading_fatjet.mass,
+        },
+        with_name="Momentum4D",
+    )
+    had_top_fj = leading_fatjet
+    leading_muon = muons_masked[:, 0]
 
-    leading_fatjet_sel = fatjets_sel[:, 0]
-    had_top_fj = leading_fatjet_sel
-    leading_muon = muons_sel[:, 0]
+    fatjet_broadcast = ak.broadcast_arrays(jets_masked, leading_fatjet)[1]
+    muon_broadcast = ak.broadcast_arrays(jets_masked, leading_muon)[1]
+    met_broadcast = ak.broadcast_arrays(jets_masked, met_masked)[1]
 
-    fatjet_broadcast = ak.broadcast_arrays(jets_sel, leading_fatjet_sel)[1]
-    muon_broadcast = ak.broadcast_arrays(jets_sel, leading_muon)[1]
-    met_broadcast = ak.broadcast_arrays(jets_sel, met_sel)[1]
-
-    delta_r = jets_sel.deltaR(fatjet_broadcast)
+    delta_r = jets_masked.deltaR(fatjet_broadcast)
     jet_mask = delta_r > 1.2
 
-    valid_jets = jets_sel[jet_mask]
+    valid_jets = jets_masked[jet_mask]
     valid_muons = muon_broadcast[jet_mask]
     valid_met = met_broadcast[jet_mask]
 
     valid_muons_4vec, valid_jets_4vec = [
         ak.zip(
-            {"pt": o.pt, "eta": o.eta, "phi": o.phi, "mass": o.mass},
+            {"pt": obj.pt, "eta": obj.eta, "phi": obj.phi, "mass": obj.mass},
             with_name="Momentum4D",
         )
-        for o in [valid_muons, valid_jets]
+        for obj in [valid_muons, valid_jets]
     ]
+
     valid_met_4vec = ak.zip(
         {
             "pt": valid_met.pt,
@@ -213,120 +221,140 @@ def ttbar_chi2(muons, jets, fatjets, met):
     lep_top_fj = valid_muons_4vec + valid_met_4vec + valid_jets_4vec
     had_mass_broadcast = ak.broadcast_arrays(lep_top_fj, had_top_fj)[1].mass
 
-    chi2_fj = ((lep_top_fj.mass - mean_mlep) / sigma_mlep) ** 2 + \
-              ((had_mass_broadcast - mean_mhad) / sigma_mhad) ** 2
-
-    best_idx_fj = ak.argmin(chi2_fj, axis=1, keepdims=True)
-    best_chi2_fj = ak.fill_none(ak.flatten(chi2_fj[best_idx_fj]), 9999.0)
-
+    chi2_fj = ((lep_top_fj.mass - mean_mlep) / sigma_mlep) ** 2 + (
+        (had_mass_broadcast - mean_mhad) / sigma_mhad
+    ) ** 2
 
     # ==========================
     # Combinatoric reconstruction (no fatjet)
     # ==========================
-    # Events without fatjets (no cut on number of jets)
-    jets_nofj = jets[no_fatjet]
-    muons_nofj = muons[no_fatjet][:, 0]
-    met_nofj = met[no_fatjet]
+    jets_nofj = ak.mask(jets, no_fatjet)
+    muons_nofj = ak.mask(muons, no_fatjet)[:, 0]
+    met_nofj = ak.mask(met, no_fatjet)
 
-    # Assign each jet once as the lep jet, rest as had jets
     combs = ak.combinations(jets_nofj, 2, axis=1, replacement=False)
     lepjet = combs["0"]
-    hadjets = jets_nofj[
-        ak.local_index(jets_nofj) != ak.local_index(lepjet)
-    ]
+    hadjets = ak.unzip(combs)[1]
 
-    # Now broadcast muon and met to lepjet
     muon_broadcast = ak.broadcast_arrays(lepjet, muons_nofj)[1]
     met_broadcast = ak.broadcast_arrays(lepjet, met_nofj)[1]
 
-    # Vectorize inputs
     lepjet_4vec = ak.zip(
-        {"pt": lepjet.pt, "eta": lepjet.eta, "phi": lepjet.phi, "mass": lepjet.mass},
+        {
+            "pt": lepjet.pt,
+            "eta": lepjet.eta,
+            "phi": lepjet.phi,
+            "mass": lepjet.mass,
+        },
         with_name="Momentum4D",
     )
     muon_4vec = ak.zip(
-        {"pt": muon_broadcast.pt, "eta": muon_broadcast.eta,
-        "phi": muon_broadcast.phi, "mass": muon_broadcast.mass},
+        {
+            "pt": muon_broadcast.pt,
+            "eta": muon_broadcast.eta,
+            "phi": muon_broadcast.phi,
+            "mass": muon_broadcast.mass,
+        },
         with_name="Momentum4D",
     )
     met_4vec = ak.zip(
-        {"pt": met_broadcast.pt, "eta": 0 * met_broadcast.pt,
-        "phi": met_broadcast.phi, "mass": 0},
+        {
+            "pt": met_broadcast.pt,
+            "eta": 0 * met_broadcast.pt,
+            "phi": met_broadcast.phi,
+            "mass": 0,
+        },
         with_name="Momentum4D",
     )
+
     lep_top_nofj = lepjet_4vec + muon_4vec + met_4vec
 
-    # Sum remaining jets as hadronic top (can be 0–3 jets)
-    hadjets = ak.unzip(combs)[1]  # the second item is all the remaining jets
     hadjets_4vec = ak.zip(
-        {"pt": hadjets.pt, "eta": hadjets.eta, "phi": hadjets.phi, "mass": hadjets.mass},
-        with_name="Momentum4D"
+        {
+            "pt": hadjets.pt,
+            "eta": hadjets.eta,
+            "phi": hadjets.phi,
+            "mass": hadjets.mass,
+        },
+        with_name="Momentum4D",
     )
     had_top_nofj = ak.sum(hadjets_4vec, axis=1)
+    had_top_nofj = ak.zip(
+        {
+            "pt": had_top_nofj.pt,
+            "eta": had_top_nofj.eta,
+            "phi": had_top_nofj.phi,
+            "mass": had_top_nofj.mass,
+        },
+        with_name="Momentum4D",
+    )
 
-    # Compute chi2
-    chi2_nofj = ((lep_top_nofj.mass - mean_mlep) / sigma_mlep) ** 2 + \
-                ((had_top_nofj.mass - mean_mhad) / sigma_mhad) ** 2
-
-    best_idx_nofj = ak.argmin(chi2_nofj, axis=1, keepdims=True)
-    best_chi2_nofj = ak.fill_none(ak.flatten(chi2_nofj[best_idx_nofj]), 9999.0)
+    chi2_nofj = ((lep_top_nofj.mass - mean_mlep) / sigma_mlep) ** 2 + (
+        (had_top_nofj.mass - mean_mhad) / sigma_mhad
+    ) ** 2
 
     # ==========================
-    # Combine both cases
+    # Combine both cases using ak.fill_none
     # ==========================
-    best_chi2_combined = ak.full_like(has_fatjet, 9999.0, dtype=float).to_numpy()
-    best_chi2_combined[has_fatjet] = best_chi2_fj.to_numpy()
-    best_chi2_combined[no_fatjet] = best_chi2_nofj.to_numpy()
-    # Convert back to awkward array
-    best_chi2_combined = ak.from_numpy(best_chi2_combined)
+    chi2 = ak.where(has_fatjet, chi2_fj, chi2_nofj)
+    best_idx = ak.argmin(chi2, axis=1, keepdims=True)
+    best_chi2 = ak.fill_none(ak.flatten(chi2[best_idx]), 9999.0)
 
-    return best_chi2_combined
+    return best_chi2
+
 
 def mtt_from_chi2(muons, jets, fatjets, met):
-
     # ==========================
-    # ttbar reconstruction
+    # ttbar reconstruction settings
     # ==========================
     mean_mlep = 172.5
     sigma_mlep = 20.0
     mean_mhad = 172.5
     sigma_mhad = 20.0
 
-    # Split into events with and without fatjets
     has_fatjet = ak.num(fatjets, axis=1) > 0
     no_fatjet = ~has_fatjet
 
     # ==========================
     # Fatjet-based reconstruction
     # ==========================
+    fatjets_masked = ak.mask(fatjets, has_fatjet)
+    jets_masked = ak.mask(jets, has_fatjet)
+    muons_masked = ak.mask(muons, has_fatjet)
+    met_masked = ak.mask(met, has_fatjet)
 
-    fatjets_sel = fatjets[has_fatjet]
-    jets_sel = jets[has_fatjet]
-    muons_sel = muons[has_fatjet]
-    met_sel = met[has_fatjet]
+    leading_fatjet = fatjets_masked[:, 0]
+    leading_fatjet = ak.zip(
+        {
+            "pt": leading_fatjet.pt,
+            "eta": leading_fatjet.eta,
+            "phi": leading_fatjet.phi,
+            "mass": leading_fatjet.mass,
+        },
+        with_name="Momentum4D",
+    )
+    had_top_fj = leading_fatjet
+    leading_muon = muons_masked[:, 0]
 
-    leading_fatjet_sel = fatjets_sel[:, 0]
-    had_top_fj = leading_fatjet_sel
-    leading_muon = muons_sel[:, 0]
+    fatjet_broadcast = ak.broadcast_arrays(jets_masked, leading_fatjet)[1]
+    muon_broadcast = ak.broadcast_arrays(jets_masked, leading_muon)[1]
+    met_broadcast = ak.broadcast_arrays(jets_masked, met_masked)[1]
 
-    fatjet_broadcast = ak.broadcast_arrays(jets_sel, leading_fatjet_sel)[1]
-    muon_broadcast = ak.broadcast_arrays(jets_sel, leading_muon)[1]
-    met_broadcast = ak.broadcast_arrays(jets_sel, met_sel)[1]
-
-    delta_r = jets_sel.deltaR(fatjet_broadcast)
+    delta_r = jets_masked.deltaR(fatjet_broadcast)
     jet_mask = delta_r > 1.2
 
-    valid_jets = jets_sel[jet_mask]
+    valid_jets = jets_masked[jet_mask]
     valid_muons = muon_broadcast[jet_mask]
     valid_met = met_broadcast[jet_mask]
 
     valid_muons_4vec, valid_jets_4vec = [
         ak.zip(
-            {"pt": o.pt, "eta": o.eta, "phi": o.phi, "mass": o.mass},
+            {"pt": obj.pt, "eta": obj.eta, "phi": obj.phi, "mass": obj.mass},
             with_name="Momentum4D",
         )
-        for o in [valid_muons, valid_jets]
+        for obj in [valid_muons, valid_jets]
     ]
+
     valid_met_4vec = ak.zip(
         {
             "pt": valid_met.pt,
@@ -340,92 +368,109 @@ def mtt_from_chi2(muons, jets, fatjets, met):
     lep_top_fj = valid_muons_4vec + valid_met_4vec + valid_jets_4vec
     had_mass_broadcast = ak.broadcast_arrays(lep_top_fj, had_top_fj)[1].mass
 
-    chi2_fj = ((lep_top_fj.mass - mean_mlep) / sigma_mlep) ** 2 + \
-              ((had_mass_broadcast - mean_mhad) / sigma_mhad) ** 2
-
-    best_idx_fj = ak.argmin(chi2_fj, axis=1, keepdims=True)
-    best_chi2_fj = ak.fill_none(ak.flatten(chi2_fj[best_idx_fj]), 9999.0)
-    best_lep_top_fj = lep_top_fj[best_idx_fj]
-    best_had_top_fj = ak.broadcast_arrays(best_lep_top_fj, had_top_fj)[1]
-    best_had_top_fj_4vec = ak.zip(
-        {"pt": best_had_top_fj.pt, "eta": best_had_top_fj.eta,
-        "phi": best_had_top_fj.phi, "mass": best_had_top_fj.mass},
-        with_name="Momentum4D",
-    )
-
-    mtt_fj = ak.flatten((best_lep_top_fj + best_had_top_fj_4vec).mass)
+    chi2_fj = ((lep_top_fj.mass - mean_mlep) / sigma_mlep) ** 2 + (
+        (had_mass_broadcast - mean_mhad) / sigma_mhad
+    ) ** 2
 
     # ==========================
     # Combinatoric reconstruction (no fatjet)
     # ==========================
-    # Events without fatjets (no cut on number of jets)
-    jets_nofj = jets[no_fatjet]
-    muons_nofj = muons[no_fatjet][:, 0]
-    met_nofj = met[no_fatjet]
+    jets_nofj = ak.mask(jets, no_fatjet)
+    muons_nofj = ak.mask(muons, no_fatjet)[:, 0]
+    met_nofj = ak.mask(met, no_fatjet)
 
-    # Assign each jet once as the lep jet, rest as had jets
     combs = ak.combinations(jets_nofj, 2, axis=1, replacement=False)
     lepjet = combs["0"]
-    hadjets = jets_nofj[
-        ak.local_index(jets_nofj) != ak.local_index(lepjet)
-    ]
+    hadjets = ak.unzip(combs)[1]
 
-    # Now broadcast muon and met to lepjet
     muon_broadcast = ak.broadcast_arrays(lepjet, muons_nofj)[1]
     met_broadcast = ak.broadcast_arrays(lepjet, met_nofj)[1]
 
-    # Vectorize inputs
     lepjet_4vec = ak.zip(
-        {"pt": lepjet.pt, "eta": lepjet.eta, "phi": lepjet.phi, "mass": lepjet.mass},
+        {
+            "pt": lepjet.pt,
+            "eta": lepjet.eta,
+            "phi": lepjet.phi,
+            "mass": lepjet.mass,
+        },
         with_name="Momentum4D",
     )
     muon_4vec = ak.zip(
-        {"pt": muon_broadcast.pt, "eta": muon_broadcast.eta,
-        "phi": muon_broadcast.phi, "mass": muon_broadcast.mass},
+        {
+            "pt": muon_broadcast.pt,
+            "eta": muon_broadcast.eta,
+            "phi": muon_broadcast.phi,
+            "mass": muon_broadcast.mass,
+        },
         with_name="Momentum4D",
     )
     met_4vec = ak.zip(
-        {"pt": met_broadcast.pt, "eta": 0 * met_broadcast.pt,
-        "phi": met_broadcast.phi, "mass": 0},
+        {
+            "pt": met_broadcast.pt,
+            "eta": 0 * met_broadcast.pt,
+            "phi": met_broadcast.phi,
+            "mass": 0,
+        },
         with_name="Momentum4D",
     )
+
     lep_top_nofj = lepjet_4vec + muon_4vec + met_4vec
 
-    # Sum remaining jets as hadronic top (can be 0–3 jets)
-    hadjets = ak.unzip(combs)[1]  # the second item is all the remaining jets
     hadjets_4vec = ak.zip(
-        {"pt": hadjets.pt, "eta": hadjets.eta, "phi": hadjets.phi, "mass": hadjets.mass},
-        with_name="Momentum4D"
+        {
+            "pt": hadjets.pt,
+            "eta": hadjets.eta,
+            "phi": hadjets.phi,
+            "mass": hadjets.mass,
+        },
+        with_name="Momentum4D",
     )
     had_top_nofj = ak.sum(hadjets_4vec, axis=1)
-
-    # Compute chi2
-    chi2_nofj = ((lep_top_nofj.mass - mean_mlep) / sigma_mlep) ** 2 + \
-                ((had_top_nofj.mass - mean_mhad) / sigma_mhad) ** 2
-
-    best_idx_nofj = ak.argmin(chi2_nofj, axis=1, keepdims=True)
-    best_chi2_nofj = ak.fill_none(ak.flatten(chi2_nofj[best_idx_nofj]), 9999.0)
-    mtt_nofj = (
-        ak.flatten((lep_top_nofj[best_idx_nofj] + had_top_nofj[best_idx_nofj]).mass)
-        if len(lep_top_nofj) > 0
-        else ak.Array([])
+    had_top_nofj = ak.zip(
+        {
+            "pt": had_top_nofj.pt,
+            "eta": had_top_nofj.eta,
+            "phi": had_top_nofj.phi,
+            "mass": had_top_nofj.mass,
+        },
+        with_name="Momentum4D",
     )
-    mtt_nofj = ak.fill_none(mtt_nofj, 9999.0)
+
+    chi2_nofj = ((lep_top_nofj.mass - mean_mlep) / sigma_mlep) ** 2 + (
+        (had_top_nofj.mass - mean_mhad) / sigma_mhad
+    ) ** 2
 
     # ==========================
-    # Combine both cases
+    # Combine both cases using ak.fill_none
     # ==========================
-    best_chi2_combined = ak.full_like(has_fatjet, 9999.0, dtype=float).to_numpy()
-    best_chi2_combined[has_fatjet] = best_chi2_fj.to_numpy()
-    best_chi2_combined[no_fatjet] = best_chi2_nofj.to_numpy()
-    # Convert back to awkward array
-    best_chi2_combined = ak.from_numpy(best_chi2_combined)
+    best_idx_fj = ak.argmin(chi2_fj, axis=1, keepdims=True)
+    best_idx_nofj = ak.argmin(chi2_nofj, axis=1, keepdims=True)
 
-    mtt_combined = ak.full_like(has_fatjet, 9999.0, dtype=float).to_numpy()
-    print(mtt_combined, mtt_fj)
-    mtt_combined[has_fatjet] = mtt_fj.to_numpy()
-    mtt_combined[no_fatjet] = mtt_nofj.to_numpy()
-    # Convert back to awkward array
-    mtt_combined = ak.from_numpy(mtt_combined)
+    # Broadcast had_top_fj to match structure of lep_top_fj
+    had_top_fj_broadcasted = ak.broadcast_arrays(lep_top_fj, had_top_fj)[1]
+    had_top_nofj_broadcasted = ak.broadcast_arrays(lep_top_nofj, had_top_nofj)[
+        1
+    ]
 
+<<<<<<< HEAD
     return mtt_combined
+=======
+    # Best per-event combinations using best_idx (axis=1)
+    lep_top_fj_best = lep_top_fj[best_idx_fj]
+    had_top_fj_best = had_top_fj_broadcasted[best_idx_fj]
+
+    lep_top_nofj_best = lep_top_nofj[best_idx_nofj]
+    had_top_nofj_best = had_top_nofj_broadcasted[best_idx_nofj]
+
+    # Select final top candidates per event
+    lep_top = ak.flatten(
+        ak.where(has_fatjet, lep_top_fj_best, lep_top_nofj_best)
+    )
+    had_top = ak.flatten(
+        ak.where(has_fatjet, had_top_fj_best, had_top_nofj_best)
+    )
+    mtt = (lep_top + had_top).mass
+    mtt = ak.fill_none(mtt, -1.0)
+
+    return mtt
+>>>>>>> 1ad5dfd (big one: implement ghost observables, baseline cuts and fixt ttbar reco method)
