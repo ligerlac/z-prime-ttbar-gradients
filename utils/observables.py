@@ -308,9 +308,6 @@ def ttbar_reco(muons, jets, fatjets, met):
         1
     ]
 
-<<<<<<< HEAD
-    return mtt_combined
-=======
     # Best per-event combinations using best_idx (axis=1)
     lep_top_fj_best = lep_top_fj[best_idx_fj]
     had_top_fj_best = had_top_fj_broadcasted[best_idx_fj]
@@ -328,10 +325,6 @@ def ttbar_reco(muons, jets, fatjets, met):
     mtt = (lep_top + had_top).mass
     mtt = ak.fill_none(mtt, -1.0)
 
-<<<<<<< HEAD
-    return mtt
->>>>>>> 1ad5dfd (big one: implement ghost observables, baseline cuts and fixt ttbar reco method)
-=======
     chi2 = ak.where(has_fatjet, chi2_fj, chi2_nofj)
     best_idx = ak.argmin(chi2, axis=1, keepdims=True)
     best_chi2 = ak.fill_none(ak.flatten(chi2[best_idx]), 9999.0)
@@ -509,4 +502,3 @@ def ttbar_reco_single_out(muons, jets, fatjets, met):
     best_chi2 = ak.fill_none(ak.flatten(chi2[best_idx]), 9999.0)
 
     return best_chi2
->>>>>>> 386d831 (optimise ghost ttbar reco)
