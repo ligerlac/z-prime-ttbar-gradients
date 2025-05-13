@@ -515,7 +515,7 @@ class Config(SubscriptableModel):
 
         seen_ghost_obs = set()
         for obs in self.ghost_observables:
-            names = obs.name if isinstance(obs.names, list) else [obs.names]
+            names = obs.names if isinstance(obs.names, list) else [obs.names]
             colls = (
                 obs.collections
                 if isinstance(obs.collections, list)

@@ -4,7 +4,7 @@ from utils.cuts import (
     Zprime_baseline,
     Zprime_workshop_selection,
 )
-from utils.observables import mtt_from_chi2, ttbar_chi2
+from utils.observables import mtt_from_ttbar_reco, ttbar_reco, ttbar_reco_single_out
 from utils.systematics import jet_pt_resolution, jet_pt_scale
 
 config = {
@@ -74,16 +74,13 @@ config = {
             "observables": [
                 {
                     "name": "mtt_chi2",
-                    "binning": "0,3000,50",
+                    "binning": "0,5000,50",
                     "label": r"m_{t\bar{t}}(\chi^2_{t\bar{t}})",
-                    "function": mtt_from_chi2,
+                    "function": mtt_from_ttbar_reco,
                     "use": [
-                        ("Muon", None),
-                        ("Jet", None),
-                        ("FatJet", None),
-                        ("PuppiMET", None),
+                        ("ttbar_reco", None),
                     ],
-                    "works_with_jax": False,
+                    "works_with_jax": True,
                 }
             ],
             "selection_function": Zprime_workshop_selection,
@@ -98,21 +95,9 @@ config = {
     ],
     "ghost_observables": [
         {
-            "names": "ttbar_chi2",
-            "collections": "reco",
-            "function": ttbar_chi2,
-            "use": [
-                ("Muon", None),
-                ("Jet", None),
-                ("FatJet", None),
-                ("PuppiMET", None),
-            ],
-            "works_with_jax": False,
-        },
-        {
-            "names": "ttbar_chi22",
-            "collections": "reco",
-            "function": ttbar_chi2,
+            "names": ("chi2", "mtt"),
+            "collections": "ttbar_reco",
+            "function": ttbar_reco,
             "use": [
                 ("Muon", None),
                 ("Jet", None),
