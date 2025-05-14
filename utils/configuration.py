@@ -4,7 +4,11 @@ from utils.cuts import (
     Zprime_baseline,
     Zprime_workshop_selection,
 )
-from utils.observables import compute_mva_scores, mtt_from_ttbar_reco, ttbar_reco, get_mva_scores
+from utils.observables import (get_mva_vars, compute_mva_scores, mtt_from_ttbar_reco,
+                               ttbar_reco, get_mva_scores, get_n_jet, get_leading_jet_mass,
+                               get_subleading_jet_mass, get_st, get_leading_jet_btag_score,
+                               get_subleading_jet_btag_score, get_S_zz, get_deltaR, get_pt_rel,
+                               get_deltaR_times_pt)
 from utils.systematics import jet_pt_resolution, jet_pt_scale
 
 config = {
@@ -92,6 +96,86 @@ config = {
                     ],
                     "works_with_jax": True,
                 },
+                {
+                    "name": "n_jet",
+                    "label": r"N_{\mathrm{jets}}",
+                    "binning": "0,10,10",
+                    "function": get_n_jet,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "leading_jet_mass",
+                    "label": r"m_{j_1} [GeV]",
+                    "binning": "0,200,40",
+                    "function": get_leading_jet_mass,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "subleading_jet_mass",
+                    "label": r"m_{j_2} [GeV]",
+                    "binning": "0,200,40",
+                    "function": get_subleading_jet_mass,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "st",
+                    "label": r"S_T [GeV]",
+                    "binning": "0,2000,50",
+                    "function": get_st,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "leading_jet_btag_score",
+                    "label": r"b-tag(j_1)",
+                    "binning": "0,1,50",
+                    "function": get_leading_jet_btag_score,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "subleading_jet_btag_score",
+                    "label": r"b-tag(j_2)",
+                    "binning": "0,1,50",
+                    "function": get_subleading_jet_btag_score,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "S_zz",
+                    "label": r"S_{zz}",
+                    "binning": "0,1,50",
+                    "function": get_S_zz,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "deltaR",
+                    "label": r"\Delta R(\mu,\mathrm{jet})",
+                    "binning":  np.arange(0, 0.2, 0.002),
+                    "function": get_deltaR,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "pt_rel",
+                    "label": r"p_T^{\mathrm{rel}} [GeV]",
+                    "binning": np.arange(0, 10, 0.2),
+                    "function": get_pt_rel,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "deltaR_times_pt",
+                    "label": r"\Delta R \times p_T^{\mathrm{jet}}",
+                    "binning": np.arange(0, 10, 0.2),
+                    "function": get_deltaR_times_pt,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                }
             ],
             "selection_function": Zprime_workshop_selection,
             "selection_use": [
@@ -102,6 +186,109 @@ config = {
                 ("ttbar_reco", None),
             ],
         },
+        {
+            "name": "baseline",
+            "fit_observable": "mva_score",
+            "observables": [
+                                {
+                    "name": "mva_score",
+                    "binning": "0,1,50",
+                    "label": r"NN score",
+                    "function": get_mva_scores,
+                    "use": [
+                        ("mva", None),
+                    ],
+                    "works_with_jax": True,
+                },
+                {
+                    "name": "n_jet",
+                    "label": r"N_{\mathrm{jets}}",
+                    "binning": "0,10,10",
+                    "function": get_n_jet,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "leading_jet_mass",
+                    "label": r"m_{j_1} [GeV]",
+                    "binning": "0,200,40",
+                    "function": get_leading_jet_mass,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "subleading_jet_mass",
+                    "label": r"m_{j_2} [GeV]",
+                    "binning": "0,200,40",
+                    "function": get_subleading_jet_mass,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "st",
+                    "label": r"S_T [GeV]",
+                    "binning": "0,2000,50",
+                    "function": get_st,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "leading_jet_btag_score",
+                    "label": r"b-tag(j_1)",
+                    "binning": "-1,1,50",
+                    "function": get_leading_jet_btag_score,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "subleading_jet_btag_score",
+                    "label": r"b-tag(j_2)",
+                    "binning": "-1,1,50",
+                    "function": get_subleading_jet_btag_score,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "S_zz",
+                    "label": r"S_{zz}",
+                    "binning": "0,1,50",
+                    "function": get_S_zz,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "deltaR",
+                    "label": r"\Delta R(\mu,\mathrm{jet})",
+                    "binning":  np.arange(0, 0.2, 0.002),
+                    "function": get_deltaR,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "pt_rel",
+                    "label": r"p_T^{\mathrm{rel}} [GeV]",
+                    "binning": np.arange(0, 10, 0.2),
+                    "function": get_pt_rel,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                },
+                {
+                    "name": "deltaR_times_pt",
+                    "label": r"\Delta R \times p_T^{\mathrm{jet}}",
+                    "binning": np.arange(0, 10, 0.2),
+                    "function": get_deltaR_times_pt,
+                    "use": [("mva", None)],
+                    "works_with_jax": False,
+                }
+            ],
+            "selection_function": Zprime_baseline,
+            "selection_use": [
+                ("Muon", None),
+                ("Jet", None),
+                ("FatJet", None),
+                ("PuppiMET", None),
+            ],
+        }
     ],
     "ghost_observables": [
         {
@@ -124,6 +311,27 @@ config = {
                 ("Muon", None),
                 ("Jet", None),
             ],
+        },
+        {
+            "names": (
+                "n_jet",
+                "leading_jet_mass",
+                "subleading_jet_mass",
+                "st",
+                "leading_jet_btag_score",
+                "subleading_jet_btag_score",
+                "S_zz",
+                "deltaR",
+                "pt_rel",
+                "deltaR_times_pt",
+            ),
+            "collections": "mva",
+            "function": get_mva_vars,
+            "use": [
+                ("Muon", None),
+                ("Jet", None),
+            ],
+            "works_with_jax": False
         }
     ],
     "corrections": [

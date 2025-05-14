@@ -34,12 +34,12 @@ def save_histograms(
                 for sample in histogram.axes[1]:
                     for variation in histogram[:, sample, :].axes[1]:
                         variation_string = (
-                            "" if variation == "nominal" else f"_{variation}"
+                            "" if variation == "nominal" else f"__{variation}"
                         )
                         current_1d_hist = histogram[:, sample, variation]
 
                         if sum(current_1d_hist.values()) > empty_hist_yield:
                             # only save histograms containing events
                             f[
-                                f"{channel}_{observable}_{sample}{variation_string}"
+                                f"{channel}__{observable}__{sample}{variation_string}"
                             ] = current_1d_hist

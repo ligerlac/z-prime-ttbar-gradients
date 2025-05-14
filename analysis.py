@@ -22,6 +22,7 @@ from correctionlib import CorrectionSet
 import hist
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as np
 import uproot
 import vector
@@ -116,6 +117,7 @@ class ZprimeAnalysis:
                         label=observable_label,
                     )
                 else:
+                    print(observable_binning)
                     axis = hist.axis.Variable(
                         observable_binning,
                         name="observable",
@@ -192,7 +194,7 @@ class ZprimeAnalysis:
             (jets.pt > 30)
             & (abs(jets.eta) < 2.4)
             & jets.isTightLeptonVeto
-            & (jets.jetId >= 4)
+            #& (jets.jetId >= 4)
         ]
         fatjets = fatjets[
             (fatjets.pt > 200)
@@ -423,8 +425,9 @@ class ZprimeAnalysis:
                     packed_selection.all(packed_selection.names[-1])
                 )
 
+            mask = ak.to_backend(mask, "jax" if tracing else "cpu")
             if process == "data":
-                mask = mask & lumi_mask(self.config.general.lumifile, events)
+                mask = mask & lumi_mask(self.config.general.lumifile, object_copies['run'], object_copies['luminosityBlock'])
 
             if ak.sum(mask) == 0:
                 logger.warning(
@@ -434,15 +437,15 @@ class ZprimeAnalysis:
                 continue
 
             if tracing:
-                mask = ak.to_backend(mask, "jax")
-                object_copies = {
+
+                object_copies_channel = {
                     collection: variable[mask]
                     for collection, variable in object_copies.items()
                 }
 
-                region_muons = object_copies["Muon"]
-                region_jets = object_copies["Jet"]
-                region_met = object_copies["PuppiMET"]
+                region_muons = object_copies_channel["Muon"]
+                region_jets = object_copies_channel["Jet"]
+                region_met = object_copies_channel["PuppiMET"]
 
                 region_lep_ht = region_muons.pt + region_met.pt
                 soft_cuts = {
@@ -466,36 +469,37 @@ class ZprimeAnalysis:
 
                 weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
                 logger.info(f"Weights:: {weights} ")
+
             else:
-                object_copies = {
+                object_copies_channel = {
                     collection: variable[mask]
                     for collection, variable in object_copies.items()
                 }
 
-                region_muons = object_copies["Muon"]
-                region_jets = object_copies["Jet"]
-                region_met = object_copies["PuppiMET"]
+                region_muons = object_copies_channel["Muon"]
+                region_jets = object_copies_channel["Jet"]
+                region_met = object_copies_channel["PuppiMET"]
                 region_lep_ht = region_muons.pt + region_met.pt
 
-                soft_cuts = {
-                    "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1)
-                    > 0,
-                    "met_cut": region_met.pt > 50,
-                    "lep_ht_cut": ak.fill_none(
-                        ak.firsts(region_lep_ht) > 150, False
-                    ),
-                }
+                # soft_cuts = {
+                #     "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1)
+                #     > 0,
+                #     "met_cut": region_met.pt > 50,
+                #     "lep_ht_cut": ak.fill_none(
+                #         ak.firsts(region_lep_ht) > 150, False
+                #     ),
+                # }
 
-                mask = (
-                    mask[mask]
-                    & (soft_cuts["atleast_1b"])
-                    & (soft_cuts["met_cut"])
-                    & (soft_cuts["lep_ht_cut"])
-                )
-                object_copies = {
-                    collection: variable[mask]
-                    for collection, variable in object_copies.items()
-                }
+                # mask = (
+                #     mask[mask]
+                #     & (soft_cuts["atleast_1b"])
+                #     & (soft_cuts["met_cut"])
+                #     & (soft_cuts["lep_ht_cut"])
+                # )
+                # object_copies = {
+                #     collection: variable[mask]
+                #     for collection, variable in object_copies.items()
+                # }
                 weights = 1.0
 
             if process != "data":
@@ -505,11 +509,11 @@ class ZprimeAnalysis:
                     / abs(events[mask].genWeight)
                 )
             else:
-                weights *= np.ones(len(ak.count_nonzero(mask)))
+                weights *= np.ones(ak.sum(mask))
 
             if event_syst and process != "data":
                 weights = self.apply_event_weight_correction(
-                    weights, event_syst, direction, object_copies
+                    weights, event_syst, direction, object_copies_channel
                 )
 
             for observable in channel["observables"]:
@@ -522,7 +526,7 @@ class ZprimeAnalysis:
                     return ak.sum(weights)
                 observable_name = observable["name"]
                 observable_args = self._get_function_arguments(
-                    observable["use"], object_copies
+                    observable["use"], object_copies_channel
                 )
                 observable_vals = observable["function"](*observable_args)
                 if not tracing:
@@ -530,7 +534,7 @@ class ZprimeAnalysis:
                         observable=observable_vals,
                         process=process,
                         variation=variation,
-                        weight=jax.lax.stop_gradient(weights),
+                        weight=weights,
                     )
                 else:
                     return ak.sum(
@@ -579,10 +583,14 @@ class ZprimeAnalysis:
 
     def compute_ghost_observables(self, obj_copies, tracing=False):
         for ghost in self.config.ghost_observables:
+
             # do not compute if this function is being traced by JAX
             # and observable function is not compatible with JAX
             if not ghost.works_with_jax and tracing:
                 continue
+            logger.info(
+                f"Computing ghost observables {ghost.names}"
+            )
             ghost_args = self._get_function_arguments(ghost["use"], obj_copies)
             ghost_outputs = ghost["function"](*ghost_args)
 
@@ -599,6 +607,8 @@ class ZprimeAnalysis:
             )
             # update object_copies with ghost outputs
             for out, name, coll in zip(ghost_outputs, names, colls):
+                if isinstance(out, ak.Array) and len(ak.fields(out)) == 1 and name in out.fields:
+                        out = out[name]
                 if coll in obj_copies:
                     try:
                         # add new field to existing awkward array
@@ -640,14 +650,14 @@ class ZprimeAnalysis:
 
         # Nominal processing
         obj_copies = self.get_object_copies(events)
-        # filter objects
-        muons, jets, fatjets, met = self.get_good_objects(obj_copies)
-        (
-            obj_copies["Muon"],
-            obj_copies["Jet"],
-            obj_copies["FatJet"],
-            obj_copies["PuppiMET"],
-        ) = (muons, jets, fatjets, met)
+        # # filter objects
+        # muons, jets, fatjets, met = self.get_good_objects(obj_copies)
+        # (
+        #     obj_copies["Muon"],
+        #     obj_copies["Jet"],
+        #     obj_copies["FatJet"],
+        #     obj_copies["PuppiMET"],
+        # ) = (muons, jets, fatjets, met)
 
         # Apply baseline selection
         baseline_args = self._get_function_arguments(
@@ -662,7 +672,6 @@ class ZprimeAnalysis:
             collection: variable[mask]
             for collection, variable in obj_copies.items()
         }
-
         # apply ghost observables
         obj_copies = self.compute_ghost_observables(
             obj_copies, tracing=tracing
@@ -670,37 +679,37 @@ class ZprimeAnalysis:
 
         # apply event-level corrections
         # apply nominal corrections
-        obj_copies = self.apply_object_corrections(
+        obj_copies_corrected = self.apply_object_corrections(
             obj_copies, self.corrections, direction="nominal"
         )
         # apply selection and fill histograms
         # JAX tracing with no filling for autodiff
         events = ak.to_backend(events, "jax")
-        obj_copies = {
-            obj: ak.to_backend(var, "jax") for obj, var in obj_copies.items()
+        obj_copies_corrected = {
+            obj: ak.to_backend(var, "jax") for obj, var in obj_copies_corrected.items()
         }
-        apply_selection_and_fill_grad = jax.value_and_grad(
-            self.apply_selection_and_fill, argnums=6, has_aux=False
-        )
-        val, grad = apply_selection_and_fill_grad(
-            obj_copies,
-            events,
-            process,
-            variation,
-            xsec_weight,
-            analysis,
-            50.0,
-            tracing=True,
-        )
-        logger.info(f"val: {val}, grad: {grad}")
+        # apply_selection_and_fill_grad = jax.value_and_grad(
+        #     self.apply_selection_and_fill, argnums=6, has_aux=False
+        # )
+        # val, grad = apply_selection_and_fill_grad(
+        #     obj_copies_corrected,
+        #     events,
+        #     process,
+        #     variation,
+        #     xsec_weight,
+        #     analysis,
+        #     50.0,
+        #     tracing=True,
+        # )
+        # logger.info(f"val: {val}, grad: {grad}")
 
         # convert to CPU for actual histogram filling
         events = ak.to_backend(events, "cpu")
-        obj_copies = {
-            obj: ak.to_backend(var, "cpu") for obj, var in obj_copies.items()
+        obj_copies_corrected = {
+            obj: ak.to_backend(var, "cpu") for obj, var in obj_copies_corrected.items()
         }
         self.apply_selection_and_fill(
-            obj_copies,
+            obj_copies_corrected,
             events,
             process,
             "nominal",
@@ -710,46 +719,37 @@ class ZprimeAnalysis:
             tracing=False,
         )
 
-        # Systematic variations
-        for syst in self.systematics + self.corrections:
-            if syst["name"] == "nominal":
-                continue
-            for direction in ["up", "down"]:
-                obj_copies = self.get_object_copies(events)
-                obj_copies = {
-                    collection: variable[mask]
-                    for collection, variable in obj_copies.items()
-                }
-                obj_copies = self.compute_ghost_observables(
-                    obj_copies, tracing=tracing
-                )
+        # # Systematic variations
+        # for syst in self.systematics + self.corrections:
+        #     if syst["name"] == "nominal":
+        #         continue
+        #     for direction in ["up", "down"]:
+        #         # filter objects
+        #         muons, jets, fatjets, met = self.get_good_objects(obj_copies)
+        #         (
+        #             obj_copies["Muon"],
+        #             obj_copies["Jet"],
+        #             obj_copies["FatJet"],
+        #             obj_copies["PuppiMET"],
+        #         ) = (muons, jets, fatjets, met)
 
-                # filter objects
-                muons, jets, fatjets, met = self.get_good_objects(obj_copies)
-                (
-                    obj_copies["Muon"],
-                    obj_copies["Jet"],
-                    obj_copies["FatJet"],
-                    obj_copies["PuppiMET"],
-                ) = (muons, jets, fatjets, met)
-
-                # apply corrections
-                obj_copies = self.apply_object_corrections(
-                    obj_copies, [syst], direction=direction
-                )
-                varname = f"{syst['name']}_{direction}"
-                self.apply_selection_and_fill(
-                    obj_copies,
-                    events,
-                    process,
-                    varname,
-                    xsec_weight,
-                    analysis,
-                    50.0,
-                    event_syst=syst,
-                    direction=direction,
-                    tracing=False,
-                )
+        #         # apply corrections
+        #         obj_copies_corrected = self.apply_object_corrections(
+        #             obj_copies, [syst], direction=direction
+        #         )
+        #         varname = f"{syst['name']}_{direction}"
+        #         self.apply_selection_and_fill(
+        #             obj_copies_corrected,
+        #             events,
+        #             process,
+        #             varname,
+        #             xsec_weight,
+        #             analysis,
+        #             50.0,
+        #             event_syst=syst,
+        #             direction=direction,
+        #             tracing=False,
+        #         )
 
 
 # -----------------------------
@@ -859,6 +859,61 @@ def main():
         )
         cabinetry.visualize.pulls(fit_results, close_figure=False)
 
+    plot_nominal_histograms("output/histograms/histograms.root")
+
+def plot_nominal_histograms(hist_file: str, output_dir: str = "output/plots/nominal_mva_inputs"):
+    """
+    Generate normalized histograms for each observable, region, and process from the ROOT file.
+
+    Parameters
+    ----------
+    hist_file : str
+        Path to the histogram ROOT file.
+    output_dir : str
+        Directory to save output plots.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    file = uproot.open(hist_file)
+    histograms = defaultdict(lambda: defaultdict(dict))
+
+    for key in file.keys():
+        name = key.strip(";1")
+        parts = name.split("__")
+
+        if parts[0] != "baseline":
+            continue  # only interested in 'baseline' channel
+
+        region = parts[0]
+        observable = parts[1]
+        process = "_".join(parts[2:])
+
+        if "up" in process or "down" in process:
+            continue  # skip systematic variations
+
+        hist = file[name]
+        values = hist.values()
+        edges = hist.axis().edges()
+
+        histograms[region][observable][process] = (values, edges)
+
+    for region, obs_dict in histograms.items():
+        for observable, proc_dict in obs_dict.items():
+            plt.figure(figsize=(6, 4))
+            for proc, (vals, edges) in proc_dict.items():
+                norm_vals = vals / vals.sum() if vals.sum() > 0 else vals
+                centers = 0.5 * (edges[1:] + edges[:-1])
+                plt.step(centers, norm_vals, where="mid", label=proc)
+
+            plt.xlabel(observable)
+            plt.ylabel("Normalized Entries")
+            plt.title(f"{observable} — {region}")
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(f"{output_dir}/{region}_{observable}.png")
+            plt.close()
+
+    print(f"[INFO] Saved plots to: {output_dir}")
 
 if __name__ == "__main__":
     main()

@@ -270,6 +270,87 @@ def mtt_from_ttbar_reco(ttbar_reco: ak.Array) -> ak.Array:
     """
     return ttbar_reco.mtt
 
+def compute_mva_vars(muons: ak.Array, jets: ak.Array) -> dict[str, np.ndarray]:
+    """
+    Extract MVA input features from muons and jets.
+
+    Parameters
+    ----------
+    jets : ak.Array
+        Array of jet candidates.
+    muons : ak.Array
+        Array of muon candidates.
+
+    Returns
+    -------
+    dict[str, np.ndarray]
+        Dictionary mapping feature names to NumPy arrays.
+    """
+    assert ak.all(ak.num(jets, axis=1) >= 2), "Require at least 2 jets"
+    assert ak.all(ak.num(muons, axis=1) == 1), "Require exactly 1 muon"
+
+    d = {}
+    d["n_jet"] = ak.num(jets, axis=1).to_numpy()
+    d["leading_jet_mass"] = jets.mass[:, 0].to_numpy()
+    d["subleading_jet_mass"] = jets.mass[:, 1].to_numpy()
+    d["st"] = (ak.sum(jets.pt, axis=1) + ak.sum(muons.pt, axis=1)).to_numpy()
+    d["leading_jet_btag_score"] = jets.btagDeepB[:, 0].to_numpy()
+    d["subleading_jet_btag_score"] = jets.btagDeepB[:, 1].to_numpy()
+
+    denominator = ak.sum(jets.px**2 + jets.py**2 + jets.pz**2, axis=1)
+    s_zz = ak.sum(jets.pz * jets.pz, axis=1) / denominator
+    d["S_zz"] = s_zz.to_numpy()
+
+    muon_in_pair, jet_in_pair = ak.unzip(ak.cartesian([muons, jets]))
+    delta_r = muon_in_pair.deltaR(jet_in_pair)
+    min_delta_r = ak.min(delta_r, axis=1)
+    d["deltaR"] = min_delta_r.to_numpy()
+
+    min_delta_r_indices = ak.argmin(delta_r, axis=1, keepdims=True)
+    angle = muons.deltaangle(jet_in_pair[min_delta_r_indices])
+    d["pt_rel"] = (muons.p * np.sin(angle)).to_numpy().flatten()
+
+    closest_jet_pt = jet_in_pair.pt[min_delta_r_indices]
+    d["deltaR_times_pt"] = (min_delta_r * closest_jet_pt).to_numpy().flatten()
+
+    for var, vals in d.items():
+        print(f"{var} mean:: ", ak.mean(vals))
+
+    return d
+
+def get_mva_vars(muons: ak.Array, jets: ak.Array) -> ak.Array:
+    d = compute_mva_vars(muons, jets)
+    return tuple(d.values())
+
+def get_n_jet(mva: ak.Array) -> ak.Array:
+    return mva.n_jet
+
+def get_leading_jet_mass(mva: ak.Array) -> ak.Array:
+    return mva.leading_jet_mass
+
+def get_subleading_jet_mass(mva: ak.Array) -> ak.Array:
+    return mva.subleading_jet_mass
+
+def get_st(mva: ak.Array) -> ak.Array:
+    return mva.st
+
+def get_leading_jet_btag_score(mva: ak.Array) -> ak.Array:
+    return mva.leading_jet_btag_score
+
+def get_subleading_jet_btag_score(mva: ak.Array) -> ak.Array:
+    return mva.subleading_jet_btag_score
+
+def get_S_zz(mva: ak.Array) -> ak.Array:
+    return mva.S_zz
+
+def get_deltaR(mva: ak.Array) -> ak.Array:
+    return mva.deltaR
+
+def get_pt_rel(mva: ak.Array) -> ak.Array:
+    return mva.pt_rel
+
+def get_deltaR_times_pt(mva: ak.Array) -> ak.Array:
+    return mva.deltaR_times_pt
 
 def compute_mva_scores(
     muons: ak.Array,
@@ -293,59 +374,21 @@ def compute_mva_scores(
     np.ndarray
         Flat array of MVA scores per event.
     """
-    def _get_mva_vars(jets: ak.Array, muons: ak.Array) -> dict[str, np.ndarray]:
-        """
-        Extract MVA input features from muons and jets.
 
-        Parameters
-        ----------
-        jets : ak.Array
-            Array of jet candidates.
-        muons : ak.Array
-            Array of muon candidates.
 
-        Returns
-        -------
-        dict[str, np.ndarray]
-            Dictionary mapping feature names to NumPy arrays.
-        """
-        assert ak.all(ak.num(jets, axis=1) >= 2), "Require at least 2 jets"
-        assert ak.all(ak.num(muons, axis=1) == 1), "Require exactly 1 muon"
-
-        d = {}
-        d["n_jet"] = ak.num(jets, axis=1).to_numpy()
-        d["leading_jet_mass"] = jets.mass[:, 0].to_numpy()
-        d["subleading_jet_mass"] = jets.mass[:, 1].to_numpy()
-        d["st"] = (ak.sum(jets.pt, axis=1) + ak.sum(muons.pt, axis=1)).to_numpy()
-        d["leading_jet_btag_score"] = jets.btagDeepB[:, 0].to_numpy()
-        d["subleading_jet_btag_score"] = jets.btagDeepB[:, 1].to_numpy()
-
-        denominator = ak.sum(jets.px**2 + jets.py**2 + jets.pz**2, axis=1)
-        s_zz = ak.sum(jets.pz * jets.pz, axis=1) / denominator
-        d["S_zz"] = s_zz.to_numpy()
-
-        muon_in_pair, jet_in_pair = ak.unzip(ak.cartesian([muons, jets]))
-        delta_r = muon_in_pair.deltaR(jet_in_pair)
-        min_delta_r = ak.min(delta_r, axis=1)
-        d["deltaR"] = min_delta_r.to_numpy()
-
-        min_delta_r_indices = ak.argmin(delta_r, axis=1, keepdims=True)
-        angle = muons.deltaangle(jet_in_pair[min_delta_r_indices])
-        d["pt_rel"] = (muons.p * np.sin(angle)).to_numpy().flatten()
-
-        closest_jet_pt = jet_in_pair.pt[min_delta_r_indices]
-        d["deltaR_times_pt"] = (min_delta_r * closest_jet_pt).to_numpy().flatten()
-
-        return d
-
-    model = load_model(model_path)
+    model = load_model(model_path, compile=False)
     scores = np.full(len(jets), -1.0, dtype=np.float32)
 
     idx = ((ak.num(jets, axis=1) >= 2) & (ak.num(muons, axis=1) == 1)).to_numpy()
-    mva_vars = _get_mva_vars(jets[idx], muons[idx])
-    X = np.column_stack(list(mva_vars.values())).astype(float)
+    mva_vars = compute_mva_vars(muons[idx], jets[idx])
+    print("before predict")
+    for var, vals in mva_vars.items():
+        print(var, ak.mean(vals))
 
-    scores[idx] = model.predict(X, batch_size=1024).flatten()
+    X = np.column_stack(list(mva_vars.values())).astype(float)
+    print("X mean:: ", ak.mean(X, axis=0))
+    scores[idx] = ak.flatten(model.predict(X, batch_size=1024))
+    print("score mean:: ", ak.mean(scores))
     return scores
 
 

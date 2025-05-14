@@ -16,4 +16,4 @@ def jet_pt_resolution(pt):
 
 
 def jet_pt_scale():
-    return 1.03
+    return 1.5

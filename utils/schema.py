@@ -212,13 +212,33 @@ class ObservableConfig(SubscriptableModel):
     @model_validator(mode="after")
     def validate_binning(self) -> "ObservableConfig":
         if isinstance(self.binning, str):
-            if not re.match(
-                r"^\s*[\d.]+\s*,\s*[\d.]+\s*,\s*\d+\s*$", self.binning
-            ):
+            self.binning  = self.binning.strip("[").strip("]").strip('(').strip(')')
+            binning = self.binning.split(",")
+            if len(binning) != 3:
                 raise ValueError(
-                    f"Invalid binning string: {self.binning}. "
+                    f"Invalid binning string: {self.binning}. Need 3 values."
                     + "Expected format: 'low,high,nbins'"
                 )
+            else:
+                try:
+                    low, high, nbins = map(float, binning)
+                    nbins = int(nbins)
+                except ValueError:
+                    raise ValueError(
+                        f"Invalid binning string: {self.binning}. Need 3 floats."
+                        + "Expected format: 'low,high,nbins'"
+                    )
+                if low >= high:
+                    raise ValueError(
+                        f"Invalid binning string: {self.binning}. Low must be < high."
+                        + "Expected format: 'low,high,nbins'"
+                    )
+                if nbins <= 0 or not isinstance(nbins, int):
+                    raise ValueError(
+                        f"Invalid binning string: {self.binning}. nbins must be != 0."
+                        + "Expected format: 'low,high,nbins'"
+                    )
+
         elif isinstance(self.binning, list):
             if len(self.binning) < 2:
                 raise ValueError("At least two bin edges required.")
