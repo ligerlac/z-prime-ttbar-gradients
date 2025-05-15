@@ -4,6 +4,7 @@ import numpy as np
 
 ak.jax.register_and_check()
 
+
 # https://github.com/cms-opendata-workshop/workshop2024-lesson-event-selection/blob/main/instructors/dpoa_workshop_utilities.py
 def lumi_mask(lumifile, run, lumiBlock, verbose=False):
 
@@ -62,6 +63,7 @@ def lumi_mask(lumifile, run, lumiBlock, verbose=False):
     mask = ak.any(prod_diff <= 0, axis=1)
     return mask
 
+
 def Zprime_workshop_selection(muons, jets, fatjets, met, reco):
     """
     Select events based on the Zprime workshop selection criteria.
@@ -86,6 +88,7 @@ def Zprime_workshop_selection(muons, jets, fatjets, met, reco):
 
     return selections
 
+
 def Zprime_baseline(muons, jets, fatjets, met):
     """
     Select events based on the Zprime workshop selection criteria.
@@ -103,6 +106,7 @@ def Zprime_baseline(muons, jets, fatjets, met):
 
     return selections
 
+
 def Zprime_hardcuts(muons, jets, fatjets, met, reco):
     """
     Select events based on the Zprime workshop selection criteria.
@@ -119,21 +123,20 @@ def Zprime_hardcuts(muons, jets, fatjets, met, reco):
 
     return selections
 
-def  Zprime_softcuts_nonjax(muons, jets, fatjets, met):
+
+def Zprime_softcuts_nonjax(muons, jets, fatjets, met):
     """
     Select events based on the Zprime workshop selection criteria.
     """
     lep_ht = muons.pt + met.pt
     soft_cuts = {
-        "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1)
-        > 0,
+        "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
         "met_cut": met.pt > 50,
-        "lep_ht_cut": ak.fill_none(
-            ak.firsts(lep_ht) > 150, False
-        ),
+        "lep_ht_cut": ak.fill_none(ak.firsts(lep_ht) > 150, False),
     }
 
     return soft_cuts
+
 
 # def  Zprime_softcuts_jax(muons, jets, fatjets, met, met_cut=50.0):
 #     """

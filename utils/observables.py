@@ -186,7 +186,12 @@ def ttbar_reco(
 
     # Leptonic top 4-vectors
     lepjet_4vec = ak.zip(
-        {"pt": lepjet.pt, "eta": lepjet.eta, "phi": lepjet.phi, "mass": lepjet.mass},
+        {
+            "pt": lepjet.pt,
+            "eta": lepjet.eta,
+            "phi": lepjet.phi,
+            "mass": lepjet.mass,
+        },
         with_name="Momentum4D",
     )
     muon_4vec = ak.zip(
@@ -212,7 +217,12 @@ def ttbar_reco(
 
     # Hadronic top = dijet system
     hadjets_4vec = ak.zip(
-        {"pt": hadjets.pt, "eta": hadjets.eta, "phi": hadjets.phi, "mass": hadjets.mass},
+        {
+            "pt": hadjets.pt,
+            "eta": hadjets.eta,
+            "phi": hadjets.phi,
+            "mass": hadjets.mass,
+        },
         with_name="Momentum4D",
     )
     had_top_nofj = ak.sum(hadjets_4vec, axis=1)
@@ -239,14 +249,22 @@ def ttbar_reco(
 
     # Use chi2 to select best pairing
     lep_top_fj_best = lep_top_fj[best_idx_fj]
-    had_top_fj_best = ak.broadcast_arrays(lep_top_fj, had_top_fj)[1][best_idx_fj]
+    had_top_fj_best = ak.broadcast_arrays(lep_top_fj, had_top_fj)[1][
+        best_idx_fj
+    ]
 
     lep_top_nofj_best = lep_top_nofj[best_idx_nofj]
-    had_top_nofj_best = ak.broadcast_arrays(lep_top_nofj, had_top_nofj)[1][best_idx_nofj]
+    had_top_nofj_best = ak.broadcast_arrays(lep_top_nofj, had_top_nofj)[1][
+        best_idx_nofj
+    ]
 
     # Choose reconstruction based on presence of fatjet
-    lep_top = ak.flatten(ak.where(has_fatjet, lep_top_fj_best, lep_top_nofj_best))
-    had_top = ak.flatten(ak.where(has_fatjet, had_top_fj_best, had_top_nofj_best))
+    lep_top = ak.flatten(
+        ak.where(has_fatjet, lep_top_fj_best, lep_top_nofj_best)
+    )
+    had_top = ak.flatten(
+        ak.where(has_fatjet, had_top_fj_best, had_top_nofj_best)
+    )
     mtt = ak.fill_none((lep_top + had_top).mass, -1.0)
 
     # Final chi2 score
@@ -273,9 +291,10 @@ def mtt_from_ttbar_reco(ttbar_reco: ak.Array) -> ak.Array:
     """
     return ttbar_reco.mtt
 
+
 def compute_mva_vars(muons: ak.Array, jets: ak.Array) -> dict[str, np.ndarray]:
     """
-    Compute input features for multivariate analysis (MVA) from muon and jet collections.
+    Compute input features for MVA from muon and jet collections.
 
     Assumes exactly one muon and at least two jets per event.
 
@@ -293,8 +312,12 @@ def compute_mva_vars(muons: ak.Array, jets: ak.Array) -> dict[str, np.ndarray]:
         suitable for use in ML model evaluation or training.
     """
     # Sanity checks
-    assert ak.all(ak.num(jets, axis=1) >= 2), "Each event must have at least 2 jets"
-    assert ak.all(ak.num(muons, axis=1) == 1), "Each event must have exactly 1 muon"
+    assert ak.all(
+        ak.num(jets, axis=1) >= 2
+    ), "Each event must have at least 2 jets"
+    assert ak.all(
+        ak.num(muons, axis=1) == 1
+    ), "Each event must have exactly 1 muon"
 
     features = {}
 
@@ -306,16 +329,18 @@ def compute_mva_vars(muons: ak.Array, jets: ak.Array) -> dict[str, np.ndarray]:
     features["subleading_jet_btag_score"] = ak.to_numpy(jets.btagDeepB[:, 1])
 
     # Scalar sum of transverse momenta (ST)
-    features["st"] = ak.to_numpy(ak.sum(jets.pt, axis=1) + ak.sum(muons.pt, axis=1))
+    features["st"] = ak.to_numpy(
+        ak.sum(jets.pt, axis=1) + ak.sum(muons.pt, axis=1)
+    )
 
     # Longitudinal imbalance S_zz = sum(pz^2) / sum(p^2)
     jet_p2 = jets.px**2 + jets.py**2 + jets.pz**2
-    with np.errstate(divide='ignore', invalid='ignore'):
+    with np.errstate(divide="ignore", invalid="ignore"):
         S_zz = ak.sum(jets.pz**2, axis=1) / ak.sum(jet_p2, axis=1)
     features["S_zz"] = ak.to_numpy(S_zz)
 
     # Minimum deltaR between the muon and any jet
-    muon_in_pair, jet_in_pair  = ak.unzip(ak.cartesian([muons, jets]))
+    muon_in_pair, jet_in_pair = ak.unzip(ak.cartesian([muons, jets]))
     deltaR = muon_in_pair.deltaR(jet_in_pair)
     min_deltaR = ak.min(deltaR, axis=1)
     features["deltaR"] = min_deltaR.to_numpy()
@@ -330,9 +355,12 @@ def compute_mva_vars(muons: ak.Array, jets: ak.Array) -> dict[str, np.ndarray]:
     # deltaR * pT of closest jet
     closest_jet_pt = closest_jet.pt
     deltaR_times_pt = min_deltaR * closest_jet_pt
-    features["deltaR_times_pt"] = ak.to_numpy(ak.flatten(deltaR_times_pt, axis=None))
+    features["deltaR_times_pt"] = ak.to_numpy(
+        ak.flatten(deltaR_times_pt, axis=None)
+    )
 
     return features
+
 
 def get_mva_vars(muons: ak.Array, jets: ak.Array) -> ak.Array:
     """
@@ -353,6 +381,7 @@ def get_mva_vars(muons: ak.Array, jets: ak.Array) -> ak.Array:
     d = compute_mva_vars(muons, jets)
     return tuple(d.values())
 
+
 def get_n_jet(mva: ak.Array) -> ak.Array:
     """
     Retrieves the number of jets variable from the MVA input array.
@@ -368,6 +397,7 @@ def get_n_jet(mva: ak.Array) -> ak.Array:
         Number of jets per event.
     """
     return mva.n_jet
+
 
 def get_leading_jet_mass(mva: ak.Array) -> ak.Array:
     """
@@ -385,6 +415,7 @@ def get_leading_jet_mass(mva: ak.Array) -> ak.Array:
     """
     return mva.leading_jet_mass
 
+
 def get_subleading_jet_mass(mva: ak.Array) -> ak.Array:
     """
     Retrieves the mass of the subleading jet from the MVA input array.
@@ -400,6 +431,7 @@ def get_subleading_jet_mass(mva: ak.Array) -> ak.Array:
         Subleading jet mass per event.
     """
     return mva.subleading_jet_mass
+
 
 def get_st(mva: ak.Array) -> ak.Array:
     """
@@ -417,6 +449,7 @@ def get_st(mva: ak.Array) -> ak.Array:
     """
     return mva.st
 
+
 def get_leading_jet_btag_score(mva: ak.Array) -> ak.Array:
     """
     Retrieves the b-tagging score of the leading jet from the MVA input array.
@@ -432,6 +465,7 @@ def get_leading_jet_btag_score(mva: ak.Array) -> ak.Array:
         Leading jet b-tagging score per event.
     """
     return mva.leading_jet_btag_score
+
 
 def get_subleading_jet_btag_score(mva: ak.Array) -> ak.Array:
     """
@@ -449,9 +483,10 @@ def get_subleading_jet_btag_score(mva: ak.Array) -> ak.Array:
     """
     return mva.subleading_jet_btag_score
 
+
 def get_S_zz(mva: ak.Array) -> ak.Array:
     """
-    Retrieves the S_zz variable (e.g. longitudinal momentum imbalance) from the MVA input array.
+    Retrieves the longitudinal momentum imbalance from the MVA input array.
 
     Parameters
     ----------
@@ -464,6 +499,7 @@ def get_S_zz(mva: ak.Array) -> ak.Array:
         S_zz variable per event.
     """
     return mva.S_zz
+
 
 def get_deltaR(mva: ak.Array) -> ak.Array:
     """
@@ -481,6 +517,7 @@ def get_deltaR(mva: ak.Array) -> ak.Array:
     """
     return mva.deltaR
 
+
 def get_pt_rel(mva: ak.Array) -> ak.Array:
     """
     Retrieves the transverse momentum of the muon relative to the nearest jet.
@@ -497,6 +534,7 @@ def get_pt_rel(mva: ak.Array) -> ak.Array:
     """
     return mva.pt_rel
 
+
 def get_deltaR_times_pt(mva: ak.Array) -> ak.Array:
     """
     Retrieves the product of deltaR and pt_rel from the MVA input array.
@@ -512,6 +550,7 @@ def get_deltaR_times_pt(mva: ak.Array) -> ak.Array:
         Product of deltaR and pt_rel per event.
     """
     return mva.deltaR_times_pt
+
 
 def compute_mva_scores(
     muons: ak.Array,
@@ -536,12 +575,13 @@ def compute_mva_scores(
         Flat array of MVA scores per event.
     """
 
-
     model = load_model(model_path, compile=False)
     logger.info(model.summary())
     scores = np.full(len(jets), -1.0, dtype=np.float32)
 
-    idx = ((ak.num(jets, axis=1) >= 2) & (ak.num(muons, axis=1) == 1)).to_numpy()
+    idx = (
+        (ak.num(jets, axis=1) >= 2) & (ak.num(muons, axis=1) == 1)
+    ).to_numpy()
     mva_vars = compute_mva_vars(muons[idx], jets[idx])
     X = np.column_stack(list(mva_vars.values())).astype(float)
     scores[idx] = model.predict(X, batch_size=1024).flatten()

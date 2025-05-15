@@ -4,13 +4,24 @@ from utils.cuts import (
     Zprime_baseline,
     Zprime_hardcuts,
     Zprime_softcuts_nonjax,
-    Zprime_workshop_selection,
 )
-from utils.observables import (get_mva_vars, compute_mva_scores, mtt_from_ttbar_reco,
-                               ttbar_reco, get_mva_scores, get_n_jet, get_leading_jet_mass,
-                               get_subleading_jet_mass, get_st, get_leading_jet_btag_score,
-                               get_subleading_jet_btag_score, get_S_zz, get_deltaR, get_pt_rel,
-                               get_deltaR_times_pt)
+from utils.observables import (
+    compute_mva_scores,
+    get_deltaR,
+    get_deltaR_times_pt,
+    get_leading_jet_btag_score,
+    get_leading_jet_mass,
+    get_mva_scores,
+    get_mva_vars,
+    get_n_jet,
+    get_pt_rel,
+    get_S_zz,
+    get_st,
+    get_subleading_jet_btag_score,
+    get_subleading_jet_mass,
+    mtt_from_ttbar_reco,
+    ttbar_reco,
+)
 from utils.systematics import jet_pt_resolution, jet_pt_scale
 
 config = {
@@ -157,7 +168,7 @@ config = {
                 {
                     "name": "deltaR",
                     "label": r"\Delta R(\mu,\mathrm{jet})",
-                    "binning":  np.arange(0, 0.2, 0.002),
+                    "binning": np.arange(0, 0.2, 0.002),
                     "function": get_deltaR,
                     "use": [("mva", None)],
                     "works_with_jax": False,
@@ -177,7 +188,7 @@ config = {
                     "function": get_deltaR_times_pt,
                     "use": [("mva", None)],
                     "works_with_jax": False,
-                }
+                },
             ],
             "selection_function": Zprime_hardcuts,
             "selection_use": [
@@ -199,7 +210,7 @@ config = {
             "name": "baseline",
             "fit_observable": "mva_score",
             "observables": [
-                                {
+                {
                     "name": "mva_score",
                     "binning": "0,1,50",
                     "label": r"NN score",
@@ -268,7 +279,7 @@ config = {
                 {
                     "name": "deltaR",
                     "label": r"\Delta R(\mu,\mathrm{jet})",
-                    "binning":  np.arange(0, 0.2, 0.002),
+                    "binning": np.arange(0, 0.2, 0.002),
                     "function": get_deltaR,
                     "use": [("mva", None)],
                     "works_with_jax": False,
@@ -288,7 +299,7 @@ config = {
                     "function": get_deltaR_times_pt,
                     "use": [("mva", None)],
                     "works_with_jax": False,
-                }
+                },
             ],
             "selection_function": Zprime_baseline,
             "selection_use": [
@@ -297,7 +308,7 @@ config = {
                 ("FatJet", None),
                 ("PuppiMET", None),
             ],
-        }
+        },
     ],
     "ghost_observables": [
         {
@@ -340,8 +351,8 @@ config = {
                 ("Muon", None),
                 ("Jet", None),
             ],
-            "works_with_jax": False
-        }
+            "works_with_jax": False,
+        },
     ],
     "corrections": [
         {

@@ -1,5 +1,4 @@
 import copy
-import re
 from typing import Annotated, Callable, List, Literal, Optional, Tuple, Union
 
 from omegaconf import OmegaConf
@@ -212,7 +211,9 @@ class ObservableConfig(SubscriptableModel):
     @model_validator(mode="after")
     def validate_binning(self) -> "ObservableConfig":
         if isinstance(self.binning, str):
-            self.binning  = self.binning.strip("[").strip("]").strip('(').strip(')')
+            self.binning = (
+                self.binning.strip("[").strip("]").strip("(").strip(")")
+            )
             binning = self.binning.split(",")
             if len(binning) != 3:
                 raise ValueError(
