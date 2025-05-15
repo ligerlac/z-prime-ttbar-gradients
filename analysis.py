@@ -10,6 +10,7 @@ from collections import defaultdict
 import glob
 import gzip
 import logging
+import operator
 import os
 import sys
 import warnings
@@ -19,6 +20,7 @@ import cabinetry
 from coffea.analysis_tools import PackedSelection
 from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 from correctionlib import CorrectionSet
+from functools import reduce
 import hist
 import jax
 import jax.numpy as jnp
@@ -467,7 +469,7 @@ class ZprimeAnalysis:
                 }
 
                 weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
-                logger.info(f"Weights:: {weights} ")
+                logger.debug(f"JAX weights:: {weights} ")
 
             else:
                 object_copies_channel = {
@@ -480,25 +482,24 @@ class ZprimeAnalysis:
                 region_met = object_copies_channel["PuppiMET"]
                 region_lep_ht = region_muons.pt + region_met.pt
 
-                # soft_cuts = {
-                #     "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1)
-                #     > 0,
-                #     "met_cut": region_met.pt > 50,
-                #     "lep_ht_cut": ak.fill_none(
-                #         ak.firsts(region_lep_ht) > 150, False
-                #     ),
-                # }
+                soft_mask = 1.0
+                if (
+                    soft_selection_funciton := channel["soft_selection_function"]
+                ) is not None:
+                    soft_selection_args = self._get_function_arguments(
+                        channel["soft_selection_use"], object_copies_channel
+                    )
+                    soft_selection_dict = soft_selection_funciton(*soft_selection_args)
 
-                # mask = (
-                #     mask[mask]
-                #     & (soft_cuts["atleast_1b"])
-                #     & (soft_cuts["met_cut"])
-                #     & (soft_cuts["lep_ht_cut"])
-                # )
-                # object_copies = {
-                #     collection: variable[mask]
-                #     for collection, variable in object_copies.items()
-                # }
+                    soft_mask = reduce(operator.and_, soft_selection_dict.values())
+
+                if not isinstance(soft_mask, float):
+                    mask = mask[mask] & soft_mask
+                    object_copies_channel = {
+                        collection: variable[mask]
+                        for collection, variable in object_copies_channel.items()
+                    }
+
                 weights = 1.0
 
             if process != "data":

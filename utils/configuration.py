@@ -2,6 +2,8 @@ import numpy as np
 
 from utils.cuts import (
     Zprime_baseline,
+    Zprime_hardcuts,
+    Zprime_softcuts_nonjax,
     Zprime_workshop_selection,
 )
 from utils.observables import (get_mva_vars, compute_mva_scores, mtt_from_ttbar_reco,
@@ -177,13 +179,20 @@ config = {
                     "works_with_jax": False,
                 }
             ],
-            "selection_function": Zprime_workshop_selection,
+            "selection_function": Zprime_hardcuts,
             "selection_use": [
                 ("Muon", None),
                 ("Jet", None),
                 ("FatJet", None),
                 ("PuppiMET", None),
                 ("ttbar_reco", None),
+            ],
+            "soft_selection_function": Zprime_softcuts_nonjax,
+            "soft_selection_use": [
+                ("Muon", None),
+                ("Jet", None),
+                ("FatJet", None),
+                ("PuppiMET", None),
             ],
         },
         {

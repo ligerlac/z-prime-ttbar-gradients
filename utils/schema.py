@@ -285,7 +285,7 @@ class ChannelConfig(SubscriptableModel):
         Field(
             default=None,
             description="Callable for event selection. If None, all events are "
-            + "selected.",
+            + "selected. Must return a PackedSelection object.",
         ),
     ]
     selection_use: Annotated[
@@ -296,6 +296,24 @@ class ChannelConfig(SubscriptableModel):
         ),
     ]
 
+    soft_selection_function: Annotated[
+        Optional[Callable],
+        Field(
+            default=None,
+            description="Callable for soft event selection. If None, all events "
+            + "are selected. Must return a dictionary of cut name to mask. "
+            + "The selections do not apply in JAX version.",
+        ),
+    ]
+
+    soft_selection_use: Annotated[
+        Optional[List[ObjVar]],
+        Field(
+            default=None,
+            description="(object, variable) pairs for the soft selection function.",
+        ),
+    ]
+
     @model_validator(mode="after")
     def validate_fields(self) -> "ChannelConfig":
         if self.selection_function and not self.selection_use:
@@ -303,7 +321,11 @@ class ChannelConfig(SubscriptableModel):
                 "If 'selection_function' is provided, 'selection_use' must also "
                 + "be specified."
             )
-
+        if self.soft_selection_function and not self.soft_selection_use:
+            raise ValueError(
+                "If 'soft_selection_function' is provided, 'soft_selection_use' "
+                + "must also be specified."
+            )
         if not self.observables:
             raise ValueError("Each channel must have at least one observable.")
 
