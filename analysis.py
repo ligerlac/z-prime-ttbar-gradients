@@ -117,7 +117,6 @@ class ZprimeAnalysis:
                         label=observable_label,
                     )
                 else:
-                    print(observable_binning)
                     axis = hist.axis.Variable(
                         observable_binning,
                         name="observable",
@@ -651,13 +650,13 @@ class ZprimeAnalysis:
         # Nominal processing
         obj_copies = self.get_object_copies(events)
         # # filter objects
-        # muons, jets, fatjets, met = self.get_good_objects(obj_copies)
-        # (
-        #     obj_copies["Muon"],
-        #     obj_copies["Jet"],
-        #     obj_copies["FatJet"],
-        #     obj_copies["PuppiMET"],
-        # ) = (muons, jets, fatjets, met)
+        muons, jets, fatjets, met = self.get_good_objects(obj_copies)
+        (
+            obj_copies["Muon"],
+            obj_copies["Jet"],
+            obj_copies["FatJet"],
+            obj_copies["PuppiMET"],
+        ) = (muons, jets, fatjets, met)
 
         # Apply baseline selection
         baseline_args = self._get_function_arguments(
@@ -688,20 +687,20 @@ class ZprimeAnalysis:
         obj_copies_corrected = {
             obj: ak.to_backend(var, "jax") for obj, var in obj_copies_corrected.items()
         }
-        # apply_selection_and_fill_grad = jax.value_and_grad(
-        #     self.apply_selection_and_fill, argnums=6, has_aux=False
-        # )
-        # val, grad = apply_selection_and_fill_grad(
-        #     obj_copies_corrected,
-        #     events,
-        #     process,
-        #     variation,
-        #     xsec_weight,
-        #     analysis,
-        #     50.0,
-        #     tracing=True,
-        # )
-        # logger.info(f"val: {val}, grad: {grad}")
+        apply_selection_and_fill_grad = jax.value_and_grad(
+            self.apply_selection_and_fill, argnums=6, has_aux=False
+        )
+        val, grad = apply_selection_and_fill_grad(
+            obj_copies_corrected,
+            events,
+            process,
+            variation,
+            xsec_weight,
+            analysis,
+            50.0,
+            tracing=True,
+        )
+        logger.info(f"val: {val}, grad: {grad}")
 
         # convert to CPU for actual histogram filling
         events = ak.to_backend(events, "cpu")
@@ -719,37 +718,37 @@ class ZprimeAnalysis:
             tracing=False,
         )
 
-        # # Systematic variations
-        # for syst in self.systematics + self.corrections:
-        #     if syst["name"] == "nominal":
-        #         continue
-        #     for direction in ["up", "down"]:
-        #         # filter objects
-        #         muons, jets, fatjets, met = self.get_good_objects(obj_copies)
-        #         (
-        #             obj_copies["Muon"],
-        #             obj_copies["Jet"],
-        #             obj_copies["FatJet"],
-        #             obj_copies["PuppiMET"],
-        #         ) = (muons, jets, fatjets, met)
+        # Systematic variations
+        for syst in self.systematics + self.corrections:
+            if syst["name"] == "nominal":
+                continue
+            for direction in ["up", "down"]:
+                # filter objects
+                muons, jets, fatjets, met = self.get_good_objects(obj_copies)
+                (
+                    obj_copies["Muon"],
+                    obj_copies["Jet"],
+                    obj_copies["FatJet"],
+                    obj_copies["PuppiMET"],
+                ) = (muons, jets, fatjets, met)
 
-        #         # apply corrections
-        #         obj_copies_corrected = self.apply_object_corrections(
-        #             obj_copies, [syst], direction=direction
-        #         )
-        #         varname = f"{syst['name']}_{direction}"
-        #         self.apply_selection_and_fill(
-        #             obj_copies_corrected,
-        #             events,
-        #             process,
-        #             varname,
-        #             xsec_weight,
-        #             analysis,
-        #             50.0,
-        #             event_syst=syst,
-        #             direction=direction,
-        #             tracing=False,
-        #         )
+                # apply corrections
+                obj_copies_corrected = self.apply_object_corrections(
+                    obj_copies, [syst], direction=direction
+                )
+                varname = f"{syst['name']}_{direction}"
+                self.apply_selection_and_fill(
+                    obj_copies_corrected,
+                    events,
+                    process,
+                    varname,
+                    xsec_weight,
+                    analysis,
+                    50.0,
+                    event_syst=syst,
+                    direction=direction,
+                    tracing=False,
+                )
 
 
 # -----------------------------

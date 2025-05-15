@@ -1,8 +1,11 @@
-import numpy as np
+import logging
+
 import awkward as ak
+import numpy as np
+from tensorflow.keras.models import load_model  # type: ignore
 import vector
 
-from tensorflow.keras.models import load_model  # type: ignore
+logger = logging.getLogger(__name__)
 
 # -----------------------------
 # Register backends
@@ -313,9 +316,6 @@ def compute_mva_vars(muons: ak.Array, jets: ak.Array) -> dict[str, np.ndarray]:
     closest_jet_pt = jet_in_pair.pt[min_delta_r_indices]
     d["deltaR_times_pt"] = (min_delta_r * closest_jet_pt).to_numpy().flatten()
 
-    for var, vals in d.items():
-        print(f"{var} mean:: ", ak.mean(vals))
-
     return d
 
 def get_mva_vars(muons: ak.Array, jets: ak.Array) -> ak.Array:
@@ -355,7 +355,7 @@ def get_deltaR_times_pt(mva: ak.Array) -> ak.Array:
 def compute_mva_scores(
     muons: ak.Array,
     jets: ak.Array,
-    model_path: str = "output/model.keras",
+    model_path: str = "output/models/model_new.keras",
 ) -> np.ndarray:
     """
     Compute MVA scores using a pre-trained Keras model.
@@ -377,18 +377,15 @@ def compute_mva_scores(
 
 
     model = load_model(model_path, compile=False)
+    logger.info(model.summary())
     scores = np.full(len(jets), -1.0, dtype=np.float32)
 
     idx = ((ak.num(jets, axis=1) >= 2) & (ak.num(muons, axis=1) == 1)).to_numpy()
     mva_vars = compute_mva_vars(muons[idx], jets[idx])
-    print("before predict")
-    for var, vals in mva_vars.items():
-        print(var, ak.mean(vals))
+
 
     X = np.column_stack(list(mva_vars.values())).astype(float)
-    print("X mean:: ", ak.mean(X, axis=0))
-    scores[idx] = ak.flatten(model.predict(X, batch_size=1024))
-    print("score mean:: ", ak.mean(scores))
+    scores[idx] = model.predict(X, batch_size=1024).flatten()
     return scores
 
 
