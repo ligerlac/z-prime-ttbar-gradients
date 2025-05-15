@@ -1,5 +1,4 @@
 import copy
-import re
 from typing import Annotated, Callable, List, Literal, Optional, Tuple, Union
 
 from omegaconf import OmegaConf
@@ -22,6 +21,23 @@ class SubscriptableModel(BaseModel):
 
     def get(self, key, default=None):
         return getattr(self, key, default)
+
+
+class BaselineSelectionConfig(SubscriptableModel):
+    function: Annotated[
+        Callable,
+        Field(
+            description="Function to compute the baseline selection. "
+            "Must return a PackedSelection object."
+        ),
+    ]
+    use: Annotated[
+        Optional[List[ObjVar]],
+        Field(
+            default=None,
+            description="(object, variable) pairs for the selection function.",
+        ),
+    ]
 
 
 # ------------------------
@@ -184,23 +200,69 @@ class ObservableConfig(SubscriptableModel):
         Optional[str],
         Field(default="observable", description="LaTeX label for plots"),
     ]
+    works_with_jax: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Whether the function works with JAX backend",
+        ),
+    ]
 
     @model_validator(mode="after")
     def validate_binning(self) -> "ObservableConfig":
         if isinstance(self.binning, str):
-            if not re.match(
-                r"^\s*[\d.]+\s*,\s*[\d.]+\s*,\s*\d+\s*$", self.binning
-            ):
+            self.binning = (
+                self.binning.strip("[").strip("]").strip("(").strip(")")
+            )
+            binning = self.binning.split(",")
+            if len(binning) != 3:
                 raise ValueError(
-                    f"Invalid binning string: {self.binning}. "
+                    f"Invalid binning string: {self.binning}. Need 3 values."
                     + "Expected format: 'low,high,nbins'"
                 )
+            else:
+                try:
+                    low, high, nbins = map(float, binning)
+                    nbins = int(nbins)
+                except ValueError:
+                    raise ValueError(
+                        f"Invalid binning string: {self.binning}. Need 3 floats."
+                        + "Expected format: 'low,high,nbins'"
+                    )
+                if low >= high:
+                    raise ValueError(
+                        f"Invalid binning string: {self.binning}. Low must be < high."
+                        + "Expected format: 'low,high,nbins'"
+                    )
+                if nbins <= 0 or not isinstance(nbins, int):
+                    raise ValueError(
+                        f"Invalid binning string: {self.binning}. nbins must be != 0."
+                        + "Expected format: 'low,high,nbins'"
+                    )
+
         elif isinstance(self.binning, list):
             if len(self.binning) < 2:
                 raise ValueError("At least two bin edges required.")
             if any(b <= a for a, b in zip(self.binning, self.binning[1:])):
                 raise ValueError("Binning edges must be strictly increasing.")
         return self
+
+
+# ------------------------
+# Ghost observable configuration
+# ------------------------
+class GhostObservable(SubscriptableModel):
+    names: Union[str, List[str]]
+    collections: Union[str, List[str]]
+    function: Callable
+    use: List[ObjVar]
+    works_with_jax: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Whether the function works with JAX backend",
+        ),
+    ]
 
 
 # ------------------------
@@ -224,7 +286,7 @@ class ChannelConfig(SubscriptableModel):
         Field(
             default=None,
             description="Callable for event selection. If None, all events are "
-            + "selected.",
+            + "selected. Must return a PackedSelection object.",
         ),
     ]
     selection_use: Annotated[
@@ -235,6 +297,24 @@ class ChannelConfig(SubscriptableModel):
         ),
     ]
 
+    soft_selection_function: Annotated[
+        Optional[Callable],
+        Field(
+            default=None,
+            description="Callable for soft event selection. If None, all events "
+            + "are selected. Must return a dictionary of cut name to mask. "
+            + "The selections do not apply in JAX version.",
+        ),
+    ]
+
+    soft_selection_use: Annotated[
+        Optional[List[ObjVar]],
+        Field(
+            default=None,
+            description="(object, variable) pairs for the soft selection function.",
+        ),
+    ]
+
     @model_validator(mode="after")
     def validate_fields(self) -> "ChannelConfig":
         if self.selection_function and not self.selection_use:
@@ -242,7 +322,11 @@ class ChannelConfig(SubscriptableModel):
                 "If 'selection_function' is provided, 'selection_use' must also "
                 + "be specified."
             )
-
+        if self.soft_selection_function and not self.soft_selection_use:
+            raise ValueError(
+                "If 'soft_selection_function' is provided, 'soft_selection_use' "
+                + "must also be specified."
+            )
         if not self.observables:
             raise ValueError("Each channel must have at least one observable.")
 
@@ -398,6 +482,24 @@ class Config(SubscriptableModel):
     general: Annotated[
         GeneralConfig, Field(description="Global settings for the analysis")
     ]
+    ghost_observables: Annotated[
+        Optional[List[GhostObservable]],
+        Field(
+            default=[],
+            description="Variables to compute and store ahead of channel selection."
+            "This variables will not be histogrammed unless specified as observable in "
+            "a channel.",
+        ),
+    ]
+    baseline_selection: Annotated[
+        Optional[BaselineSelectionConfig],
+        Field(
+            default=None,
+            description="Baseline event selection applied before "
+            "channel-specific logic",
+        ),
+    ]
+
     channels: Annotated[
         List[ChannelConfig], Field(description="List of analysis channels")
     ]
@@ -453,6 +555,29 @@ class Config(SubscriptableModel):
                     "Statistical analysis run enabled but no cabinetry configuration "
                     + "provided."
                 )
+
+        seen_ghost_obs = set()
+        for obs in self.ghost_observables:
+            names = obs.names if isinstance(obs.names, list) else [obs.names]
+            colls = (
+                obs.collections
+                if isinstance(obs.collections, list)
+                else [obs.collections] * len(names)
+            )
+
+            if len(names) != len(colls):
+                raise ValueError(
+                    f"In GhostObservable with function `{obs.function}`, "
+                    f"number of names and collections must match if both are lists."
+                )
+
+            for name, coll in zip(names, colls):
+                pair = (coll, name)
+                if pair in seen_ghost_obs:
+                    raise ValueError(
+                        f"Duplicate (collection, name) pair: {pair}"
+                    )
+                seen_ghost_obs.add(pair)
 
         return self
 

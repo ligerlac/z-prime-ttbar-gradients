@@ -7,11 +7,14 @@ correctionlib-based and function-based corrections.
 """
 
 from collections import defaultdict
+from functools import reduce
 import glob
 import gzip
 import logging
+import operator
 import os
 import sys
+from typing import Any, Callable, Literal, Optional, Union
 import warnings
 
 import awkward as ak
@@ -22,6 +25,7 @@ from correctionlib import CorrectionSet
 import hist
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as np
 import uproot
 import vector
@@ -33,7 +37,6 @@ from utils.output_files import save_histograms
 from utils.preproc import pre_process_dak, pre_process_uproot
 from utils.schema import Config, load_config_with_restricted_cli
 from utils.stats import get_cabinetry_rebinning_router
-from utils.mva import decorate_mva_scores
 
 
 # -----------------------------
@@ -65,7 +68,7 @@ def is_jagged(arraylike) -> bool:
 # ZprimeAnalysis Class Definition
 # -----------------------------
 class ZprimeAnalysis:
-    def __init__(self, config):
+    def __init__(self, config: dict[str, Any]) -> None:
         """
         Initialize ZprimeAnalysis with configuration for systematics, corrections,
         and channels.
@@ -77,13 +80,13 @@ class ZprimeAnalysis:
             and 'general'.
         """
         self.config = config
-        self.channels = config["channels"]
-        self.systematics = config["systematics"]
-        self.corrections = config["corrections"]
+        self.channels = config.channels
+        self.systematics = config.systematics
+        self.corrections = config.corrections
         self.corrlib_evaluators = self._load_correctionlib()
         self.nD_hists_per_region = self._init_histograms()
 
-    def _init_histograms(self):
+    def _init_histograms(self) -> dict[str, dict[str, hist.Hist]]:
         """
         Initialize histograms for each analysis channel based on configuration.
 
@@ -94,7 +97,7 @@ class ZprimeAnalysis:
         """
         histograms = defaultdict(dict)
         for channel in self.channels:
-            chname = channel["name"]
+            chname = channel.name
             if (req_channels := self.config.general.channels) is not None:
                 if chname not in req_channels:
                     continue
@@ -131,7 +134,7 @@ class ZprimeAnalysis:
                 )
         return histograms
 
-    def _load_correctionlib(self):
+    def _load_correctionlib(self) -> dict[str, CorrectionSet]:
         """
         Load correctionlib JSON files into evaluators.
 
@@ -159,7 +162,7 @@ class ZprimeAnalysis:
 
         return evaluators
 
-    def get_object_copies(self, events):
+    def get_object_copies(self, events: ak.Array) -> dict[str, ak.Array]:
         """
         Extract a dictionary of objects from the NanoEvents array.
 
@@ -175,7 +178,9 @@ class ZprimeAnalysis:
         """
         return {field: events[field] for field in events.fields}
 
-    def get_good_objects(self, object_copies):
+    def get_good_objects(
+        self, object_copies: dict[str, ak.Array]
+    ) -> tuple[ak.Array, ak.Array, ak.Array, ak.Array]:
 
         muons, jets, fatjets, met = (
             object_copies["Muon"],
@@ -193,7 +198,7 @@ class ZprimeAnalysis:
             (jets.pt > 30)
             & (abs(jets.eta) < 2.4)
             & jets.isTightLeptonVeto
-            & (jets.jetId >= 4)
+            # & (jets.jetId >= 4)
         ]
         fatjets = fatjets[
             (fatjets.pt > 200)
@@ -205,14 +210,14 @@ class ZprimeAnalysis:
 
     def apply_correctionlib(
         self,
-        name,
-        key,
-        direction,
-        correction_arguments,
-        target=None,
-        op=None,
-        transform=None,
-    ):
+        name: str,
+        key: str,
+        direction: Literal["up", "down", "nominal"],
+        correction_arguments: list[ak.Array],
+        target: Optional[Union[ak.Array, list[ak.Array]]] = None,
+        op: Optional[str] = None,
+        transform: Optional[Callable[..., Any]] = None,
+    ) -> Union[ak.Array, list[ak.Array]]:
         """
         Apply a correction using correctionlib.
         """
@@ -248,7 +253,14 @@ class ZprimeAnalysis:
 
         return correction
 
-    def apply_syst_fn(self, name, fn, args, affects, op):
+    def apply_syst_fn(
+        self,
+        name: str,
+        fn: Callable[..., ak.Array],
+        args: list[ak.Array],
+        affects: Union[ak.Array, list[ak.Array]],
+        op: str,
+    ) -> Union[ak.Array, list[ak.Array]]:
         """
         Apply function-based systematic variation.
         """
@@ -259,7 +271,7 @@ class ZprimeAnalysis:
         else:
             return self.apply_op(op, affects, correction)
 
-    def apply_op(self, op, lhs, rhs):
+    def apply_op(self, op: str, lhs: ak.Array, rhs: ak.Array) -> ak.Array:
         """
         Apply a binary operation.
         """
@@ -270,7 +282,11 @@ class ZprimeAnalysis:
         else:
             raise ValueError(f"Unsupported operation: {op}")
 
-    def _get_function_arguments(self, use, object_copies):
+    def _get_function_arguments(
+        self,
+        use: list[tuple[str, Optional[str]]],
+        object_copies: dict[str, ak.Array],
+    ) -> list[ak.Array]:
         """
         Extract correction arguments from object_copies.
         """
@@ -279,14 +295,23 @@ class ZprimeAnalysis:
             for obj, var in use
         ]
 
-    def _get_targets(self, target, object_copies):
+    def _get_targets(
+        self,
+        target: Union[tuple[str, str], list[tuple[str, str]]],
+        object_copies: dict[str, ak.Array],
+    ) -> list[ak.Array]:
         """
         Extract one or more target arrays from object_copies.
         """
         targets = target if isinstance(target, list) else [target]
         return [object_copies[obj][var] for obj, var in targets]
 
-    def _set_targets(self, target, object_copies, new_values):
+    def _set_targets(
+        self,
+        target: Union[tuple[str, str], list[tuple[str, str]]],
+        object_copies: dict[str, ak.Array],
+        new_values: Union[ak.Array, list[ak.Array]],
+    ) -> None:
         """
         Set corrected values in object_copies.
         """
@@ -295,8 +320,11 @@ class ZprimeAnalysis:
             object_copies[obj][var] = val
 
     def apply_object_corrections(
-        self, object_copies, corrections, direction="nominal"
-    ):
+        self,
+        object_copies: dict[str, ak.Array],
+        corrections: list[dict[str, Any]],
+        direction: Literal["up", "down", "nominal"] = "nominal",
+    ) -> dict[str, ak.Array]:
         """
         Apply object-level corrections to input object copies.
         """
@@ -332,8 +360,12 @@ class ZprimeAnalysis:
         return object_copies
 
     def apply_event_weight_correction(
-        self, weights, systematic, direction, object_copies
-    ):
+        self,
+        weights: ak.Array,
+        systematic: dict[str, Any],
+        direction: Literal["up", "down"],
+        object_copies: dict[str, ak.Array],
+    ) -> ak.Array:
         """
         Apply event-level correction to weights.
         """
@@ -361,17 +393,17 @@ class ZprimeAnalysis:
 
     def apply_selection_and_fill(
         self,
-        object_copies,
-        events,
-        process,
-        variation,
-        xsec_weight,
-        analysis,
-        met_cut,
-        event_syst=None,
-        direction="nominal",
-        tracing=False,
-    ):
+        object_copies: dict[str, ak.Array],
+        events: ak.Array,
+        process: str,
+        variation: str,
+        xsec_weight: float,
+        analysis: str,
+        met_cut: float,
+        event_syst: Optional[dict[str, Any]] = None,
+        direction: Literal["up", "down", "nominal"] = "nominal",
+        tracing: bool = False,
+    ) -> Optional[ak.Array]:
         """
         Apply physics selections and fill histograms.
 
@@ -424,8 +456,13 @@ class ZprimeAnalysis:
                     packed_selection.all(packed_selection.names[-1])
                 )
 
+            mask = ak.to_backend(mask, "jax" if tracing else "cpu")
             if process == "data":
-                mask = mask & lumi_mask(self.config.general.lumifile, events)
+                mask = mask & lumi_mask(
+                    self.config.general.lumifile,
+                    object_copies["run"],
+                    object_copies["luminosityBlock"],
+                )
 
             if ak.sum(mask) == 0:
                 logger.warning(
@@ -434,38 +471,76 @@ class ZprimeAnalysis:
                 )
                 continue
 
-            mask = ak.to_backend(mask, "jax")
-            object_copies = {
-                collection: variable[mask]
-                for collection, variable in object_copies.items()
-            }
-
-            region_muons = object_copies["Muon"]
-            region_jets = object_copies["Jet"]
-            region_met = object_copies["PuppiMET"]
-
-            region_lep_ht = region_muons.pt + region_met.pt
-            soft_cuts = {
-                "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1) > 0,
-                # "met_cut": met.pt > 50,
-                # "met_cut": 0.5*jnp.tanh((ak.to_jax(region_met.pt)-50)/100)+0.5,
-                "met_cut": jax.nn.sigmoid(
-                    (ak.to_jax(region_met.pt) - met_cut) / met_cut
-                ),
-                "lep_ht_cut": ak.fill_none(
-                    ak.firsts(region_lep_ht) > 150, False
-                ),
-            }
-
-            # Convert selections to JAX arrays with float dtype
-            soft_cuts = {
-                k: jnp.array(ak.to_jax(v), dtype=float)
-                for k, v in soft_cuts.items()
-            }
-
-            weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
             if tracing:
-                logger.info(f"Weights:: {weights} ")
+
+                object_copies_channel = {
+                    collection: variable[mask]
+                    for collection, variable in object_copies.items()
+                }
+
+                region_muons = object_copies_channel["Muon"]
+                region_jets = object_copies_channel["Jet"]
+                region_met = object_copies_channel["PuppiMET"]
+
+                region_lep_ht = region_muons.pt + region_met.pt
+                soft_cuts = {
+                    "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1)
+                    > 0,
+                    # "met_cut": met.pt > 50,
+                    # "met_cut": 0.5*jnp.tanh((ak.to_jax(region_met.pt)-50)/100)+0.5,
+                    "met_cut": jax.nn.sigmoid(
+                        (ak.to_jax(region_met.pt) - met_cut) / met_cut
+                    ),
+                    "lep_ht_cut": ak.fill_none(
+                        ak.firsts(region_lep_ht) > 150, False
+                    ),
+                }
+
+                # Convert selections to JAX arrays with float dtype
+                soft_cuts = {
+                    k: jnp.array(ak.to_jax(v), dtype=float)
+                    for k, v in soft_cuts.items()
+                }
+
+                weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
+                logger.debug(f"JAX weights:: {weights} ")
+
+            else:
+                object_copies_channel = {
+                    collection: variable[mask]
+                    for collection, variable in object_copies.items()
+                }
+
+                region_muons = object_copies_channel["Muon"]
+                region_jets = object_copies_channel["Jet"]
+                region_met = object_copies_channel["PuppiMET"]
+                region_lep_ht = region_muons.pt + region_met.pt
+
+                soft_mask = 1.0
+                if (
+                    soft_selection_funciton := channel[
+                        "soft_selection_function"
+                    ]
+                ) is not None:
+                    soft_selection_args = self._get_function_arguments(
+                        channel["soft_selection_use"], object_copies_channel
+                    )
+                    soft_selection_dict = soft_selection_funciton(
+                        *soft_selection_args
+                    )
+
+                    soft_mask = reduce(
+                        operator.and_, soft_selection_dict.values()
+                    )
+
+                if not isinstance(soft_mask, float):
+                    mask = mask[mask] & soft_mask
+                    object_copies_channel = {
+                        collection: variable[mask]
+                        for collection, variable in object_copies_channel.items()
+                    }
+
+                weights = 1.0
 
             if process != "data":
                 weights *= (
@@ -474,17 +549,24 @@ class ZprimeAnalysis:
                     / abs(events[mask].genWeight)
                 )
             else:
-                weights *= np.ones(len(ak.count_nonzero(mask)))
+                weights *= np.ones(ak.sum(mask))
 
             if event_syst and process != "data":
                 weights = self.apply_event_weight_correction(
-                    weights, event_syst, direction, object_copies
+                    weights, event_syst, direction, object_copies_channel
                 )
 
             for observable in channel["observables"]:
+                logger.info(
+                    f"Filling histogram for {observable['name']} in {chname}"
+                )
+                # do not compute if this function is being traced by JAX
+                # and observable function is not compatible with JAX
+                if not observable.works_with_jax and tracing:
+                    return ak.sum(weights)
                 observable_name = observable["name"]
                 observable_args = self._get_function_arguments(
-                    observable["use"], object_copies
+                    observable["use"], object_copies_channel
                 )
                 observable_vals = observable["function"](*observable_args)
                 if not tracing:
@@ -492,14 +574,16 @@ class ZprimeAnalysis:
                         observable=observable_vals,
                         process=process,
                         variation=variation,
-                        weight=jax.lax.stop_gradient(weights),
+                        weight=weights,
                     )
                 else:
                     return ak.sum(
                         weights
                     )  # return some dummy value to test auto-diff
 
-    def run_fit(self, cabinetry_config):
+    def run_fit(
+        self, cabinetry_config: dict[str, Any]
+    ) -> tuple[Any, Any, Any, Any]:
         """
         Run the fit using cabinetry.
 
@@ -539,7 +623,54 @@ class ZprimeAnalysis:
 
         return data, results, prefit_prediction, postfit_prediction
 
-    def process(self, events, metadata):
+    def compute_ghost_observables(
+        self, obj_copies: dict[str, ak.Array], tracing: bool = False
+    ) -> dict[str, ak.Array]:
+        for ghost in self.config.ghost_observables:
+
+            # do not compute if this function is being traced by JAX
+            # and observable function is not compatible with JAX
+            if not ghost.works_with_jax and tracing:
+                continue
+            logger.info(f"Computing ghost observables {ghost.names}")
+            ghost_args = self._get_function_arguments(ghost["use"], obj_copies)
+            ghost_outputs = ghost["function"](*ghost_args)
+
+            if not isinstance(ghost_outputs, (list, tuple)):
+                ghost_outputs = [ghost_outputs]
+
+            names = (
+                ghost.names if isinstance(ghost.names, list) else [ghost.names]
+            )
+            colls = (
+                ghost.collections
+                if isinstance(ghost.collections, list)
+                else [ghost.collections] * len(names)
+            )
+            # update object_copies with ghost outputs
+            for out, name, coll in zip(ghost_outputs, names, colls):
+                if (
+                    isinstance(out, ak.Array)
+                    and len(ak.fields(out)) == 1
+                    and name in out.fields
+                ):
+                    out = out[name]
+                if coll in obj_copies:
+                    try:
+                        # add new field to existing awkward array
+                        obj_copies[coll][name] = out
+                    # happens if we are adding a field to an awkward
+                    # array with no fields (scalar fields)
+                    except ValueError as e:
+                        raise e
+                else:
+                    # create new awkward array with single field
+                    obj_copies[coll] = ak.Array({name: out})
+        return obj_copies
+
+    def process(
+        self, events: ak.Array, metadata: dict[str, Any], tracing: bool = False
+    ) -> None:
         """
         Run the full analysis logic on a batch of events.
 
@@ -567,7 +698,7 @@ class ZprimeAnalysis:
 
         # Nominal processing
         obj_copies = self.get_object_copies(events)
-        # filter objects
+        # # filter objects
         muons, jets, fatjets, met = self.get_good_objects(obj_copies)
         (
             obj_copies["Muon"],
@@ -575,16 +706,42 @@ class ZprimeAnalysis:
             obj_copies["FatJet"],
             obj_copies["PuppiMET"],
         ) = (muons, jets, fatjets, met)
-        # apply nominal corrections
 
-        obj_copies = self.apply_object_corrections(
+        # Apply baseline selection
+        baseline_args = self._get_function_arguments(
+            self.config.baseline_selection["use"], obj_copies
+        )
+
+        packed_selection = self.config.baseline_selection["function"](
+            *baseline_args
+        )
+        mask = ak.Array(packed_selection.all(packed_selection.names[-1]))
+        obj_copies = {
+            collection: variable[mask]
+            for collection, variable in obj_copies.items()
+        }
+        # apply ghost observables
+        obj_copies = self.compute_ghost_observables(
+            obj_copies, tracing=tracing
+        )
+
+        # apply event-level corrections
+        # apply nominal corrections
+        obj_copies_corrected = self.apply_object_corrections(
             obj_copies, self.corrections, direction="nominal"
         )
+        # apply selection and fill histograms
+        # JAX tracing with no filling for autodiff
+        events = ak.to_backend(events, "jax")
+        obj_copies_corrected = {
+            obj: ak.to_backend(var, "jax")
+            for obj, var in obj_copies_corrected.items()
+        }
         apply_selection_and_fill_grad = jax.value_and_grad(
             self.apply_selection_and_fill, argnums=6, has_aux=False
         )
         val, grad = apply_selection_and_fill_grad(
-            obj_copies,
+            obj_copies_corrected,
             events,
             process,
             variation,
@@ -595,8 +752,14 @@ class ZprimeAnalysis:
         )
         logger.info(f"val: {val}, grad: {grad}")
 
+        # convert to CPU for actual histogram filling
+        events = ak.to_backend(events, "cpu")
+        obj_copies_corrected = {
+            obj: ak.to_backend(var, "cpu")
+            for obj, var in obj_copies_corrected.items()
+        }
         self.apply_selection_and_fill(
-            obj_copies,
+            obj_copies_corrected,
             events,
             process,
             "nominal",
@@ -611,7 +774,6 @@ class ZprimeAnalysis:
             if syst["name"] == "nominal":
                 continue
             for direction in ["up", "down"]:
-                obj_copies = self.get_object_copies(events)
                 # filter objects
                 muons, jets, fatjets, met = self.get_good_objects(obj_copies)
                 (
@@ -620,13 +782,14 @@ class ZprimeAnalysis:
                     obj_copies["FatJet"],
                     obj_copies["PuppiMET"],
                 ) = (muons, jets, fatjets, met)
+
                 # apply corrections
-                obj_copies = self.apply_object_corrections(
+                obj_copies_corrected = self.apply_object_corrections(
                     obj_copies, [syst], direction=direction
                 )
                 varname = f"{syst['name']}_{direction}"
                 self.apply_selection_and_fill(
-                    obj_copies,
+                    obj_copies_corrected,
                     events,
                     process,
                     varname,
@@ -707,18 +870,12 @@ def main():
             skimmed_files = [f"{f}:{tree}" for f in skimmed_files]
             remaining = sum(uproot.open(f).num_entries for f in skimmed_files)
             logger.info(f"✅ Events retained after filtering: {remaining:,}")
-            if config.general.decorate_mva_score:
-                for skimmed in skimmed_files:
-                    logger.info(f"📘 Decorating MVA score to skimmed file: {skimmed}")
-                    decorate_mva_scores(skimmed, config.general.mva_model_path)
-                    logger.info("✅ MVA variables added.")
             if config.general.run_histogramming:
                 for skimmed in skimmed_files:
                     logger.info(f"📘 Processing skimmed file: {skimmed}")
                     events = NanoEventsFactory.from_root(
                         skimmed, schemaclass=NanoAODSchema, delayed=False
                     ).events()
-                    events = ak.to_backend(events, "jax")
                     analysis.process(events, metadata)
                     logger.info("📈 Histogram filling complete.")
 
@@ -751,6 +908,66 @@ def main():
             config=cabinetry_config,
         )
         cabinetry.visualize.pulls(fit_results, close_figure=False)
+
+    plot_nominal_histograms("output/histograms/histograms.root")
+
+
+def plot_nominal_histograms(
+    hist_file: str, output_dir: str = "output/plots/nominal_mva_inputs"
+):
+    """
+    Generate normalized histograms for each observable, region, and process from the
+    ROOT file.
+
+    Parameters
+    ----------
+    hist_file : str
+        Path to the histogram ROOT file.
+    output_dir : str
+        Directory to save output plots.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    file = uproot.open(hist_file)
+    histograms = defaultdict(lambda: defaultdict(dict))
+
+    for key in file.keys():
+        name = key.strip(";1")
+        parts = name.split("__")
+
+        if parts[0] != "baseline":
+            continue  # only interested in 'baseline' channel
+
+        region = parts[0]
+        observable = parts[1]
+        process = "_".join(parts[2:])
+
+        if "up" in process or "down" in process:
+            continue  # skip systematic variations
+
+        hist = file[name]
+        values = hist.values()
+        edges = hist.axis().edges()
+
+        histograms[region][observable][process] = (values, edges)
+
+    for region, obs_dict in histograms.items():
+        for observable, proc_dict in obs_dict.items():
+            plt.figure(figsize=(6, 4))
+            for proc, (vals, edges) in proc_dict.items():
+                norm_vals = vals / vals.sum() if vals.sum() > 0 else vals
+                centers = 0.5 * (edges[1:] + edges[:-1])
+                plt.step(centers, norm_vals, where="mid", label=proc)
+
+            plt.xlabel(observable)
+            plt.ylabel("Normalized Entries")
+            plt.title(f"{observable} — {region}")
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(f"{output_dir}/{region}_{observable}.png")
+            plt.close()
+
+    logger.info(f"Saved plots to: {output_dir}")
 
 
 if __name__ == "__main__":
