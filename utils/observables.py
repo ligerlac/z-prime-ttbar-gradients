@@ -292,6 +292,23 @@ def mtt_from_ttbar_reco(ttbar_reco: ak.Array) -> ak.Array:
     return ttbar_reco.mtt
 
 
+def chi2_from_ttbar_reco(ttbar_reco: ak.Array) -> ak.Array:
+    """
+    Extract chi2 from the ttbar reconstruction result.
+
+    Parameters
+    ----------
+    ttbar_reco : ak.Array
+        Output of `ttbar_reco`, expected to be awkward array with an 'mtt' field.
+
+    Returns
+    -------
+    ak.Array
+        Array of mtt values.
+    """
+    return ttbar_reco.chi2
+
+
 def compute_mva_vars(muons: ak.Array, jets: ak.Array) -> dict[str, np.ndarray]:
     """
     Compute input features for MVA from muon and jet collections.
@@ -321,17 +338,19 @@ def compute_mva_vars(muons: ak.Array, jets: ak.Array) -> dict[str, np.ndarray]:
 
     features = {}
 
-    # Basic jet-level features
+    # jet-level features 1
     features["n_jet"] = ak.num(jets, axis=1).to_numpy()
     features["leading_jet_mass"] = ak.to_numpy(jets.mass[:, 0])
     features["subleading_jet_mass"] = ak.to_numpy(jets.mass[:, 1])
-    features["leading_jet_btag_score"] = ak.to_numpy(jets.btagDeepB[:, 0])
-    features["subleading_jet_btag_score"] = ak.to_numpy(jets.btagDeepB[:, 1])
 
     # Scalar sum of transverse momenta (ST)
     features["st"] = ak.to_numpy(
         ak.sum(jets.pt, axis=1) + ak.sum(muons.pt, axis=1)
     )
+
+    # jet-level features 2
+    features["leading_jet_btag_score"] = ak.to_numpy(jets.btagDeepB[:, 0])
+    features["subleading_jet_btag_score"] = ak.to_numpy(jets.btagDeepB[:, 1])
 
     # Longitudinal imbalance S_zz = sum(pz^2) / sum(p^2)
     jet_p2 = jets.px**2 + jets.py**2 + jets.pz**2
@@ -585,6 +604,8 @@ def compute_mva_scores(
     mva_vars = compute_mva_vars(muons[idx], jets[idx])
     X = np.column_stack(list(mva_vars.values())).astype(float)
     scores[idx] = model.predict(X, batch_size=1024).flatten()
+    # need to map scores to -1 -> 1 instead of 0 -> 1
+    scores = scores*2 - 1
     return scores
 
 

@@ -6,6 +6,7 @@ from utils.cuts import (
     Zprime_softcuts_nonjax,
 )
 from utils.observables import (
+    chi2_from_ttbar_reco,
     compute_mva_scores,
     get_deltaR,
     get_deltaR_times_pt,
@@ -101,7 +102,7 @@ config = {
                 },
                 {
                     "name": "mva_score",
-                    "binning": "0,1,50",
+                    "binning": "-1,1,50",
                     "label": r"NN score",
                     "function": get_mva_scores,
                     "use": [
@@ -212,13 +213,13 @@ config = {
             "observables": [
                 {
                     "name": "mva_score",
-                    "binning": "0,1,50",
+                    "binning": "-1,1,50",
                     "label": r"NN score",
                     "function": get_mva_scores,
                     "use": [
                         ("mva", None),
                     ],
-                    "works_with_jax": True,
+                    "works_with_jax": False,
                 },
                 {
                     "name": "n_jet",
@@ -299,6 +300,16 @@ config = {
                     "function": get_deltaR_times_pt,
                     "use": [("mva", None)],
                     "works_with_jax": False,
+                },
+                {
+                    "name": "ttbar_chi2",
+                    "binning": "0,200,50",
+                    "label": r"\chi^2(t\bar{t})",
+                    "function": chi2_from_ttbar_reco,
+                    "use": [
+                        ("ttbar_reco", None),
+                    ],
+                    "works_with_jax": True,
                 },
             ],
             "selection_function": Zprime_baseline,

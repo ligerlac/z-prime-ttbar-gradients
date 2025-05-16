@@ -557,9 +557,7 @@ class ZprimeAnalysis:
                 )
 
             for observable in channel["observables"]:
-                logger.info(
-                    f"Filling histogram for {observable['name']} in {chname}"
-                )
+
                 # do not compute if this function is being traced by JAX
                 # and observable function is not compatible with JAX
                 if not observable.works_with_jax and tracing:
@@ -570,6 +568,7 @@ class ZprimeAnalysis:
                 )
                 observable_vals = observable["function"](*observable_args)
                 if not tracing:
+
                     self.nD_hists_per_region[chname][observable_name].fill(
                         observable=observable_vals,
                         process=process,

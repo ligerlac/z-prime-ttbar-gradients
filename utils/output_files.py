@@ -1,5 +1,8 @@
+import logging
+
 import uproot
 
+logger = logging.getLogger(__name__)
 
 def save_histograms(
     hist_dict,
@@ -37,9 +40,10 @@ def save_histograms(
                             "" if variation == "nominal" else f"__{variation}"
                         )
                         current_1d_hist = histogram[:, sample, variation]
-
                         if sum(current_1d_hist.values()) > empty_hist_yield:
                             # only save histograms containing events
                             f[
                                 f"{channel}__{observable}__{sample}{variation_string}"
                             ] = current_1d_hist
+                        else:
+                            logger.warning( f"The {channel}__{observable}__{sample}{variation_string} histogram is empty. It will not be saved.")
