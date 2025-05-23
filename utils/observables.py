@@ -1,6 +1,7 @@
 import logging
 
 import awkward as ak
+import numba
 import numpy as np
 from tensorflow.keras.models import load_model  # type: ignore
 import vector
@@ -67,6 +68,174 @@ def get_mtt(
 
     return mtt
 
+import awkward as ak
+import numpy as np
+
+def solve_neutrino_pz(lepton, met, mW=80.4):
+    """
+    Compute neutrino pz solutions from lepton and MET using W mass constraint.
+
+    Parameters
+    ----------
+    lepton : ak.Array
+        Lepton 4-vector (pt, eta, phi, mass).
+    met : ak.Array
+        MET as a 4-vector (pt, phi); eta=0, mass=0.
+
+    Returns
+    -------
+    ak.Array
+        Array of shape (n_events, 2) with pz solutions (real or complex).
+        If no real solution, return real part of complex root.
+    """
+    px_l = lepton.pt * np.cos(lepton.phi)
+    py_l = lepton.pt * np.sin(lepton.phi)
+    pz_l = lepton.pz
+    e_l = lepton.energy
+
+    px_nu = met.pt * np.cos(met.phi)
+    py_nu = met.pt * np.sin(met.phi)
+
+    pt_l_sq = lepton.pt ** 2
+    pt_nu_sq = met.pt ** 2
+
+    # mu = (mW^2 / 2) + px_l * px_nu + py_l * py_nu
+    mu = (mW**2) / 2 + px_l * px_nu + py_l * py_nu
+
+    a = mu * pz_l / pt_l_sq
+    A = (mu ** 2) * (pz_l ** 2)
+    B = (e_l ** 2) * (pt_l_sq * pt_nu_sq)
+    C = (mu ** 2) * pt_l_sq
+    discriminant = A - B + C
+
+    print(discriminant)
+    sqrt_discriminant = ak.where(discriminant >= 0,
+                                  np.sqrt(discriminant),
+                                  np.sqrt(-discriminant) * 1j)
+    pz_nu_1 = a + sqrt_discriminant / pt_l_sq
+    pz_nu_2 = a - sqrt_discriminant / pt_l_sq
+
+    return pz_nu_1, pz_nu_2
+
+def build_leptonic_tops(muon, met, lepjet, pz1, pz2):
+    """
+    Return list of leptonic top 4-vectors per event based on neutrino pz solutions.
+    """
+    # ============================================================
+    # Solve for neutrino
+    # ============================================================
+    def make_nu(pz):
+        return ak.zip({
+            "pt": met.pt,
+            "phi": met.phi,
+            "eta": ak.zeros_like(met.pt),
+            "mass": ak.zeros_like(met.pt),
+            "pz": ak.real(pz),
+        }, with_name="Momentum4D")
+
+    def ak_is_real(array):
+        return ak.real(array) == array
+
+    pz1 = ak.Array(pz1)
+    pz2 = ak.Array(pz2)
+
+    # Count real solutions
+    disc = (pz1 - pz2) ** 2
+    two_real = ak_is_real(pz1) & (disc != 0)
+    one_real = ak_is_real(pz1) & (disc == 0)
+    no_real = ~ak_is_real(pz1)
+
+    # Always build all 3 cases per element — rely on masking
+    nu1 = make_nu(pz1)
+    nu2 = make_nu(pz2)
+
+    lep_top1 = muon + lepjet + nu1
+    lep_top2 = muon + lepjet + nu2
+
+    lep_top_candidates = ak.where(
+        ak.firsts(two_real, axis=1),
+        ak.concatenate([lep_top1, lep_top2], axis=1),
+        lep_top1
+    )
+    return lep_top_candidates
+
+
+@numba.njit
+def build_index(index_values, a_lengths, b_offsets):
+    """
+    Fill `index_values` such that for each sublist in `a`, we repeat the elements
+    from the corresponding sublist in `b` cyclically to match its length.
+
+    Parameters
+    ----------
+    index_values : np.ndarray
+        Output array to fill with indices into flattened `b`.
+    a_lengths : np.ndarray
+        Length of each sublist in `a`.
+    b_offsets : np.ndarray
+        Offsets defining the start/stop positions of each sublist in `b`.
+    """
+    pos = 0
+    for i in range(len(a_lengths)):
+        len_a_i = a_lengths[i]               # number of entries in a[i]
+        start_b_i = b_offsets[i]             # start of b[i] in flat_b
+        stop_b_i = b_offsets[i + 1]          # end of b[i]
+        len_b_i = stop_b_i - start_b_i       # number of entries in b[i]
+
+        if len_b_i == 0:
+            if len_a_i != 0:
+                raise ValueError(f"Incompatible: a[{i}] has length {len_a_i} "
+                                 f"but b[{i}] is empty.")
+            continue  # skip if both are empty
+
+        # Repeat b[i] cyclically to fill a[i]
+        for j in range(len_a_i):
+            index_values[pos] = start_b_i + (j % len_b_i)
+            pos += 1
+
+def map_a_to_b(a: ak.Array, b: ak.Array) -> ak.Array:
+    """
+    Map the jagged structure of `a` onto `b`, such that each sublist in `a` gets
+    a matching sublist from `b`, repeating elements cyclically if needed.
+
+    Parameters
+    ----------
+    a : ak.Array
+        Jagged array whose structure will be imposed.
+    b : ak.Array
+        Jagged array to be aligned with `a`.
+
+    Returns
+    -------
+    ak.Array
+        Jagged array with the same outer structure as `a`, filled with elements from `b`.
+    """
+    # Ensure inputs are Awkward Arrays
+    a = ak.Array(a)
+    b = ak.Array(b)
+
+    # Flatten b and get its list offsets
+    flat_b = ak.flatten(b)
+    b_offsets = b.layout.offsets.data
+
+    # Get offsets and lengths of sublists in `a`
+    a_offsets = a.layout.offsets.data
+    a_lengths = a_offsets[1:] - a_offsets[:-1]
+
+    # Allocate index array that will map a -> b
+    index_values = np.empty(a_offsets[-1], dtype=np.int64)
+
+    # Fill the index array using the numba-accelerated function
+    build_index(index_values, a_lengths, b_offsets)
+
+    # Build the Awkward IndexedArray from the flat content of b
+    index = ak.index.Index64(index_values)
+    indexed_array = ak.contents.IndexedArray(index, flat_b.layout)
+
+    # Wrap into a jagged array with the same offsets as a
+    list_array = ak.contents.ListOffsetArray(a.layout.offsets, indexed_array)
+    return ak.Array(list_array)
+
 
 def ttbar_reco(
     muons: ak.Array,
@@ -95,10 +264,12 @@ def ttbar_reco(
         Tuple of (chi2, mtt) values for the best ttbar reconstruction per event.
     """
     # Define Gaussian means and widths for chi2 computation
-    mean_mlep = 172.5
-    sigma_mlep = 20.0
-    mean_mhad = 172.5
-    sigma_mhad = 20.0
+    mean_mlep = 175.
+    sigma_mlep = 19.
+    mean_mhad_fj = 173.
+    sigma_mhad_fj = 15.
+    mean_mhad_nofj = 177.
+    sigma_mhad_nofj = 16.
 
     # Define which events have at least one fatjet
     has_fatjet = ak.num(fatjets, axis=1) > 0
@@ -160,12 +331,15 @@ def ttbar_reco(
     )
 
     # Leptonic top: muon + MET + jet
-    lep_top_fj = valid_muons_4vec + valid_met_4vec + valid_jets_4vec
+    #lep_top_fj = valid_muons_4vec + valid_met_4vec + valid_jets_4vec
+    # Solve for neutrino
+    pz1_fj, pz2_fj = solve_neutrino_pz(valid_muons_4vec, valid_met_4vec)
+    lep_top_fj = build_leptonic_tops(valid_muons_4vec, valid_met_4vec, valid_jets_4vec, pz1_fj, pz2_fj)
     had_mass_broadcast = ak.broadcast_arrays(lep_top_fj, had_top_fj)[1].mass
 
     # Chi² for each combination
     chi2_fj = ((lep_top_fj.mass - mean_mlep) / sigma_mlep) ** 2 + (
-        (had_mass_broadcast - mean_mhad) / sigma_mhad
+        (had_mass_broadcast - mean_mhad_fj) / sigma_mhad_fj
     ) ** 2
 
     # ============================================================
@@ -177,8 +351,12 @@ def ttbar_reco(
     met_nofj = ak.mask(met, no_fatjet)
 
     # All jet pairs -> one jet for leptonic top, two for hadronic top
-    combs = ak.combinations(jets_nofj, 2, axis=1, replacement=False)
-    lepjet, hadjets = combs["0"], combs["1"]
+    # combs = ak.combinations(jets_nofj, 2, axis=1, replacement=False)
+    # lepjet, hadjets = combs["0"], combs["1"]
+    four_jet_combos = ak.combinations(jets, 4, fields=["j1", "j2", "j3", "j4"])  # trijet candidates
+    lepjet = four_jet_combos["j4"]
+    had_top_nofj = four_jet_combos["j1"] + four_jet_combos["j2"] + four_jet_combos["j3"]
+    hadjets = ak.concatenate([four_jet_combos["j1"], four_jet_combos["j2"], four_jet_combos["j3"]], axis=1)
 
     # Broadcast muon and MET to pair structure
     muon_broadcast = ak.broadcast_arrays(lepjet, muons_nofj)[1]
@@ -213,7 +391,8 @@ def ttbar_reco(
         with_name="Momentum4D",
     )
 
-    lep_top_nofj = lepjet_4vec + muon_4vec + met_4vec
+    pz1_nofj, pz2_nofj = solve_neutrino_pz(muon_4vec, met_4vec)
+    lep_top_nofj = build_leptonic_tops(muon_4vec, met_4vec, lepjet_4vec, pz1_nofj, pz2_nofj)
 
     # Hadronic top = dijet system
     hadjets_4vec = ak.zip(
@@ -225,7 +404,7 @@ def ttbar_reco(
         },
         with_name="Momentum4D",
     )
-    had_top_nofj = ak.sum(hadjets_4vec, axis=1)
+    had_top_nofj_2 = ak.sum(hadjets_4vec, axis=1)
     had_top_nofj = ak.zip(
         {
             "pt": had_top_nofj.pt,
@@ -235,17 +414,24 @@ def ttbar_reco(
         },
         with_name="Momentum4D",
     )
+    # Map leptonic top jagged structure onto hadronic tops
+    had_top_nofj = map_a_to_b(lep_top_nofj, had_top_nofj)
 
+    # Make sure if we don't have a leptonic top, we don't have a hadronic top
+    lep_empty = ak.num(lep_top_nofj, axis=1) == 0
+    had_top_nofj = ak.where(lep_empty, ak.Array([[]] * len(lep_top_nofj)), had_top_nofj)
+
+    # Chi² for each combination
     chi2_nofj = ((lep_top_nofj.mass - mean_mlep) / sigma_mlep) ** 2 + (
-        (had_top_nofj.mass - mean_mhad) / sigma_mhad
+        (had_top_nofj.mass - mean_mhad_nofj) / sigma_mhad_nofj
     ) ** 2
 
     # ============================================================
     # Select best candidate and compute mtt
     # ============================================================
-
     best_idx_fj = ak.argmin(chi2_fj, axis=1, keepdims=True)
     best_idx_nofj = ak.argmin(chi2_nofj, axis=1, keepdims=True)
+    print(best_idx_nofj.type.show())
 
     # Use chi2 to select best pairing
     lep_top_fj_best = lep_top_fj[best_idx_fj]
@@ -292,6 +478,23 @@ def mtt_from_ttbar_reco(ttbar_reco: ak.Array) -> ak.Array:
     return ttbar_reco.mtt
 
 
+def chi2_from_ttbar_reco(ttbar_reco: ak.Array) -> ak.Array:
+    """
+    Extract chi2 from the ttbar reconstruction result.
+
+    Parameters
+    ----------
+    ttbar_reco : ak.Array
+        Output of `ttbar_reco`, expected to be awkward array with an 'mtt' field.
+
+    Returns
+    -------
+    ak.Array
+        Array of mtt values.
+    """
+    return ttbar_reco.chi2
+
+
 def compute_mva_vars(muons: ak.Array, jets: ak.Array) -> dict[str, np.ndarray]:
     """
     Compute input features for MVA from muon and jet collections.
@@ -321,17 +524,19 @@ def compute_mva_vars(muons: ak.Array, jets: ak.Array) -> dict[str, np.ndarray]:
 
     features = {}
 
-    # Basic jet-level features
+    # jet-level features 1
     features["n_jet"] = ak.num(jets, axis=1).to_numpy()
     features["leading_jet_mass"] = ak.to_numpy(jets.mass[:, 0])
     features["subleading_jet_mass"] = ak.to_numpy(jets.mass[:, 1])
-    features["leading_jet_btag_score"] = ak.to_numpy(jets.btagDeepB[:, 0])
-    features["subleading_jet_btag_score"] = ak.to_numpy(jets.btagDeepB[:, 1])
 
     # Scalar sum of transverse momenta (ST)
     features["st"] = ak.to_numpy(
         ak.sum(jets.pt, axis=1) + ak.sum(muons.pt, axis=1)
     )
+
+    # jet-level features 2
+    features["leading_jet_btag_score"] = ak.to_numpy(jets.btagDeepB[:, 0])
+    features["subleading_jet_btag_score"] = ak.to_numpy(jets.btagDeepB[:, 1])
 
     # Longitudinal imbalance S_zz = sum(pz^2) / sum(p^2)
     jet_p2 = jets.px**2 + jets.py**2 + jets.pz**2
@@ -585,6 +790,8 @@ def compute_mva_scores(
     mva_vars = compute_mva_vars(muons[idx], jets[idx])
     X = np.column_stack(list(mva_vars.values())).astype(float)
     scores[idx] = model.predict(X, batch_size=1024).flatten()
+    # need to map scores to -1 -> 1 instead of 0 -> 1
+    scores = scores*2 - 1
     return scores
 
 
