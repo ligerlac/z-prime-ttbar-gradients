@@ -166,7 +166,7 @@ def Zprime_softcuts_SR_tag(muons, jets, fatjets, met, ttbar_reco, mva):
         "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
         "met_cut": met.pt > 50,
         "lep_ht_cut": ak.fill_none(ak.firsts(lep_ht) > 150, False),
-        "exactly_1fatjet": ak.num(fatjets) == 1,
+        "exactly_1fatjet":  ak.sum(fatjets.particleNet_TvsQCD > 0.5, axis=1) == 1,
         "chi2_cut": ttbar_reco.chi2 < 30.,
         "nn_score": mva.nn_score >= 0.5,
     }
