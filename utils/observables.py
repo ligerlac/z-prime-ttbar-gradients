@@ -108,6 +108,7 @@ def solve_neutrino_pz(lepton, met, mW=80.4):
     C = (mu ** 2) * pt_l_sq
     discriminant = A - B + C
 
+    print(discriminant)
     sqrt_discriminant = ak.where(discriminant >= 0,
                                   np.sqrt(discriminant),
                                   np.sqrt(-discriminant) * 1j)
@@ -150,29 +151,12 @@ def build_leptonic_tops(muon, met, lepjet, pz1, pz2):
 
     lep_top1 = muon + lepjet + nu1
     lep_top2 = muon + lepjet + nu2
-    lep_top1_masked_one = ak.mask(lep_top1, one_real)
-    lep_top2_masked_one = ak.mask(lep_top2, one_real)
-    lep_top1_masked_no = ak.mask(lep_top1, no_real)
-    lep_top2_masked_no = ak.mask(lep_top2, no_real)
-    lep_top1_masked_two = ak.mask(lep_top1, two_real)
-    lep_top2_masked_two = ak.mask(lep_top2, two_real)
 
     lep_top_candidates = ak.where(
         ak.firsts(two_real, axis=1),
-        ak.concatenate([lep_top1_masked_two, lep_top2_masked_two], axis=1),
+        ak.concatenate([lep_top1, lep_top2], axis=1),
         lep_top1
     )
-
-    print("xx", ak.num(lep_top_candidates, axis=1))
-
-
-
-    # Expand according to solutions
-    both = lep_top1[two_real], lep_top2[two_real]
-    one = lep_top1[one_real]
-    real_part = lep_top1[no_real]  # using real(pz1)
-    out = ak.concatenate([*both, one, real_part], axis=1)
-
     return lep_top_candidates
 
 
@@ -232,12 +216,10 @@ def map_a_to_b(a: ak.Array, b: ak.Array) -> ak.Array:
 
     # Flatten b and get its list offsets
     flat_b = ak.flatten(b)
-    b_layout = ak.operations.to_list_offset_array(b.layout)
-    b_offsets = b_layout.offsets.data
+    b_offsets = b.layout.offsets.data
 
     # Get offsets and lengths of sublists in `a`
-    a_layout = ak.operations.to_list_offset_array(a.layout)
-    a_offsets = a_layout.offsets.data
+    a_offsets = a.layout.offsets.data
     a_lengths = a_offsets[1:] - a_offsets[:-1]
 
     # Allocate index array that will map a -> b
@@ -251,7 +233,7 @@ def map_a_to_b(a: ak.Array, b: ak.Array) -> ak.Array:
     indexed_array = ak.contents.IndexedArray(index, flat_b.layout)
 
     # Wrap into a jagged array with the same offsets as a
-    list_array = ak.contents.ListOffsetArray(a_layout.offsets, indexed_array)
+    list_array = ak.contents.ListOffsetArray(a.layout.offsets, indexed_array)
     return ak.Array(list_array)
 
 
@@ -432,70 +414,21 @@ def ttbar_reco(
         },
         with_name="Momentum4D",
     )
-    # print(lep_top_nofj.mass)
-    # print(had_top_nofj_2.mass)
-    # test = ak.broadcast_arrays(lep_top_nofj, had_top_nofj_2)[1]
-    # print(test.mass)
-    # print(((lep_top_nofj.mass - mean_mlep) / sigma_mlep) ** 2 + (
-    #     (test.mass - mean_mhad_nofj) / sigma_mhad_nofj
-    # ) ** 2)
-    # Identify events with no leptonic top candidates
-
-
-    # # How long is each outer array in b?
-    # group_lengths = ak.num(had_top_nofj)
-
-    # # How long is each sublist in `a` required to be to give `a` the same shape as `b`?
-    # n_groups = ak.values_astype(ak.num(lep_top_nofj) // group_lengths, np.int64)
-
-    # # Build array of counts to unflatten `a`
-    # split_counts = ak.ravel(
-    #     (
-    #         # Unflatten by group counts to make compatible with array of b lengths,
-    #         # and multiply by group lengths array
-    #         ak.unflatten(
-    #             # Build array of 1 with length equal to number of sub arrays in a_with_dim
-    #             np.ones(ak.sum(n_groups), dtype=np.int64),
-    #             n_groups,
-    #         )
-    #         * group_lengths
-    #     )
-    # )
-    # # Build intermediate arrays with equal number of dims
-    # # N * var-Q * var-P
-    # #   where var-Q * var-P = var-M
-    # lep_top_nofj = ak.unflatten(lep_top_nofj, split_counts, axis=1)
-    # # N * 1 * var-P
-    # had_top_nofj = had_top_nofj[..., np.newaxis, :]
-
-    # print(lep_top_nofj.type.show(), had_top_nofj.type.show())
+    # Map leptonic top jagged structure onto hadronic tops
     had_top_nofj = map_a_to_b(lep_top_nofj, had_top_nofj)
 
+    # Make sure if we don't have a leptonic top, we don't have a hadronic top
     lep_empty = ak.num(lep_top_nofj, axis=1) == 0
     had_top_nofj = ak.where(lep_empty, ak.Array([[]] * len(lep_top_nofj)), had_top_nofj)
-    print(ak.num(had_top_nofj[~lep_empty], axis=1))
 
+    # Chi² for each combination
     chi2_nofj = ((lep_top_nofj.mass - mean_mlep) / sigma_mlep) ** 2 + (
         (had_top_nofj.mass - mean_mhad_nofj) / sigma_mhad_nofj
     ) ** 2
 
-    print(chi2_nofj[~lep_empty])
-    print(ak.num(lep_top_nofj[~lep_empty], axis=1))
-    print(ak.num(had_top_nofj[~lep_empty], axis=1))
-
-    chi2_nofj = ak.where(lep_empty, ak.Array([[]] * len(lep_empty)), chi2_nofj)
-
-    #chi2_nofj = ak.flatten(chi2_nofj, axis=-1)
-    #lep_top_nofj = ak.flatten(lep_top_nofj, axis=)
-    #had_top_nofj = ak.flatten(had_top_nofj, axis=1)
-
-    print(chi2_nofj.type.show(), lep_top_nofj.type.show(), had_top_nofj.type.show())
-    print("next")
-
     # ============================================================
     # Select best candidate and compute mtt
     # ============================================================
-
     best_idx_fj = ak.argmin(chi2_fj, axis=1, keepdims=True)
     best_idx_nofj = ak.argmin(chi2_nofj, axis=1, keepdims=True)
     print(best_idx_nofj.type.show())
@@ -505,9 +438,6 @@ def ttbar_reco(
     had_top_fj_best = ak.broadcast_arrays(lep_top_fj, had_top_fj)[1][
         best_idx_fj
     ]
-    # print(best_idx_nofj[~ak.is_none(best_idx_nofj, axis=-1)][:10])
-    # print(lep_top_nofj[~ak.is_none(best_idx_nofj, axis=1)][:10], ak.num(lep_top_nofj[~ak.is_none(best_idx_nofj, axis=1)][:10], axis=1))
-    # print(had_top_nofj[~ak.is_none(best_idx_nofj, axis=1)][:10], ak.num(had_top_nofj[~ak.is_none(best_idx_nofj, axis=1)][:10], axis=1))
 
     lep_top_nofj_best = lep_top_nofj[best_idx_nofj]
     had_top_nofj_best = ak.broadcast_arrays(lep_top_nofj, had_top_nofj)[1][
