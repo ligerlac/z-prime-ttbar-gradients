@@ -96,28 +96,29 @@ def Zprime_baseline(muons, jets, fatjets, met):
     selections = PackedSelection(dtype="uint64")
     selections.add("exactly_1mu", ak.num(muons) == 1)
     selections.add("atleast_2jets", ak.num(jets, axis=1) > 1)
+    selections.add("atleast_1fj", ak.num(fatjets) > 0)
     selections.add(
         "baseline",
         selections.all(
             "exactly_1mu",
             "atleast_2jets",
+            #"atleast_1fj",
         ),
     )
 
     return selections
 
 
-def Zprime_hardcuts(muons, jets, fatjets, met, reco):
+def Zprime_hardcuts(muons,):
     """
     Select events based on the Zprime workshop selection criteria.
     """
     selections = PackedSelection(dtype="uint64")
     selections.add("exactly_1mu", ak.num(muons) == 1)
-    selections.add("exactly_1fatjet", ak.num(fatjets) == 1)
     selections.add(
         "Zprime_channel",
         selections.all(
-            "exactly_1fatjet",
+            "exactly_1mu",
         ),
     )
 
@@ -128,15 +129,99 @@ def Zprime_softcuts_nonjax(muons, jets, fatjets, met):
     """
     Select events based on the Zprime workshop selection criteria.
     """
+    # Leptonic HT
+    lep_ht = muons.pt + met.pt
+
+    # Minimum deltaR between muon and any jet
+    muon_in_pair, jet_in_pair = ak.unzip(ak.cartesian([muons, jets]))
+    deltaR = muon_in_pair.deltaR(jet_in_pair)
+    min_deltaR = ak.min(deltaR, axis=1)
+
+    # pTrel
+    closest_jet_idx = ak.argmin(deltaR, axis=1, keepdims=True)
+    closest_jet = jet_in_pair[closest_jet_idx]
+    delta_angle = muons.deltaangle(closest_jet)
+    pt_rel = muons.p * np.sin(delta_angle)
+
+    soft_cuts = {
+        "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
+        "met_cut": met.pt > 50,
+        "lep_ht_cut": ak.fill_none(ak.firsts(lep_ht) > 150, False),
+        "lepton_2d": ak.fill_none(ak.sum((min_deltaR > 0.4) | (pt_rel > 25.), axis=1) > 0, False),
+        "at_least_1_150gev_jet": ak.sum(jets.pt > 150, axis=1) > 0,
+        "at_least_1_50gev_jet": ak.sum(jets.pt > 50, axis=1) > 0,
+        "nomore_than_1_top_tagged_jet": ak.sum(fatjets.particleNet_TvsQCD > 0.5, axis=1) < 2,
+    }
+
+    return soft_cuts
+
+
+def Zprime_softcuts_SR_tag(muons, jets, fatjets, met, ttbar_reco, mva):
+    """
+    Select events based on section 7.2 of
+    https://arxiv.org/pdf/1810.05905
+    """
     lep_ht = muons.pt + met.pt
     soft_cuts = {
         "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
         "met_cut": met.pt > 50,
         "lep_ht_cut": ak.fill_none(ak.firsts(lep_ht) > 150, False),
+        "exactly_1fatjet": ak.num(fatjets) == 1,
+        "chi2_cut": ttbar_reco.chi2 < 30.,
+        "nn_score": mva.nn_score >= 0.5,
     }
 
     return soft_cuts
 
+
+def Zprime_softcuts_SR_notag(muons, jets, fatjets, met, ttbar_reco, mva):
+    """
+    Select events based on section 7.2 of
+    https://arxiv.org/pdf/1810.05905
+    """
+    lep_ht = muons.pt + met.pt
+    soft_cuts = {
+        "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
+        "met_cut": met.pt > 50,
+        "lep_ht_cut": ak.fill_none(ak.firsts(lep_ht) > 150, False),
+        "exactly_1fatjet": ak.num(fatjets) == 0,
+        "chi2_cut": ttbar_reco.chi2 < 30.,
+        "nn_score": mva.nn_score >= 0.5,
+    }
+
+    return soft_cuts
+
+def Zprime_softcuts_CR1(muons, jets, fatjets, met, ttbar_reco, mva):
+    """
+    Select events based on section 7.2 of
+    https://arxiv.org/pdf/1810.05905
+    """
+    lep_ht = muons.pt + met.pt
+    soft_cuts = {
+        "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
+        "met_cut": met.pt > 50,
+        "lep_ht_cut": ak.fill_none(ak.firsts(lep_ht) > 150, False),
+        "chi2_cut": ttbar_reco.chi2 < 30.,
+        "nn_score": mva.nn_score < -0.75,
+    }
+
+    return soft_cuts
+
+def Zprime_softcuts_CR2(muons, jets, fatjets, met, ttbar_reco, mva):
+    """
+    Select events based on section 7.2 of
+    https://arxiv.org/pdf/1810.05905
+    """
+    lep_ht = muons.pt + met.pt
+    soft_cuts = {
+        "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
+        "met_cut": met.pt > 50,
+        "lep_ht_cut": ak.fill_none(ak.firsts(lep_ht) > 150, False),
+        "chi2_cut": ttbar_reco.chi2 < 30.,
+        "nn_score":  ((mva.nn_score < 0.5) & (mva.nn_score > 0.0)),
+    }
+
+    return soft_cuts
 
 # def  Zprime_softcuts_jax(muons, jets, fatjets, met, met_cut=50.0):
 #     """

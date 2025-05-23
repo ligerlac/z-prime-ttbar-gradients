@@ -26,14 +26,17 @@ import hist
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+from matplotlib.ticker import AutoMinorLocator
+import mplhep
 import numpy as np
 import uproot
 import vector
 
+
 from utils.configuration import config as ZprimeConfig
 from utils.cuts import lumi_mask
 from utils.input_files import construct_fileset
-from utils.output_files import save_histograms
+from utils.output_files import save_histograms, pkl_histograms, unpkl_histograms
 from utils.preproc import pre_process_dak, pre_process_uproot
 from utils.schema import Config, load_config_with_restricted_cli
 from utils.stats import get_cabinetry_rebinning_router
@@ -203,7 +206,7 @@ class ZprimeAnalysis:
         fatjets = fatjets[
             (fatjets.pt > 200)
             & (abs(fatjets.eta) < 2.4)
-            & (fatjets.particleNet_TvsQCD > 0.5)
+            #& (fatjets.particleNet_TvsQCD > 0.5)
         ]
 
         return muons, jets, fatjets, met
@@ -439,7 +442,8 @@ class ZprimeAnalysis:
             if (req_channels := self.config.general.channels) is not None:
                 if chname not in req_channels:
                     continue
-
+            logger.info(
+                f"Applying selection for {chname} in {process}")
             mask = 1
             if (
                 selection_funciton := channel["selection_function"]
@@ -501,7 +505,6 @@ class ZprimeAnalysis:
                     k: jnp.array(ak.to_jax(v), dtype=float)
                     for k, v in soft_cuts.items()
                 }
-
                 weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
                 logger.debug(f"JAX weights:: {weights} ")
 
@@ -556,19 +559,19 @@ class ZprimeAnalysis:
                     weights, event_syst, direction, object_copies_channel
                 )
 
+            logger.info(f"Number of weighted events in {chname}: {ak.sum(mask)}")
             for observable in channel["observables"]:
-
                 # do not compute if this function is being traced by JAX
                 # and observable function is not compatible with JAX
                 if not observable.works_with_jax and tracing:
                     return ak.sum(weights)
+                logger.info(f"Computing observable {observable['name']}")
                 observable_name = observable["name"]
                 observable_args = self._get_function_arguments(
                     observable["use"], object_copies_channel
                 )
                 observable_vals = observable["function"](*observable_args)
                 if not tracing:
-
                     self.nD_hists_per_region[chname][observable_name].fill(
                         observable=observable_vals,
                         process=process,
@@ -886,6 +889,10 @@ def main():
             analysis.nD_hists_per_region,
             output_file=f"{config.general.output_dir}/histograms/histograms.root",
         )
+        pkl_histograms(
+            analysis.nD_hists_per_region,
+            output_file=f"{config.general.output_dir}/histograms/histograms.pkl",
+        )
 
     if config.general.run_statistics:
         cabinetry_config = cabinetry.configuration.load(
@@ -909,6 +916,86 @@ def main():
         cabinetry.visualize.pulls(fit_results, close_figure=False)
 
     plot_nominal_histograms("output/histograms/histograms.root")
+    plot_cms_style(histograms_file="output/histograms/histograms.pkl")
+
+def plot_cms_style(histograms_file: str):
+    """
+    Plot histograms in CMS style.
+    Parameters
+    ----------
+    histograms_file : str
+        Path to the histograms pkl file.
+    """
+    if ".pkl" not in histograms_file:
+        raise ValueError("histograms_file must be a .pkl file")
+    histograms = unpkl_histograms(histograms_file)
+    os.makedirs("output/plots_TEST", exist_ok=True)
+    mplhep.style.use("CMS")
+
+    process_colors = {
+        "ttbar": "#FF6600",    # orange
+        "wjets": "#33CCFF",    # blue
+        "other bkgs.": "#CC00FF",    # magenta
+        "data": "black",
+        "signal": "black",
+    }
+
+    for region, obs_dict in histograms.items():
+        for observable, nD_histogram in obs_dict.items():
+            for variation in nD_histogram.axes["variation"]:
+                if variation != "nominal":
+                    continue
+                logger.info(
+                f"Plotting {observable} for {region} and {variation}")
+                fig, ax = plt.subplots(figsize=(12, 10), layout="constrained")
+                mplhep.cms.label(
+                                    label="Preliminary",
+                                    lumi=35.6,
+                                    data=True,
+                                    loc=1,
+                                )
+                combined_hist = {}
+                for process in nD_histogram.axes["process"]:
+                    if process.startswith("ttbar_"):
+                        if "ttbar" not in combined_hist:
+                            combined_hist["ttbar"] = nD_histogram[:, process, variation]
+                        else:
+                            combined_hist["ttbar"] += nD_histogram[:, process, variation]
+                    elif process.startswith("wjets") or process.startswith("signal") or process.startswith("data"):
+                        combined_hist[process] = nD_histogram[:, process, variation]
+                    else:
+                        combined_hist["other bkgs."] = nD_histogram[:, process, variation]
+
+                # Move signal histogram to be last plotted
+                if "signal" in combined_hist:
+                    signal_hist = combined_hist.pop("signal")
+                    combined_hist["signal"] = signal_hist
+
+                total_histogram = 0.0
+                for process, histogram in combined_hist.items():
+                    total_histogram += histogram
+                    color = process_colors.get(process)
+                    histtype = ("errorbar" if process == "data"
+                                else "step" if process == "signal"
+                                else "fill")
+                    linestyle = "none" if process == "data" else "--" if process == "signal" else "-"
+                    stack = True if process != "data" else False
+                    linewidth = 1.2 if process == "signal" else None
+
+                    mplhep.histplot(histogram, histtype=histtype, label=process, ax=ax, linestyle=linestyle, linewidth=linewidth, color=color, stack=stack)
+
+                ax.set_xlabel(observable)
+                ax.set_ylabel("Events")
+                yscale = "linear"
+                ax.set_yscale(yscale)
+                max_events = max(total_histogram.values())
+                ax.set_ylim(None, max_events*10 if yscale=="log" else max_events*1.2)
+                ax.legend(loc="upper right", fontsize=12)
+                plt.savefig(
+                    f"output/plots_TEST/{region}_{observable}_{variation}.png"
+                )
+
+
 
 
 def plot_nominal_histograms(
@@ -967,6 +1054,7 @@ def plot_nominal_histograms(
             plt.close()
 
     logger.info(f"Saved plots to: {output_dir}")
+
 
 
 if __name__ == "__main__":
