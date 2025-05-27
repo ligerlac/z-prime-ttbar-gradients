@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Mapping of process names to folder paths containing .txt files listing ROOT files
 PROCESS_TO_DATASETS_FOLDER = {
-    "signal": "datasets/signal/m2000_w20/",
+    "signal": "datasets/signal/m400_w40/",
     "ttbar_semilep": "datasets/ttbar_semilep/",
     "ttbar_had": "datasets/ttbar_had/",
     "ttbar_lep": "datasets/ttbar_lep/",
