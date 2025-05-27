@@ -3,28 +3,18 @@
         "nominal": {
             "files": [
                 {
-                    "path": "root://eospublic.cern.ch//eos/opendata/cms/mc/RunIISummer20UL16NanoAODv9/ZprimeToTT_M2000_W20_TuneCP2_PSweights_13TeV-madgraph-pythiaMLM-pythia8/NANOAODSIM/106X_mcRun2_asymptotic_v17-v1/280000/45046F71-EB72-974D-BF4A-56A9C1B44524.root",
-                    "nevts": 511498,
-                    "nevts_wt": 511498.0
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/mc/RunIISummer20UL16NanoAODv9/ZprimeToTT_M400_W4_TuneCP2_PSweights_13TeV-madgraph-pythiaMLM-pythia8/NANOAODSIM/106X_mcRun2_asymptotic_v17-v1/100000/53682A49-E9C6-984F-A484-AB15E8D6F26F.root",
+                    "nevts": 567823,
+                    "nevts_wt": 567823.0
                 },
                 {
-                    "path": "root://eospublic.cern.ch//eos/opendata/cms/mc/RunIISummer20UL16NanoAODv9/ZprimeToTT_M2000_W20_TuneCP2_PSweights_13TeV-madgraph-pythiaMLM-pythia8/NANOAODSIM/106X_mcRun2_asymptotic_v17-v1/270000/22BAB5D2-9E3F-E440-AB30-AE6DBFDF6C83.root",
-                    "nevts": 11503,
-                    "nevts_wt": 11503.0
-                },
-                {
-                    "path": "root://eospublic.cern.ch//eos/opendata/cms/mc/RunIISummer20UL16NanoAODv9/ZprimeToTT_M2000_W20_TuneCP2_PSweights_13TeV-madgraph-pythiaMLM-pythia8/NANOAODSIM/106X_mcRun2_asymptotic_v17-v1/270000/59B9ED38-8DDA-8049-BB4E-ACF0E257E79C.root",
-                    "nevts": 4217,
-                    "nevts_wt": 4217.0
-                },
-                {
-                    "path": "root://eospublic.cern.ch//eos/opendata/cms/mc/RunIISummer20UL16NanoAODv9/ZprimeToTT_M2000_W20_TuneCP2_PSweights_13TeV-madgraph-pythiaMLM-pythia8/NANOAODSIM/106X_mcRun2_asymptotic_v17-v1/270000/7CFC8EB0-EC72-FD4C-8F03-CAECF5445EED.root",
-                    "nevts": 61,
-                    "nevts_wt": 61.0
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/mc/RunIISummer20UL16NanoAODv9/ZprimeToTT_M400_W4_TuneCP2_PSweights_13TeV-madgraph-pythiaMLM-pythia8/NANOAODSIM/106X_mcRun2_asymptotic_v17-v1/100000/D3E6C37E-FBC1-3A42-8082-7C3F876DE7AC.root",
+                    "nevts": 2304,
+                    "nevts_wt": 2304.0
                 }
             ],
-            "nevts_total": 527279,
-            "nevts_wt_total": 527279.0
+            "nevts_total": 570127,
+            "nevts_wt_total": 570127.0
         }
     },
     "ttbar_semilep": {
@@ -2068,208 +2058,558 @@
         "nominal": {
             "files": [
                 {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/0A4230E2-0C75-604D-890F-A4CE5E5C164E.root",
+                    "nevts": 2939781,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/A3279183-BDA6-F44C-8EF3-C063BC598B68.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/C760C7A6-E4AB-E447-93BB-1EAD0177DB41.root",
+                    "nevts": 3269596,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/F9ECEECC-1226-DC4C-BD06-0C218B250D60.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/143F9660-3FE1-3E4E-A58D-FD56967BA9B8.root",
+                    "nevts": 3248538,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/ABAF299E-EAF9-5043-B89B-1D13A9475BBC.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/D2392663-56C1-5849-A224-28CD5251166A.root",
+                    "nevts": 1100480,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/FD262A89-0289-F941-9494-5FD7556833B4.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/1D280BA6-2EBB-A544-91EB-E821F3CF0B06.root",
+                    "nevts": 1090938,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/B7EEE475-047D-CA4D-B680-617FE16540AC.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/D2C497A2-F632-AC4B-8655-1ACA9F2A43DE.root",
+                    "nevts": 2915206,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/5E060727-1BCF-1F40-BBD8-D6841127F7BA.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/BC07CDBA-E54A-AD4A-BC24-960043783955.root",
+                    "nevts": 2722748,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/EA9DD56A-11DE-AE48-8E43-07852D3E3694.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/A1DF7082-FF8C-114D-BA6C-FC0EDFDF61B2.root",
+                    "nevts": 2187222,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/C144B7AE-E8C0-9D40-BECF-D027FA604946.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/F361D15A-F30D-4D45-8874-446B7450D4BF.root",
+                    "nevts": 1483434,
+                    "nevts_wt": 0
+                },
+                {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/280000/40EA32B0-1284-7246-83A3-A703D908F9FC.root",
-                    "nevts": 1648169,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/280000/579013D1-626D-D943-A8B0-A1A558C54F33.root",
-                    "nevts": 0,
+                    "nevts": 1501125,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/280000/6351C999-8EF7-6345-822D-E2EF1C203603.root",
-                    "nevts": 1925213,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/280000/977A32B2-1672-0646-8029-C12B37014B64.root",
-                    "nevts": 0,
+                    "nevts": 2186320,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/280000/C653EBCD-C75E-8441-BB1D-12A90F76D597.root",
-                    "nevts": 2307023,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/280000/D548310D-36A5-DE46-97C5-15933EAF7DC9.root",
-                    "nevts": 0,
+                    "nevts": 2596848,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/280000/D87A4CC6-6CF7-6943-838E-475A7533EAA9.root",
-                    "nevts": 1971689,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/280000/F302A865-17B0-064B-8154-41526BB38244.root",
-                    "nevts": 0,
+                    "nevts": 3165155,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/01479010-3B51-B04A-9C5C-7800085D11B8.root",
-                    "nevts": 1089353,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/02C01469-552A-7E45-9894-6406F0030DB3.root",
-                    "nevts": 0,
+                    "nevts": 2741466,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/23953892-6295-B341-9D0B-6892EBDD67FC.root",
-                    "nevts": 2071064,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/28415B3F-DFB1-5542-9217-7D134447AC48.root",
-                    "nevts": 0,
+                    "nevts": 2141735,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/2AF26192-4B3A-324D-B14C-CFFFB1F69F4C.root",
-                    "nevts": 1765176,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/31BF084F-D414-1542-B61D-0F58520A17E8.root",
-                    "nevts": 0,
+                    "nevts": 3297029,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/388AB3E1-8708-7D42-91BA-83E52373E808.root",
-                    "nevts": 300967,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/3BCDC9CF-57F5-104F-8C20-2BA300439111.root",
-                    "nevts": 0,
+                    "nevts": 3288666,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/3E76909B-34D1-DE46-8355-51C2ADD587D5.root",
-                    "nevts": 887639,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/4AD09F91-D53E-E345-817A-BBC670875478.root",
-                    "nevts": 0,
+                    "nevts": 1648169,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/4B985344-7CD7-6142-BCB6-B95E47279B9A.root",
-                    "nevts": 34372,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/594F3D70-ED17-3D42-A322-269D0A074F9A.root",
-                    "nevts": 0,
+                    "nevts": 1925213,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/626C68F8-9DBD-194B-993E-8672B8E73BAE.root",
-                    "nevts": 2753751,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/6322429F-B620-854D-B4AC-6892359CAB2C.root",
-                    "nevts": 0,
+                    "nevts": 2307023,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/6C8BBA90-79DC-CA45-9E0F-4AB683E91D8F.root",
-                    "nevts": 1728490,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/7BA44B30-9EBA-6E4A-8DD6-2A239BDDBA50.root",
-                    "nevts": 0,
+                    "nevts": 1971689,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/84E83B69-73A2-BF4C-A59C-C3C10F71C76E.root",
-                    "nevts": 2271351,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/874B6634-10CD-4541-97E6-7A97BA44F4C6.root",
-                    "nevts": 0,
+                    "nevts": 1089353,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/8E33310F-1983-EE41-A97A-7D6853AF1BAD.root",
-                    "nevts": 1567009,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/8F897B77-7EDA-B54B-812C-2185345CE97F.root",
-                    "nevts": 0,
+                    "nevts": 2071064,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/9C99B9F7-7F24-FE4A-A28D-E31D70DBDF66.root",
-                    "nevts": 1657975,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/A5B416ED-2D1C-4846-92FF-CA7E5C6DBA61.root",
-                    "nevts": 0,
+                    "nevts": 1765176,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/B0CFD000-E84C-344D-BED7-8AB35F3DBA36.root",
-                    "nevts": 1356171,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/B4E0C1C3-E86E-3F4B-9B1A-D17E3ADB0908.root",
-                    "nevts": 0,
+                    "nevts": 300967,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/C250DA77-36D8-2440-8F71-4A913F18EA6C.root",
-                    "nevts": 1473621,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/C2A7D179-B263-704C-A8EB-B75F4D82F7B5.root",
-                    "nevts": 0,
+                    "nevts": 887639,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/C8653579-E6F0-5D44-ACEA-154A482DF4AD.root",
-                    "nevts": 2074751,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/CD1172F5-A00E-0041-9A9C-5E1862026357.root",
-                    "nevts": 0,
+                    "nevts": 34372,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/E037AB14-FEA9-4D40-AA30-9ADF56BD6270.root",
-                    "nevts": 1781996,
+                    "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/F250A551-A8DC-BC47-895C-3BE19459F5DC.root",
-                    "nevts": 0,
+                    "nevts": 2753751,
                     "nevts_wt": 0
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/F773638E-CE20-944A-A120-755C3E071B2F.root",
-                    "nevts": 1681525,
-                    "nevts_wt": 0
-                },
-                {
-                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/FBD685D1-F6C9-8946-BA61-14F8DB0B1B82.root",
                     "nevts": 0,
                     "nevts_wt": 0
                 },
                 {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/FBD685D1-F6C9-8946-BA61-14F8DB0B1B82.root",
+                    "nevts": 1728490,
+                    "nevts_wt": 0
+                },
+                {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/1210000/576759DA-4A35-534B-B926-2A9E4A5A7268.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/044B8A93-571B-0F46-BBC4-FFEDD253984D.root",
+                    "nevts": 2271351,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/070EC05A-1BD0-B940-A8D2-AD6650144A72.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/08BEF135-37C0-F145-88E9-63F7A10D3BC7.root",
+                    "nevts": 1567009,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/0FE0804D-33EA-7C41-A968-132B08494EA6.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/10573E58-8061-F349-B708-275CD2609AF7.root",
+                    "nevts": 1657975,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/16CB6056-D4D5-2046-9D30-82D8985F831F.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/1BE80946-8275-7A46-842F-6DBDB9193FAD.root",
+                    "nevts": 1356171,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/1D772C99-43DE-2749-9EFF-0A5DFFC5EFD8.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/1E594251-5C49-3649-9413-14663553AE7D.root",
+                    "nevts": 1473621,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/20CCC9D4-0AD5-9E42-B642-DE86F25153ED.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/23734531-415C-BD43-83DE-94E787D3F57C.root",
+                    "nevts": 2074751,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/247E64DA-FE25-DB4E-ACFE-034455CFD3EB.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/25DEFBD5-45E9-544B-9E88-B1D3ED80EFFA.root",
+                    "nevts": 1781996,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/261B08A0-22B5-5149-B00E-F9A774477005.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/266B2CD6-17D4-C04F-B1FD-445C371464E4.root",
+                    "nevts": 1681525,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/37B993E8-7A11-6141-B42F-C20F3F6BB2D0.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/3ADD6FD9-5B2A-1441-BC2E-D68FDA486B4B.root",
                     "nevts": 2533806,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/473F6C9A-F7AF-2640-886D-D814F98886D8.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/51E1A1D8-FBF4-0E45-9F37-FBFD4B5A7A09.root",
+                    "nevts": 2015833,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/5553FFE8-D1DF-9842-9F49-16BB8EFFD4A3.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/5709DEB4-AAE5-7949-975C-119CF30ABA70.root",
+                    "nevts": 3315798,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/59905258-7CCF-BB41-AF01-D9FCBBECC03D.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/5BF83F4E-336D-1641-9576-53FC198765B5.root",
+                    "nevts": 1663133,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/5F5E0726-4074-DA46-9AD9-C39389E885EC.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/66A58A5A-4A7F-0546-B370-BABDDE02ADFD.root",
+                    "nevts": 2098366,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/6789206B-7C28-5C44-B975-A5EF9D7BC6A0.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/710A09CB-D2D9-0948-B4EC-6D94FD9F612B.root",
+                    "nevts": 1755402,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/78995FCF-4A0B-364B-8875-9207B74685CF.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/7EC9A11A-ACD9-4A46-8770-B7A48670CBBF.root",
+                    "nevts": 1224865,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/809D6534-33BF-244B-B689-8C63F763959A.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/8531DBAE-434E-FF45-9647-1FFA5B964660.root",
+                    "nevts": 806021,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/9110E45A-9003-CB4F-9220-18B2EBFA2B42.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/92238EFF-D3BC-B745-B707-BB7096790F83.root",
+                    "nevts": 2289816,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/95AF7A2E-F973-5642-96C6-B37EA7C96FF7.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/A3664F2C-DE66-C64E-8471-88F341DBC4BF.root",
+                    "nevts": 3008904,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/ABF5CD64-0947-964E-8104-84D880B737CD.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/ACF68248-100D-D345-80C9-AECE7BCB73AF.root",
+                    "nevts": 2161719,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/AD99EB27-9D69-B74E-981C-F1869AED6582.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/B02F3578-EDAA-D649-BF16-B0090E99B34A.root",
+                    "nevts": 2189002,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/B61CB2F3-3F7B-C143-B349-C9FE421103AC.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/BD979CEA-AA60-104B-B656-A2A7ACE54A4B.root",
+                    "nevts": 1930658,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/C08430A5-EB2C-EB4D-A653-7CA621B11BFC.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/CC55E1DA-ADBB-0342-A53C-C7B7CFA6AD85.root",
+                    "nevts": 2492709,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/CE1F1724-2933-C44F-829E-0FA4CB49D49A.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/D5642602-6BA0-E843-B8CC-03B0072E1796.root",
+                    "nevts": 1497216,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/DCA6F24D-0006-634B-9964-65CE4B8E70D5.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/E5B3AF0A-A0F0-594B-9E72-B9EA1859D549.root",
+                    "nevts": 3071321,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/E801FC2F-0877-9F4C-978D-FE9C94B92CAF.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/EAABF77C-A79B-FB4E-B307-7B2F9CFC6C9E.root",
+                    "nevts": 2289979,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/EE1BAEDB-88FC-674E-A969-707818596CA4.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/F24742D6-8BF8-F640-AD2F-063EE84A759F.root",
+                    "nevts": 1946746,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/F3F7C96C-CF45-EB45-918C-9E5A05F8D899.root",
+                    "nevts": 0,
+                    "nevts_wt": 0
+                },
+                {
+                    "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016G/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/70000/F4BB5330-5236-5940-BA0B-F13088D94F5E.root",
+                    "nevts": 2116950,
                     "nevts_wt": 0
                 },
                 {
@@ -2279,7 +2619,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/0107961B-4308-F845-8F96-E14622BBA484.root",
-                    "nevts": 2015833,
+                    "nevts": 289101,
                     "nevts_wt": 0
                 },
                 {
@@ -2289,7 +2629,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/0F03FF10-7F20-8A4E-A19A-418C090A3F97.root",
-                    "nevts": 3315798,
+                    "nevts": 56141,
                     "nevts_wt": 0
                 },
                 {
@@ -2299,7 +2639,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/120B99EA-7A22-094A-889D-E9049DB1A21C.root",
-                    "nevts": 1663133,
+                    "nevts": 1504715,
                     "nevts_wt": 0
                 },
                 {
@@ -2309,7 +2649,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/13EF306B-E9EA-B24F-8094-DAC8A7BC4AE0.root",
-                    "nevts": 2098366,
+                    "nevts": 2051700,
                     "nevts_wt": 0
                 },
                 {
@@ -2319,7 +2659,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/14EA6AFB-593D-074F-AF31-BF588987BE99.root",
-                    "nevts": 1755402,
+                    "nevts": 1936884,
                     "nevts_wt": 0
                 },
                 {
@@ -2329,7 +2669,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/1C08614E-0C0E-6044-966A-CAF630CAEF8F.root",
-                    "nevts": 1224865,
+                    "nevts": 3390670,
                     "nevts_wt": 0
                 },
                 {
@@ -2339,7 +2679,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/1EB443F2-1230-8042-B8AE-FD50329CA59B.root",
-                    "nevts": 806021,
+                    "nevts": 1713097,
                     "nevts_wt": 0
                 },
                 {
@@ -2349,7 +2689,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/236A04EE-C105-D947-8A2E-F8CC6731644F.root",
-                    "nevts": 2289816,
+                    "nevts": 1874233,
                     "nevts_wt": 0
                 },
                 {
@@ -2359,7 +2699,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/39B0B7DF-2C71-9E4E-952F-833475062880.root",
-                    "nevts": 3008904,
+                    "nevts": 3174648,
                     "nevts_wt": 0
                 },
                 {
@@ -2369,7 +2709,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/4C688018-90E1-5847-AEA3-D5F5DEB330EA.root",
-                    "nevts": 2161719,
+                    "nevts": 2010546,
                     "nevts_wt": 0
                 },
                 {
@@ -2379,7 +2719,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/5CA4CE73-629C-2F48-939C-4274B369F112.root",
-                    "nevts": 2189002,
+                    "nevts": 1420132,
                     "nevts_wt": 0
                 },
                 {
@@ -2389,7 +2729,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/6CBB587F-1366-6F40-973C-7F98EA9C8335.root",
-                    "nevts": 1930658,
+                    "nevts": 2694638,
                     "nevts_wt": 0
                 },
                 {
@@ -2399,7 +2739,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/788CA5CB-13E0-544A-8427-33E4591CF20B.root",
-                    "nevts": 2492709,
+                    "nevts": 1754861,
                     "nevts_wt": 0
                 },
                 {
@@ -2409,7 +2749,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/8F3012A6-72CA-6C4F-81AA-64EEB640EA84.root",
-                    "nevts": 1497216,
+                    "nevts": 2247927,
                     "nevts_wt": 0
                 },
                 {
@@ -2419,7 +2759,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/BE433087-4E55-6F44-8EBF-EDD13E745BAE.root",
-                    "nevts": 3071321,
+                    "nevts": 1752855,
                     "nevts_wt": 0
                 },
                 {
@@ -2429,7 +2769,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/CEB3C22E-30A5-704F-BD07-BD6D0838DAFA.root",
-                    "nevts": 2289979,
+                    "nevts": 1308929,
                     "nevts_wt": 0
                 },
                 {
@@ -2439,7 +2779,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/D2F76766-1F43-264A-A39F-2DE68BF68752.root",
-                    "nevts": 1946746,
+                    "nevts": 2221579,
                     "nevts_wt": 0
                 },
                 {
@@ -2449,7 +2789,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/E6C5C5AA-946B-A34C-ABB5-4B14AA0E9ED7.root",
-                    "nevts": 2116950,
+                    "nevts": 1271581,
                     "nevts_wt": 0
                 },
                 {
@@ -2459,7 +2799,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/EC4283CE-BB96-B845-8012-6ED0CC0FA7A2.root",
-                    "nevts": 289101,
+                    "nevts": 1791443,
                     "nevts_wt": 0
                 },
                 {
@@ -2469,7 +2809,7 @@
                 },
                 {
                     "path": "root://eospublic.cern.ch//eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/130000/FE81EE6E-0E21-1847-9105-D700F2E762DB.root",
-                    "nevts": 56141,
+                    "nevts": 2378028,
                     "nevts_wt": 0
                 },
                 {
@@ -2478,7 +2818,7 @@
                     "nevts_wt": 0
                 }
             ],
-            "nevts_total": 174035164,
+            "nevts_total": 323952013,
             "nevts_wt_total": 0
         }
     }
