@@ -40,36 +40,32 @@ def get_mtt(
     ak.Array
         Flattened array of reconstructed m_tt values per event.
     """
-    region_muons_4vec, region_fatjets_4vec, region_jets_4vec = [
+
+    jets = jets[(jets.btagDeepB > 0.5) & (jets.jetId > 4)]
+    jets = jets[:, 0]  # only the first jet per event
+    fatjets = fatjets[(fatjets.particleNet_TvsQCD > 0.5) & (fatjets.pt > 500.)]
+    p4mu,p4fj,p4j,p4met = ak.unzip(ak.cartesian([muons, fatjets, jets, met]))
+
+    # Convert to 4-vectors
+    p4mu, p4fj, p4j = [
         ak.zip(
             {"pt": o.pt, "eta": o.eta, "phi": o.phi, "mass": o.mass},
             with_name="Momentum4D",
         )
-        for o in [muons, fatjets, jets[:, 0]]
+        for o in [p4mu, p4fj, p4j]
     ]
-    region_met_4vec = ak.zip(
+    p4met = ak.zip(
         {
-            "pt": met.pt,
-            "eta": 0 * met.pt,
-            "phi": met.phi,
+            "pt": p4met.pt,
+            "eta": 0 * p4met.pt,
+            "phi": p4met.phi,
             "mass": 0,
         },
         with_name="Momentum4D",
     )
+    p4tot = p4mu + p4fj + p4j + p4met
+    return ak.flatten(p4tot.mass)
 
-    mtt = ak.flatten(
-        (
-            region_muons_4vec
-            + region_fatjets_4vec
-            + region_jets_4vec
-            + region_met_4vec
-        ).mass
-    )
-
-    return mtt
-
-import awkward as ak
-import numpy as np
 
 def solve_neutrino_pz(lepton, met, mW=80.4):
     """
@@ -108,7 +104,6 @@ def solve_neutrino_pz(lepton, met, mW=80.4):
     C = (mu ** 2) * pt_l_sq
     discriminant = A - B + C
 
-    print(discriminant)
     sqrt_discriminant = ak.where(discriminant >= 0,
                                   np.sqrt(discriminant),
                                   np.sqrt(-discriminant) * 1j)
@@ -152,9 +147,12 @@ def build_leptonic_tops(muon, met, lepjet, pz1, pz2):
     lep_top1 = muon + lepjet + nu1
     lep_top2 = muon + lepjet + nu2
 
+    lep_top1_masked = ak.mask(lep_top1, two_real)
+    lep_top2_masked = ak.mask(lep_top2, two_real)
+
     lep_top_candidates = ak.where(
         ak.firsts(two_real, axis=1),
-        ak.concatenate([lep_top1, lep_top2], axis=1),
+        ak.concatenate([lep_top1_masked, lep_top2_masked], axis=1),
         lep_top1
     )
     return lep_top_candidates
@@ -431,7 +429,6 @@ def ttbar_reco(
     # ============================================================
     best_idx_fj = ak.argmin(chi2_fj, axis=1, keepdims=True)
     best_idx_nofj = ak.argmin(chi2_nofj, axis=1, keepdims=True)
-    print(best_idx_nofj.type.show())
 
     # Use chi2 to select best pairing
     lep_top_fj_best = lep_top_fj[best_idx_fj]

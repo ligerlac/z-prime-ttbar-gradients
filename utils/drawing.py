@@ -16,6 +16,8 @@ class Draw:
     ):
         output_dir = Path("plots")
         self.output_dir = output_dir
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True, exist_ok=True)
         self.interactive = interactive
         self.process_color_dict = dict()
         self.model_color_dict = dict()
