@@ -63,7 +63,7 @@ def construct_fileset(n_files_max_per_sample, preprocessor="uproot"):
             # n_max_per_sample has no effect, either.
             # Hardcoding the glob path for data here makes it at least obvious.
             if process == "data":
-                process_root_path = "root://eospublic.cern.ch//eos/opendata/cms/Run2016?/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/"
+                process_root_path = "root://eospublic.cern.ch//eos/opendata/cms/Run2016*/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1"
             else:
                 file_list = file_info[process][variation]["files"]
                 a_file = file_list[0]
