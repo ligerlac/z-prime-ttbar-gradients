@@ -105,6 +105,9 @@ def main(args):
         "PuppiMET_pt",
         "PuppiMET_pt",
         "PuppiMET_phi",
+        "event",
+        "run",
+        "luminosityBlock",
     ]
 
     if args.is_mc:

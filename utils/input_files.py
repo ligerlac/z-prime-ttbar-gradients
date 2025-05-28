@@ -27,6 +27,7 @@ def construct_fileset(n_files_max_per_sample, preprocessor="uproot"):
     # process into "fileset" summarizing all info
     fileset = {}
     for process in file_info.keys():
+
         # if process == "data":   continue  # skip data
 
         for variation in file_info[process].keys():
@@ -57,9 +58,16 @@ def construct_fileset(n_files_max_per_sample, preprocessor="uproot"):
                 }
             )
         if preprocessor == "uproot":
-            file_list = file_info[process][variation]["files"]
-            a_file = file_list[0]
-            process_root_path = "/".join(a_file["path"].split("/")[:-2])
+            # this is dangerous, assumes all files are in the same directory structure
+            # also, removing individual files from the .json will have no effect.
+            # n_max_per_sample has no effect, either.
+            # Hardcoding the glob path for data here makes it at least obvious.
+            if process == "data":
+                process_root_path = "root://eospublic.cern.ch//eos/opendata/cms/Run2016*/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1"
+            else:
+                file_list = file_info[process][variation]["files"]
+                a_file = file_list[0]
+                process_root_path = "/".join(a_file["path"].split("/")[:-2])
             process_all_files = f"{process_root_path}/*/*.root"
             nevts_total = sum([f["nevts"] for f in file_list])
             nevts_wt_total = sum([f["nevts_wt"] for f in file_list])

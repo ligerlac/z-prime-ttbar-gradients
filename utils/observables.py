@@ -152,9 +152,12 @@ def build_leptonic_tops(muon, met, lepjet, pz1, pz2):
     lep_top1 = muon + lepjet + nu1
     lep_top2 = muon + lepjet + nu2
 
+    lep_top1_masked = ak.mask(lep_top1, two_real)
+    lep_top2_masked = ak.mask(lep_top2, two_real)
+
     lep_top_candidates = ak.where(
         ak.firsts(two_real, axis=1),
-        ak.concatenate([lep_top1, lep_top2], axis=1),
+        ak.concatenate([lep_top1_masked, lep_top2_masked], axis=1),
         lep_top1
     )
     return lep_top_candidates
