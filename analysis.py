@@ -338,14 +338,9 @@ class Analysis:
 
 
     def compute_ghost_observables(
-        self, obj_copies: dict[str, ak.Array], tracing: bool = False
+        self, obj_copies: dict[str, ak.Array],
     ) -> dict[str, ak.Array]:
         for ghost in self.config.ghost_observables:
-
-            # do not compute if this function is being traced by JAX
-            # and observable function is not compatible with JAX
-            if not ghost.works_with_jax and tracing:
-                continue
             logger.info(f"Computing ghost observables {ghost.names}")
             ghost_args = self._get_function_arguments(ghost["use"], obj_copies)
             ghost_outputs = ghost["function"](*ghost_args)
@@ -458,10 +453,8 @@ class NonDiffAnalysis(Analysis):
         variation: str,
         xsec_weight: float,
         analysis: str,
-        met_cut: float,
         event_syst: Optional[dict[str, Any]] = None,
         direction: Literal["up", "down", "nominal"] = "nominal",
-        tracing: bool = False,
     ) -> Optional[ak.Array]:
         """
         Apply physics selections and fill histograms.
@@ -516,7 +509,6 @@ class NonDiffAnalysis(Analysis):
                     packed_selection.all(packed_selection.names[-1])
                 )
 
-            mask = ak.to_backend(mask, "jax" if tracing else "cpu")
             if process == "data":
                 mask = mask & lumi_mask(
                     self.config.general.lumifile,
@@ -535,102 +527,64 @@ class NonDiffAnalysis(Analysis):
                                 collection: variable[mask]
                                 for collection, variable in object_copies.items()
                             }
-            if tracing:
 
-                region_muons = object_copies_channel["Muon"]
-                region_jets = object_copies_channel["Jet"]
-                region_met = object_copies_channel["PuppiMET"]
-                region_lep_ht = region_muons.pt + region_met.pt
+            soft_mask = 1.0
+            if (
+                soft_selection_funciton := channel[
+                    "soft_selection_function"
+                ]
+            ) is not None:
+                soft_selection_args = self._get_function_arguments(
+                    channel["soft_selection_use"], object_copies_channel
+                )
+                soft_selection_dict = soft_selection_funciton(
+                    *soft_selection_args
+                )
 
-                soft_cuts = {
-                    "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1)
-                    > 0,
-                    # "met_cut": met.pt > 50,
-                    # "met_cut": 0.5*jnp.tanh((ak.to_jax(region_met.pt)-50)/100)+0.5,
-                    "met_cut": jax.nn.sigmoid(
-                        (ak.to_jax(region_met.pt) - met_cut) / met_cut
-                    ),
-                    "lep_ht_cut": ak.fill_none(
-                        ak.firsts(region_lep_ht) > 150, False
-                    ),
+                soft_mask = reduce(
+                    operator.and_, soft_selection_dict.values()
+                )
+
+            if not isinstance(soft_mask, float):
+                mask = mask[mask] & soft_mask
+                object_copies_channel = {
+                    collection: variable[mask]
+                    for collection, variable in object_copies_channel.items()
                 }
-
-                # Convert selections to JAX arrays with float dtype
-                soft_cuts = {
-                    k: jnp.array(ak.to_jax(v), dtype=float)
-                    for k, v in soft_cuts.items()
-                }
-                weights = jnp.prod(jnp.stack(list(soft_cuts.values())), axis=0)
-                logger.debug(f"JAX weights:: {weights} ")
-
-            else:
-                soft_mask = 1.0
-                if (
-                    soft_selection_funciton := channel[
-                        "soft_selection_function"
-                    ]
-                ) is not None:
-                    soft_selection_args = self._get_function_arguments(
-                        channel["soft_selection_use"], object_copies_channel
-                    )
-                    soft_selection_dict = soft_selection_funciton(
-                        *soft_selection_args
-                    )
-
-                    soft_mask = reduce(
-                        operator.and_, soft_selection_dict.values()
-                    )
-
-                if not isinstance(soft_mask, float):
-                    mask = mask[mask] & soft_mask
-                    object_copies_channel = {
-                        collection: variable[mask]
-                        for collection, variable in object_copies_channel.items()
-                    }
-
-                weights = 1.0
 
             if process != "data":
-                weights *= (
+                weights = (
                     events[mask].genWeight
                     * xsec_weight
                     / abs(events[mask].genWeight)
                 )
             else:
-                weights *= np.ones(ak.sum(mask))
+                weights = np.ones(ak.sum(mask))
 
             if event_syst and process != "data":
                 weights = self.apply_event_weight_correction(
                     weights, event_syst, direction, object_copies_channel
                 )
-            if not tracing:
-                logger.info(f"Number of weighted events in {chname}: {ak.sum(weights):.2f}")
-                logger.info(f"Number of raw events in {chname}: {ak.sum(mask)}")
-                for observable in channel["observables"]:
-                    # do not compute if this function is being traced by JAX
-                    # and observable function is not compatible with JAX
-                    if not observable.works_with_jax and tracing:
-                        return ak.sum(weights)
-                    logger.info(f"Computing observable {observable['name']}")
-                    observable_name = observable["name"]
-                    observable_args = self._get_function_arguments(
-                        observable["use"], object_copies_channel
-                    )
-                    observable_vals = observable["function"](*observable_args)
-                    self.nD_hists_per_region[chname][observable_name].fill(
-                        observable=observable_vals,
-                        process=process,
-                        variation=variation,
-                        weight=weights,
-                    )
-            else:
-                return ak.sum(
-                    weights
-                )  # return some dummy value to test auto-diff
+
+            logger.info(f"Number of weighted events in {chname}: {ak.sum(weights):.2f}")
+            logger.info(f"Number of raw events in {chname}: {ak.sum(mask)}")
+            for observable in channel["observables"]:
+                logger.info(f"Computing observable {observable['name']}")
+                observable_name = observable["name"]
+                observable_args = self._get_function_arguments(
+                    observable["use"], object_copies_channel
+                )
+                observable_vals = observable["function"](*observable_args)
+                self.nD_hists_per_region[chname][observable_name].fill(
+                    observable=observable_vals,
+                    process=process,
+                    variation=variation,
+                    weight=weights,
+                )
 
 
     def process(
-        self, events: ak.Array, metadata: dict[str, Any], tracing: bool = False
+        self, events: ak.Array, metadata: dict[str, Any],
     ) -> None:
         """
         Run the full analysis logic on a batch of events.
@@ -684,7 +638,7 @@ class NonDiffAnalysis(Analysis):
         }
         # apply ghost observables
         obj_copies = self.compute_ghost_observables(
-            obj_copies, tracing=tracing
+            obj_copies,
         )
 
         # apply event-level corrections
@@ -693,29 +647,6 @@ class NonDiffAnalysis(Analysis):
             obj_copies, self.corrections, direction="nominal"
         )
         # apply selection and fill histograms
-        # JAX tracing with no filling for autodiff
-        events = ak.to_backend(events, "jax")
-        obj_copies_corrected = {
-            obj: ak.to_backend(var, "jax")
-            for obj, var in obj_copies_corrected.items()
-        }
-        apply_selection_and_fill_grad = jax.value_and_grad(
-            self.histogramming, argnums=6, has_aux=False
-        )
-        val, grad = apply_selection_and_fill_grad(
-            obj_copies_corrected,
-            events,
-            process,
-            variation,
-            xsec_weight,
-            analysis,
-            50.0,
-            tracing=True,
-        )
-        logger.info(f"val: {val}, grad: {grad}")
-
-        # convert to CPU for actual histogram filling
-        events = ak.to_backend(events, "cpu")
         obj_copies_corrected = {
             obj: ak.to_backend(var, "cpu")
             for obj, var in obj_copies_corrected.items()
@@ -727,8 +658,6 @@ class NonDiffAnalysis(Analysis):
             "nominal",
             xsec_weight,
             analysis,
-            50.0,
-            tracing=False,
         )
 
         # Systematic variations
@@ -757,10 +686,8 @@ class NonDiffAnalysis(Analysis):
                     varname,
                     xsec_weight,
                     analysis,
-                    50.0,
                     event_syst=syst,
                     direction=direction,
-                    tracing=False,
                 )
 
 
