@@ -3,7 +3,8 @@ import numpy as np
 from utils.cuts import (
     Zprime_baseline,
     Zprime_hardcuts,
-    Zprime_softcuts_nonjax,
+    Zprime_softcuts_nonjax_paper,
+    Zprime_softcuts_nonjax_workshop,
     Zprime_softcuts_CR1,
     Zprime_softcuts_CR2,
     Zprime_softcuts_SR_notag,
@@ -17,6 +18,7 @@ from utils.observables import (
     get_deltaR_times_pt,
     get_leading_jet_btag_score,
     get_leading_jet_mass,
+    get_mtt,
     get_mva_scores,
     get_mva_vars,
     get_n_jet,
@@ -30,16 +32,16 @@ from utils.observables import (
 )
 from utils.systematics import jet_pt_resolution, jet_pt_scale
 LIST_OF_VARS = [
-    {
-                    "name": "mva_score",
-                    "binning": "-1,1,50",
-                    "label": r"NN score",
-                    "function": get_mva_scores,
-                    "use": [
-                        ("mva", None),
-                    ],
-                    "works_with_jax": False,
-                },
+                # {
+                #     "name": "mva_score",
+                #     "binning": "-1,1,50",
+                #     "label": r"NN score",
+                #     "function": get_mva_scores,
+                #     "use": [
+                #         ("mva", None),
+                #     ],
+                #     "works_with_jax": False,
+                # },
                 # {
                 #     "name": "n_jet",
                 #     "label": r"N_{\mathrm{jets}}",
@@ -120,23 +122,36 @@ LIST_OF_VARS = [
                 #     "use": [("mva", None)],
                 #     "works_with_jax": False,
                 # },
+                # {
+                #     "name": "ttbar_chi2",
+                #     "binning": "0,200,50",
+                #     "label": r"\chi^2(t\bar{t})",
+                #     "function": chi2_from_ttbar_reco,
+                #     "use": [
+                #         ("ttbar_reco", None),
+                #     ],
+                #     "works_with_jax": True,
+                # },
+                # {
+                #     "name": "mtt_chi2",
+                #     "binning": "0,3000,50",
+                #     "label": r"\chi^2(t\bar{t})",
+                #     "function": mtt_from_ttbar_reco,
+                #     "use": [
+                #         ("ttbar_reco", None),
+                #     ],
+                #     "works_with_jax": True,
+                # },
                 {
-                    "name": "ttbar_chi2",
-                    "binning": "0,200,50",
-                    "label": r"\chi^2(t\bar{t})",
-                    "function": chi2_from_ttbar_reco,
-                    "use": [
-                        ("ttbar_reco", None),
-                    ],
-                    "works_with_jax": True,
-                },
-                {
-                    "name": "mtt_chi2",
+                    "name": "workshop_mtt",
                     "binning": "0,3000,50",
-                    "label": r"\chi^2(t\bar{t})",
-                    "function": mtt_from_ttbar_reco,
+                    "label": r"M(t\bar{t}) [GeV]",
+                    "function": get_mtt,
                     "use": [
-                        ("ttbar_reco", None),
+                        ("Muon", None),
+                        ("Jet", None),
+                        ("FatJet", None),
+                        ("PuppiMET", None),
                     ],
                     "works_with_jax": True,
                 },
@@ -164,6 +179,27 @@ config = {
             ("PuppiMET", None),
         ],
     },
+    "good_object_masks": [
+        {
+            "object": "Muon",
+            "function": lambda muons:   ((muons.pt > 55)
+                                        & (abs(muons.eta) < 2.4)
+                                        & (muons.tightId)
+                                        & (muons.miniIsoId > 1)),
+            "use": [("Muon", None)],
+        },
+        {
+            "object": "Jet",
+            "function": lambda jets: ((jets.jetId >= 4) & (jets.btagDeepB > 0.5)),
+            "use": [("Jet", None)],
+        },
+        {
+            "object": "FatJet",
+            "function": lambda fatjets: ((fatjets.pt > 500)
+                                         & (fatjets.particleNet_TvsQCD > 0.5)),
+            "use": [("FatJet", None)],
+        },
+    ],
     "preprocess": {
         "branches": {
             "Muon": [
@@ -204,14 +240,14 @@ config = {
     "statistics": {"cabinetry_config": "cabinetry/cabinetry_config.yaml"},
     "channels": [
         {
-            "name": "Zprime_channel",
-            "fit_observable": "mtt_chi2",
+            "name": "CMS_WORKSHOP",
+            "fit_observable": "workshop_mtt",
             "observables": LIST_OF_VARS,
             "selection_function": Zprime_hardcuts,
             "selection_use": [
                 ("Muon", None),
             ],
-            "soft_selection_function": Zprime_softcuts_nonjax,
+            "soft_selection_function": Zprime_softcuts_nonjax_workshop,
             "soft_selection_use": [
                 ("Muon", None),
                 ("Jet", None),
@@ -219,134 +255,62 @@ config = {
                 ("PuppiMET", None),
             ],
         },
-        {
-            "name": "baseline",
-            "fit_observable": "mva_score",
-            "observables": LIST_OF_VARS,
-            "selection_function": Zprime_baseline,
-            "selection_use": [
-                ("Muon", None),
-                ("Jet", None),
-                ("FatJet", None),
-                ("PuppiMET", None),
-            ],
-        },
-        {
-            "name": "SR_notag",
-            "fit_observable": "mva_score",
-            "observables": LIST_OF_VARS,
-            "selection_function": Zprime_hardcuts,
-            "selection_use": [
-                ("Muon", None),
-            ],
-            "soft_selection_function": Zprime_softcuts_SR_notag,
-            "soft_selection_use": [
-                ("Muon", None),
-                ("Jet", None),
-                ("FatJet", None),
-                ("PuppiMET", None),
-                ("ttbar_reco", None),
-                ("mva", None),
-            ],
-        },
-        {
-            "name": "SR_tag",
-            "fit_observable": "mva_score",
-            "observables": LIST_OF_VARS,
-            "selection_function": Zprime_hardcuts,
-            "selection_use": [
-                ("Muon", None),
-            ],
-            "soft_selection_function": Zprime_softcuts_SR_tag,
-            "soft_selection_use": [
-                ("Muon", None),
-                ("Jet", None),
-                ("FatJet", None),
-                ("PuppiMET", None),
-                ("ttbar_reco", None),
-                ("mva", None),
-            ],
-        },
-        {
-            "name": "CR1",
-            "fit_observable": "mva_score",
-            "observables": LIST_OF_VARS,
-            "selection_function": Zprime_hardcuts,
-            "selection_use": [
-                ("Muon", None),
-            ],
-            "soft_selection_function": Zprime_softcuts_CR1,
-            "soft_selection_use": [
-                ("Muon", None),
-                ("Jet", None),
-                ("FatJet", None),
-                ("PuppiMET", None),
-                ("ttbar_reco", None),
-                ("mva", None),
-            ],
-        },
-        {
-            "name": "CR2",
-            "fit_observable": "mva_score",
-            "observables": LIST_OF_VARS,
-            "selection_function": Zprime_hardcuts,
-            "selection_use": [
-                ("Muon", None),
-            ],
-            "soft_selection_function": Zprime_softcuts_CR2,
-            "soft_selection_use": [
-                ("Muon", None),
-                ("Jet", None),
-                ("FatJet", None),
-                ("PuppiMET", None),
-                ("ttbar_reco", None),
-                ("mva", None),
-            ],
-        },
+        # {
+        #     "name": "baseline",
+        #     "fit_observable": "mtt_chi2",
+        #     "observables": LIST_OF_VARS,
+        #     "selection_function": Zprime_baseline,
+        #     "selection_use": [
+        #         ("Muon", None),
+        #         ("Jet", None),
+        #         ("FatJet", None),
+        #         ("PuppiMET", None),
+        #     ],
+        # },
     ],
     "ghost_observables": [
-        {
-            "names": ("chi2", "mtt"),
-            "collections": "ttbar_reco",
-            "function": ttbar_reco,
-            "use": [
-                ("Muon", None),
-                ("Jet", None),
-                ("FatJet", None),
-                ("PuppiMET", None),
-            ],
-            "works_with_jax": False,
-        },
-        {
-            "names": "nn_score",
-            "collections": "mva",
-            "function": compute_mva_scores,
-            "use": [
-                ("Muon", None),
-                ("Jet", None),
-            ],
-        },
-        {
-            "names": (
-                "n_jet",
-                "leading_jet_mass",
-                "subleading_jet_mass",
-                "st",
-                "leading_jet_btag_score",
-                "subleading_jet_btag_score",
-                "S_zz",
-                "deltaR",
-                "pt_rel",
-                "deltaR_times_pt",
-            ),
-            "collections": "mva",
-            "function": get_mva_vars,
-            "use": [
-                ("Muon", None),
-                ("Jet", None),
-            ],
-            "works_with_jax": False,
-        },
+        # {
+        #     "names": ("chi2", "mtt"),
+        #     "collections": "ttbar_reco",
+        #     "function": ttbar_reco,
+        #     "use": [
+        #         ("Muon", None),
+        #         ("Jet", None),
+        #         ("FatJet", None),
+        #         ("PuppiMET", None),
+        #     ],
+        #     "works_with_jax": False,
+        # },
+        # {
+        #     "names": "nn_score",
+        #     "collections": "mva",
+        #     "function": compute_mva_scores,
+        #     "use": [
+        #         ("Muon", None),
+        #         ("Jet", None),
+        #     ],
+        # },
+        # {
+        #     "names": (
+        #         "n_jet",
+        #         "leading_jet_mass",
+        #         "subleading_jet_mass",
+        #         "st",
+        #         "leading_jet_btag_score",
+        #         "subleading_jet_btag_score",
+        #         "S_zz",
+        #         "deltaR",
+        #         "pt_rel",
+        #         "deltaR_times_pt",
+        #     ),
+        #     "collections": "mva",
+        #     "function": get_mva_vars,
+        #     "use": [
+        #         ("Muon", None),
+        #         ("Jet", None),
+        #     ],
+        #     "works_with_jax": False,
+        # },
     ],
     "corrections": [
         {

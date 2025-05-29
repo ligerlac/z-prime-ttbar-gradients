@@ -39,6 +39,33 @@ class BaselineSelectionConfig(SubscriptableModel):
         ),
     ]
 
+class GoodObjectMasksConfig(SubscriptableModel):
+    object: Annotated[
+        str, Field(description="Name of the object to compute masks for")
+    ]
+    function: Annotated[
+        Callable,
+        Field(description="Function to compute good object masks. \
+              Will be applied to the object in block key.")
+    ]
+    use: Annotated[
+        List[ObjVar],
+        Field(
+            description="(object, variable) pairs for the good object mask function.",
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def validate_fields(self) -> "GoodObjectMasksConfig":
+        # check that object is one of Muon, Jet or FatJet
+        if self.object not in ["Muon", "Jet", "FatJet"]:
+            raise ValueError(
+                f"Invalid object '{self.object}'. Must be one of 'Muon', \
+                    'Jet', or 'FatJet'."
+            )
+
+        return self
+
 
 # ------------------------
 # General configuration
@@ -499,7 +526,14 @@ class Config(SubscriptableModel):
             "channel-specific logic",
         ),
     ]
-
+    good_object_masks: Annotated[
+        Optional[List[GoodObjectMasksConfig]],
+        Field(
+            default=[],
+            description="Good object masks to apply before channel selection. "
+            "These are applied to the object in the 'object' field"
+        ),
+    ]
     channels: Annotated[
         List[ChannelConfig], Field(description="List of analysis channels")
     ]
@@ -578,6 +612,15 @@ class Config(SubscriptableModel):
                         f"Duplicate (collection, name) pair: {pair}"
                     )
                 seen_ghost_obs.add(pair)
+
+        # check for duplicate object names in object masks
+        seen_objects = set()
+        for mask in self.good_object_masks:
+            if mask.object in seen_objects:
+                raise ValueError(
+                    f"Duplicate object '{mask.object}' found in good object masks."
+                )
+            seen_objects.add(mask.object)
 
         return self
 

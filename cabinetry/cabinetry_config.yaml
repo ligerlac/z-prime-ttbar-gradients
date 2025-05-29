@@ -2,12 +2,12 @@ General:
   Measurement: "CMS_Zprime"
   POI: "zprime_norm"
   HistogramFolder: "./cabinetry/cabinetry_histograms/"
-  InputPath: "output/histograms/histograms.root:{RegionPath}_{SamplePath}{VariationPath}"
+  InputPath: "output/histograms/histograms.root:{RegionPath}__{SamplePath}{VariationPath}"
   VariationPath: ""
 
 Regions:
-  - Name: "Zprime_channel"
-    RegionPath: "Zprime_channel"
+  - Name: "CMS_WORKSHOP"
+    RegionPath: "CMS_WORKSHOP__workshop_mtt"
     Variable: "$m_{tt}$ [GeV]"
     #Binning: [0, 3000, 30]
 
@@ -36,16 +36,16 @@ Systematics:
   - Name: "MU_ID_SF"
     Type: "NormPlusShape"
     Up:
-      VariationPath: "_muon_id_sf_up"
+      VariationPath: "__muon_id_sf_up"
     Down:
-      VariationPath: "_muon_id_sf_down"
+      VariationPath: "__muon_id_sf_down"
 
   - Name: "PU_weight"
     Type: "NormPlusShape"
     Up:
-      VariationPath: "_pu_weight_up"
+      VariationPath: "__pu_weight_up"
     Down:
-      VariationPath: "_pu_weight_down"
+      VariationPath: "__pu_weight_down"
 
 NormFactors:
   - Name: "zprime_norm"
@@ -53,7 +53,7 @@ NormFactors:
     Nominal: 1.0
     Bounds: [0, 10]
 
-  - Name: "ttbar_norm"
-    Samples: ["ttbar_semilep","ttbar_had","ttbar_lep"]
-    Nominal: 1.0
-    Bounds: [0, 10]
+  # - Name: "ttbar_norm"
+  #   Samples: ["ttbar_semilep","ttbar_had","ttbar_lep"]
+  #   Nominal: 1.0
+  #   Bounds: [0, 10]

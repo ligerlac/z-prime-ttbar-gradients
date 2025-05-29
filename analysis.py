@@ -38,7 +38,7 @@ from utils.cuts import lumi_mask
 from utils.input_files import construct_fileset
 from utils.output_files import save_histograms, pkl_histograms, unpkl_histograms
 from utils.preproc import pre_process_dak, pre_process_uproot
-from utils.schema import Config, load_config_with_restricted_cli
+from utils.schema import Config, load_config_with_restricted_cli, GoodObjectMasksConfig
 from utils.stats import get_cabinetry_rebinning_router
 
 
@@ -182,34 +182,24 @@ class ZprimeAnalysis:
         return {field: events[field] for field in events.fields}
 
     def get_good_objects(
-        self, object_copies: dict[str, ak.Array]
-    ) -> tuple[ak.Array, ak.Array, ak.Array, ak.Array]:
+        self, object_copies: dict[str, ak.Array],
+        masks: list[GoodObjectMasksConfig] = []
+    ) -> dict[str, ak.Array]:
 
-        muons, jets, fatjets, met = (
-            object_copies["Muon"],
-            object_copies["Jet"],
-            object_copies["FatJet"],
-            object_copies["PuppiMET"],
-        )
-        muons = muons[
-            (muons.pt > 55)
-            & (abs(muons.eta) < 2.4)
-            & muons.tightId
-            & (muons.miniIsoId > 1)
-        ]
-        jets = jets[
-            (jets.pt > 30)
-            & (abs(jets.eta) < 2.4)
-            & jets.isTightLeptonVeto
-            # & (jets.jetId >= 4)
-        ]
-        fatjets = fatjets[
-            (fatjets.pt > 200)
-            & (abs(fatjets.eta) < 2.4)
-            #& (fatjets.particleNet_TvsQCD > 0.5)
-        ]
+        good_objects = {}
+        for obj_mask in masks:
+            mask_args = self._get_function_arguments(
+                obj_mask.use, object_copies
+            )
+            mask = obj_mask.function(*mask_args)
+            if not isinstance(mask, ak.Array):
+                raise TypeError(
+                    f"Expected mask to be an awkward array, got {type(mask)}"
+                )
 
-        return muons, jets, fatjets, met
+            good_objects[obj_mask.object] = object_copies[obj_mask.object][mask]
+
+        return good_objects
 
     def apply_correctionlib(
         self,
@@ -475,18 +465,17 @@ class ZprimeAnalysis:
                 )
                 continue
 
+            object_copies_channel = {
+                                collection: variable[mask]
+                                for collection, variable in object_copies.items()
+                            }
             if tracing:
-
-                object_copies_channel = {
-                    collection: variable[mask]
-                    for collection, variable in object_copies.items()
-                }
 
                 region_muons = object_copies_channel["Muon"]
                 region_jets = object_copies_channel["Jet"]
                 region_met = object_copies_channel["PuppiMET"]
-
                 region_lep_ht = region_muons.pt + region_met.pt
+
                 soft_cuts = {
                     "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1)
                     > 0,
@@ -509,16 +498,6 @@ class ZprimeAnalysis:
                 logger.debug(f"JAX weights:: {weights} ")
 
             else:
-                object_copies_channel = {
-                    collection: variable[mask]
-                    for collection, variable in object_copies.items()
-                }
-
-                region_muons = object_copies_channel["Muon"]
-                region_jets = object_copies_channel["Jet"]
-                region_met = object_copies_channel["PuppiMET"]
-                region_lep_ht = region_muons.pt + region_met.pt
-
                 soft_mask = 1.0
                 if (
                     soft_selection_funciton := channel[
@@ -558,30 +537,30 @@ class ZprimeAnalysis:
                 weights = self.apply_event_weight_correction(
                     weights, event_syst, direction, object_copies_channel
                 )
-
-            logger.info(f"Number of weighted events in {chname}: {ak.sum(mask)}")
-            for observable in channel["observables"]:
-                # do not compute if this function is being traced by JAX
-                # and observable function is not compatible with JAX
-                if not observable.works_with_jax and tracing:
-                    return ak.sum(weights)
-                logger.info(f"Computing observable {observable['name']}")
-                observable_name = observable["name"]
-                observable_args = self._get_function_arguments(
-                    observable["use"], object_copies_channel
-                )
-                observable_vals = observable["function"](*observable_args)
-                if not tracing:
+            if not tracing:
+                logger.info(f"Number of weighted events in {chname}: {ak.sum(weights):.2f}")
+                logger.info(f"Number of raw events in {chname}: {ak.sum(mask)}")
+                for observable in channel["observables"]:
+                    # do not compute if this function is being traced by JAX
+                    # and observable function is not compatible with JAX
+                    if not observable.works_with_jax and tracing:
+                        return ak.sum(weights)
+                    logger.info(f"Computing observable {observable['name']}")
+                    observable_name = observable["name"]
+                    observable_args = self._get_function_arguments(
+                        observable["use"], object_copies_channel
+                    )
+                    observable_vals = observable["function"](*observable_args)
                     self.nD_hists_per_region[chname][observable_name].fill(
                         observable=observable_vals,
                         process=process,
                         variation=variation,
                         weight=weights,
                     )
-                else:
-                    return ak.sum(
-                        weights
-                    )  # return some dummy value to test auto-diff
+            else:
+                return ak.sum(
+                    weights
+                )  # return some dummy value to test auto-diff
 
     def run_fit(
         self, cabinetry_config: dict[str, Any]
@@ -695,19 +674,20 @@ class ZprimeAnalysis:
         logger.debug(f"Processing {process} with variation {variation}")
         xsec = metadata["xsec"]
         n_gen = metadata["nevts"]
+
         lumi = self.config["general"]["lumi"]
         xsec_weight = (xsec * lumi / n_gen) if process != "data" else 1.0
 
         # Nominal processing
         obj_copies = self.get_object_copies(events)
-        # # filter objects
-        muons, jets, fatjets, met = self.get_good_objects(obj_copies)
-        (
-            obj_copies["Muon"],
-            obj_copies["Jet"],
-            obj_copies["FatJet"],
-            obj_copies["PuppiMET"],
-        ) = (muons, jets, fatjets, met)
+        # Filter objects
+        # Get object masks from configuration:
+        if (obj_masks := self.config.good_object_masks) != []:
+            filtered_objs = self.get_good_objects(obj_copies, obj_masks)
+            for obj, filtered in filtered_objs.items():
+                if obj not in obj_copies:
+                    raise KeyError(f"Object {obj} not found in object_copies")
+                obj_copies[obj] = filtered
 
         # Apply baseline selection
         baseline_args = self._get_function_arguments(
@@ -776,14 +756,14 @@ class ZprimeAnalysis:
             if syst["name"] == "nominal":
                 continue
             for direction in ["up", "down"]:
-                # filter objects
-                muons, jets, fatjets, met = self.get_good_objects(obj_copies)
-                (
-                    obj_copies["Muon"],
-                    obj_copies["Jet"],
-                    obj_copies["FatJet"],
-                    obj_copies["PuppiMET"],
-                ) = (muons, jets, fatjets, met)
+                # Filter objects
+                # Get object masks from configuration:
+                if (obj_masks := self.config.good_object_masks) != []:
+                    filtered_objs = self.get_good_objects(obj_copies, obj_masks)
+                    for obj, filtered in filtered_objs.items():
+                        if obj not in obj_copies:
+                            raise KeyError(f"Object {obj} not found in object_copies")
+                        obj_copies[obj] = filtered
 
                 # apply corrections
                 obj_copies_corrected = self.apply_object_corrections(
