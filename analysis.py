@@ -451,7 +451,6 @@ class ZprimeAnalysis:
                 )
 
             mask = ak.to_backend(mask, "jax" if tracing else "cpu")
-            print(mask)
             if process == "data":
                 mask = mask & lumi_mask(
                     self.config.general.lumifile,
@@ -466,18 +465,17 @@ class ZprimeAnalysis:
                 )
                 continue
 
+            object_copies_channel = {
+                                collection: variable[mask]
+                                for collection, variable in object_copies.items()
+                            }
             if tracing:
-
-                object_copies_channel = {
-                    collection: variable[mask]
-                    for collection, variable in object_copies.items()
-                }
 
                 region_muons = object_copies_channel["Muon"]
                 region_jets = object_copies_channel["Jet"]
                 region_met = object_copies_channel["PuppiMET"]
-
                 region_lep_ht = region_muons.pt + region_met.pt
+
                 soft_cuts = {
                     "atleast_1b": ak.sum(region_jets.btagDeepB > 0.5, axis=1)
                     > 0,
@@ -500,16 +498,6 @@ class ZprimeAnalysis:
                 logger.debug(f"JAX weights:: {weights} ")
 
             else:
-                object_copies_channel = {
-                    collection: variable[mask]
-                    for collection, variable in object_copies.items()
-                }
-
-                region_muons = object_copies_channel["Muon"]
-                region_jets = object_copies_channel["Jet"]
-                region_met = object_copies_channel["PuppiMET"]
-                region_lep_ht = region_muons.pt + region_met.pt
-
                 soft_mask = 1.0
                 if (
                     soft_selection_funciton := channel[
@@ -563,7 +551,6 @@ class ZprimeAnalysis:
                         observable["use"], object_copies_channel
                     )
                     observable_vals = observable["function"](*observable_args)
-                    print(weights)
                     self.nD_hists_per_region[chname][observable_name].fill(
                         observable=observable_vals,
                         process=process,
@@ -687,6 +674,7 @@ class ZprimeAnalysis:
         logger.debug(f"Processing {process} with variation {variation}")
         xsec = metadata["xsec"]
         n_gen = metadata["nevts"]
+
         lumi = self.config["general"]["lumi"]
         xsec_weight = (xsec * lumi / n_gen) if process != "data" else 1.0
 
@@ -699,7 +687,6 @@ class ZprimeAnalysis:
             for obj, filtered in filtered_objs.items():
                 if obj not in obj_copies:
                     raise KeyError(f"Object {obj} not found in object_copies")
-                print(obj_copies[obj], filtered)
                 obj_copies[obj] = filtered
 
         # Apply baseline selection

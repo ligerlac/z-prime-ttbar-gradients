@@ -37,7 +37,6 @@ def construct_fileset(n_files_max_per_sample, preprocessor="uproot"):
                 ]  # use partial set of samples
 
             file_paths = {f["path"]: "Events" for f in file_list}
-
             nevts_total = sum([f["nevts"] for f in file_list])
             nevts_wt_total = sum([f["nevts_wt"] for f in file_list])
 

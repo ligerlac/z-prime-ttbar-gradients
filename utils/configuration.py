@@ -190,7 +190,7 @@ config = {
         },
         {
             "object": "Jet",
-            "function": lambda jets: ((jets.jetId > 4) & (jets.btagDeepB > 0.5)),
+            "function": lambda jets: ((jets.jetId >= 4) & (jets.btagDeepB > 0.5)),
             "use": [("Jet", None)],
         },
         {

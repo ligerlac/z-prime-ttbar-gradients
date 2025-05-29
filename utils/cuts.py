@@ -94,7 +94,7 @@ def Zprime_baseline(muons, jets, fatjets, met):
     Select events based on the Zprime workshop selection criteria.
     """
     selections = PackedSelection(dtype="uint64")
-    selections.add("exactly_1mu", ak.num(muons) > -1)
+    selections.add("exactly_1mu", ak.num(muons) == 1)
     selections.add("atleast_2jets", ak.num(jets, axis=1) > 1)
     selections.add("atleast_1fj", ak.num(fatjets) > 0)
     selections.add(
@@ -161,28 +161,15 @@ def Zprime_softcuts_nonjax_workshop(muons, jets, fatjets, met):
     """
     # Leptonic HT
     lep_ht = muons.pt + met.pt
-
-    # Minimum deltaR between muon and any jet
-    muon_in_pair, jet_in_pair = ak.unzip(ak.cartesian([muons, jets]))
-    deltaR = muon_in_pair.deltaR(jet_in_pair)
-    min_deltaR = ak.min(deltaR, axis=1)
-
-    # pTrel
-    closest_jet_idx = ak.argmin(deltaR, axis=1, keepdims=True)
-    closest_jet = jet_in_pair[closest_jet_idx]
-    delta_angle = muons.deltaangle(closest_jet)
-    pt_rel = muons.p * np.sin(delta_angle)
-
     soft_cuts = {
-        "atleast_1b": ak.sum((jets.btagDeepB > 0.5) & (jets.jetId > 4), axis=1) > 0,
+        "atleast_1b": ak.sum((jets.btagDeepB > 0.5) & (jets.jetId >= 4), axis=1) > 0,
         "met_cut": met.pt > 50,
-        #"muon_ht": ak.sum(lep_ht > 150., axis=1) == 1, #ak.fill_none(ak.firsts(lep_ht) > 150, False),
+        "muon_ht": ak.sum(lep_ht > 150., axis=1) == 1, #ak.fill_none(ak.firsts(lep_ht) > 150, False),
         #"lepton_2d": ak.fill_none(ak.sum((min_deltaR > 0.4) | (pt_rel > 25.), axis=1) > 0, False),
         #"at_least_1_150gev_jet": ak.sum(jets.pt > 150, axis=1) > 0,
         #"at_least_1_50gev_jet": ak.sum(jets.pt > 50, axis=1) > 0,
         #"nomore_than_1_top_tagged_jet": ak.sum(fatjets.particleNet_TvsQCD > 0.5, axis=1) < 2,
         "exactly_1fatjet": ak.sum((fatjets.particleNet_TvsQCD > 0.5) & (fatjets.pt > 500.), axis=1) == 1,
-        #"x": True
     }
 
 
