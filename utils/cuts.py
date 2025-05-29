@@ -5,6 +5,9 @@ import numpy as np
 ak.jax.register_and_check()
 
 
+#===================
+# Selection good-run data
+#===================
 # https://github.com/cms-opendata-workshop/workshop2024-lesson-event-selection/blob/main/instructors/dpoa_workshop_utilities.py
 def lumi_mask(lumifile, run, lumiBlock, verbose=False):
 
@@ -64,51 +67,28 @@ def lumi_mask(lumifile, run, lumiBlock, verbose=False):
     return mask
 
 
-def Zprime_workshop_selection(muons, jets, fatjets, met, reco):
-    """
-    Select events based on the Zprime workshop selection criteria.
-    """
-    lep_ht = muons.pt + met.pt
-    selections = PackedSelection(dtype="uint64")
-    selections.add("exactly_1mu", ak.num(muons) == 1)
-    selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
-    selections.add("met_cut", met.pt > 50)
-    selections.add("lep_ht_cut", ak.firsts(lep_ht) > 150)
-    selections.add("exactly_1fatjet", ak.num(fatjets) == 1)
-    selections.add(
-        "Zprime_channel",
-        selections.all(
-            "exactly_1mu",
-            "atleast_1b",
-            "met_cut",
-            "lep_ht_cut",
-            "exactly_1fatjet",
-        ),
-    )
-
-    return selections
-
-
+#===================
+#Selection which is applied to all regions
+#===================
 def Zprime_baseline(muons, jets, fatjets, met):
     """
     Select events based on the Zprime workshop selection criteria.
     """
     selections = PackedSelection(dtype="uint64")
     selections.add("exactly_1mu", ak.num(muons) == 1)
-    selections.add("atleast_2jets", ak.num(jets, axis=1) > 1)
-    selections.add("atleast_1fj", ak.num(fatjets) > 0)
     selections.add(
         "baseline",
         selections.all(
             "exactly_1mu",
-            #"atleast_2jets",
-            #"atleast_1fj",
         ),
     )
 
     return selections
 
 
+#===================
+#Selection which will not be optimised from WS
+#===================
 def Zprime_hardcuts(muons,):
     """
     Select events based on the Zprime workshop selection criteria.
@@ -125,7 +105,32 @@ def Zprime_hardcuts(muons,):
     return selections
 
 
-def Zprime_softcuts_nonjax(muons, jets, fatjets, met):
+#===================
+# All selection from workshop
+#===================
+def Zprime_softcuts_nonjax_workshop(muons, jets, fatjets, met):
+    """
+    Select events based on the Zprime workshop selection criteria.
+    """
+    # Leptonic HT
+    lep_ht = muons.pt + met.pt
+    soft_cuts = {
+        "atleast_1b": ak.sum((jets.btagDeepB > 0.5) & (jets.jetId >= 4), axis=1) > 0,
+        "met_cut": met.pt > 50,
+        "muon_ht": ak.sum(lep_ht > 150., axis=1) == 1,
+        "exactly_1fatjet": ak.sum((fatjets.particleNet_TvsQCD > 0.5) & (fatjets.pt > 500.), axis=1) == 1,
+    }
+
+    return soft_cuts
+
+
+#===========================================================
+# Regions from paper
+#===========================================================
+#===================
+# Baseline selection
+#===================
+def Zprime_softcuts_nonjax_paper(muons, jets, fatjets, met):
     """
     Select events based on the Zprime workshop selection criteria.
     """
@@ -155,27 +160,9 @@ def Zprime_softcuts_nonjax(muons, jets, fatjets, met):
 
     return soft_cuts
 
-def Zprime_softcuts_nonjax_workshop(muons, jets, fatjets, met):
-    """
-    Select events based on the Zprime workshop selection criteria.
-    """
-    # Leptonic HT
-    lep_ht = muons.pt + met.pt
-    soft_cuts = {
-        "atleast_1b": ak.sum((jets.btagDeepB > 0.5) & (jets.jetId >= 4), axis=1) > 0,
-        "met_cut": met.pt > 50,
-        "muon_ht": ak.sum(lep_ht > 150., axis=1) == 1, #ak.fill_none(ak.firsts(lep_ht) > 150, False),
-        #"lepton_2d": ak.fill_none(ak.sum((min_deltaR > 0.4) | (pt_rel > 25.), axis=1) > 0, False),
-        #"at_least_1_150gev_jet": ak.sum(jets.pt > 150, axis=1) > 0,
-        #"at_least_1_50gev_jet": ak.sum(jets.pt > 50, axis=1) > 0,
-        #"nomore_than_1_top_tagged_jet": ak.sum(fatjets.particleNet_TvsQCD > 0.5, axis=1) < 2,
-        "exactly_1fatjet": ak.sum((fatjets.particleNet_TvsQCD > 0.5) & (fatjets.pt > 500.), axis=1) == 1,
-    }
-
-
-    return soft_cuts
-
-
+#===================
+# SR (1Tag) selection
+#===================
 def Zprime_softcuts_SR_tag(muons, jets, fatjets, met, ttbar_reco, mva):
     """
     Select events based on section 7.2 of
@@ -194,6 +181,9 @@ def Zprime_softcuts_SR_tag(muons, jets, fatjets, met, ttbar_reco, mva):
     return soft_cuts
 
 
+#===================
+# SR (0Tag) selection
+#===================
 def Zprime_softcuts_SR_notag(muons, jets, fatjets, met, ttbar_reco, mva):
     """
     Select events based on section 7.2 of
@@ -211,6 +201,10 @@ def Zprime_softcuts_SR_notag(muons, jets, fatjets, met, ttbar_reco, mva):
 
     return soft_cuts
 
+
+#===================
+# CR1 selection (wjets)
+#===================
 def Zprime_softcuts_CR1(muons, jets, fatjets, met, ttbar_reco, mva):
     """
     Select events based on section 7.2 of
@@ -227,6 +221,9 @@ def Zprime_softcuts_CR1(muons, jets, fatjets, met, ttbar_reco, mva):
 
     return soft_cuts
 
+#===================
+# CR2 selection (ttbar)
+#===================
 def Zprime_softcuts_CR2(muons, jets, fatjets, met, ttbar_reco, mva):
     """
     Select events based on section 7.2 of
@@ -242,24 +239,3 @@ def Zprime_softcuts_CR2(muons, jets, fatjets, met, ttbar_reco, mva):
     }
 
     return soft_cuts
-
-# def  Zprime_softcuts_jax(muons, jets, fatjets, met, met_cut=50.0):
-#     """
-#     Select events based on the Zprime workshop selection criteria.
-#     """
-#     import jax
-#     lep_ht = muons.pt + met.pt
-#     soft_cuts = {
-#         "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1)
-#         > 0,
-#         # "met_cut": met.pt > 50,
-#         # "met_cut": 0.5*jnp.tanh((ak.to_jax(region_met.pt)-50)/100)+0.5,
-#         "met_cut": jax.nn.sigmoid(
-#             (ak.to_jax(met.pt) - met_cut) / met_cut
-#         ),
-#         "lep_ht_cut": ak.fill_none(
-#             ak.firsts(lep_ht) > 150, False
-#         ),
-#     }
-
-#     return soft_cuts

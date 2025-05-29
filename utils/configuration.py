@@ -3,7 +3,7 @@ import numpy as np
 from utils.cuts import (
     Zprime_baseline,
     Zprime_hardcuts,
-    Zprime_softcuts_nonjax,
+    Zprime_softcuts_nonjax_paper,
     Zprime_softcuts_nonjax_workshop,
     Zprime_softcuts_CR1,
     Zprime_softcuts_CR2,
@@ -32,16 +32,16 @@ from utils.observables import (
 )
 from utils.systematics import jet_pt_resolution, jet_pt_scale
 LIST_OF_VARS = [
-    # {
-    #                 "name": "mva_score",
-    #                 "binning": "-1,1,50",
-    #                 "label": r"NN score",
-    #                 "function": get_mva_scores,
-    #                 "use": [
-    #                     ("mva", None),
-    #                 ],
-    #                 "works_with_jax": False,
-    #             },
+                # {
+                #     "name": "mva_score",
+                #     "binning": "-1,1,50",
+                #     "label": r"NN score",
+                #     "function": get_mva_scores,
+                #     "use": [
+                #         ("mva", None),
+                #     ],
+                #     "works_with_jax": False,
+                # },
                 # {
                 #     "name": "n_jet",
                 #     "label": r"N_{\mathrm{jets}}",
@@ -122,19 +122,6 @@ LIST_OF_VARS = [
                 #     "use": [("mva", None)],
                 #     "works_with_jax": False,
                 # },
-                {
-                    "name": "workshop_mtt",
-                    "binning": "0,3000,50",
-                    "label": r"M(t\bar{t}) [GeV]",
-                    "function": get_mtt,
-                    "use": [
-                        ("Muon", None),
-                        ("Jet", None),
-                        ("FatJet", None),
-                        ("PuppiMET", None),
-                    ],
-                    "works_with_jax": True,
-                },
                 # {
                 #     "name": "ttbar_chi2",
                 #     "binning": "0,200,50",
@@ -155,6 +142,19 @@ LIST_OF_VARS = [
                 #     ],
                 #     "works_with_jax": True,
                 # },
+                {
+                    "name": "workshop_mtt",
+                    "binning": "0,3000,50",
+                    "label": r"M(t\bar{t}) [GeV]",
+                    "function": get_mtt,
+                    "use": [
+                        ("Muon", None),
+                        ("Jet", None),
+                        ("FatJet", None),
+                        ("PuppiMET", None),
+                    ],
+                    "works_with_jax": True,
+                },
 ]
 
 config = {

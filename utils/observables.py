@@ -584,174 +584,16 @@ def get_mva_vars(muons: ak.Array, jets: ak.Array) -> ak.Array:
     return tuple(d.values())
 
 
-def get_n_jet(mva: ak.Array) -> ak.Array:
-    """
-    Retrieves the number of jets variable from the MVA input array.
-
-    Parameters
-    ----------
-    mva : ak.Array
-        MVA feature array or record.
-
-    Returns
-    -------
-    ak.Array
-        Number of jets per event.
-    """
-    return mva.n_jet
-
-
-def get_leading_jet_mass(mva: ak.Array) -> ak.Array:
-    """
-    Retrieves the mass of the leading jet from the MVA input array.
-
-    Parameters
-    ----------
-    mva : ak.Array
-        MVA feature array or record.
-
-    Returns
-    -------
-    ak.Array
-        Leading jet mass per event.
-    """
-    return mva.leading_jet_mass
-
-
-def get_subleading_jet_mass(mva: ak.Array) -> ak.Array:
-    """
-    Retrieves the mass of the subleading jet from the MVA input array.
-
-    Parameters
-    ----------
-    mva : ak.Array
-        MVA feature array or record.
-
-    Returns
-    -------
-    ak.Array
-        Subleading jet mass per event.
-    """
-    return mva.subleading_jet_mass
-
-
-def get_st(mva: ak.Array) -> ak.Array:
-    """
-    Retrieves the scalar sum of transverse momenta (ST) from the MVA input array.
-
-    Parameters
-    ----------
-    mva : ak.Array
-        MVA feature array or record.
-
-    Returns
-    -------
-    ak.Array
-        ST (scalar sum of muon and jet pT) per event.
-    """
-    return mva.st
-
-
-def get_leading_jet_btag_score(mva: ak.Array) -> ak.Array:
-    """
-    Retrieves the b-tagging score of the leading jet from the MVA input array.
-
-    Parameters
-    ----------
-    mva : ak.Array
-        MVA feature array or record.
-
-    Returns
-    -------
-    ak.Array
-        Leading jet b-tagging score per event.
-    """
-    return mva.leading_jet_btag_score
-
-
-def get_subleading_jet_btag_score(mva: ak.Array) -> ak.Array:
-    """
-    Retrieves the b-tagging score of the subleading jet from the MVA input array.
-
-    Parameters
-    ----------
-    mva : ak.Array
-        MVA feature array or record.
-
-    Returns
-    -------
-    ak.Array
-        Subleading jet b-tagging score per event.
-    """
-    return mva.subleading_jet_btag_score
-
-
-def get_S_zz(mva: ak.Array) -> ak.Array:
-    """
-    Retrieves the longitudinal momentum imbalance from the MVA input array.
-
-    Parameters
-    ----------
-    mva : ak.Array
-        MVA feature array or record.
-
-    Returns
-    -------
-    ak.Array
-        S_zz variable per event.
-    """
-    return mva.S_zz
-
-
-def get_deltaR(mva: ak.Array) -> ak.Array:
-    """
-    Retrieves the deltaR between muon and leading jet from the MVA input array.
-
-    Parameters
-    ----------
-    mva : ak.Array
-        MVA feature array or record.
-
-    Returns
-    -------
-    ak.Array
-        DeltaR between objects per event.
-    """
-    return mva.deltaR
-
-
-def get_pt_rel(mva: ak.Array) -> ak.Array:
-    """
-    Retrieves the transverse momentum of the muon relative to the nearest jet.
-
-    Parameters
-    ----------
-    mva : ak.Array
-        MVA feature array or record.
-
-    Returns
-    -------
-    ak.Array
-        pt_rel variable per event.
-    """
-    return mva.pt_rel
-
-
-def get_deltaR_times_pt(mva: ak.Array) -> ak.Array:
-    """
-    Retrieves the product of deltaR and pt_rel from the MVA input array.
-
-    Parameters
-    ----------
-    mva : ak.Array
-        MVA feature array or record.
-
-    Returns
-    -------
-    ak.Array
-        Product of deltaR and pt_rel per event.
-    """
-    return mva.deltaR_times_pt
+get_n_jet = lambda mva: mva.n_jet
+get_leading_jet_mass = lambda mva: mva.leading_jet_mass
+get_subleading_jet_mass = lambda mva: mva.subleading_jet_mass
+get_st = lambda mva: mva.st
+get_leading_jet_btag_score = lambda mva: mva.leading_jet_btag_score
+get_subleading_jet_btag_score = lambda mva: mva.subleading_jet_btag_score
+get_S_zz   = lambda mva: mva.S_zz
+get_deltaR = lambda mva: mva.deltaR
+get_pt_rel  = lambda mva: mva.pt_rel
+get_deltaR_times_pt = lambda mva: mva.deltaR_times_pt
 
 
 def compute_mva_scores(
@@ -792,18 +634,4 @@ def compute_mva_scores(
     return scores
 
 
-def get_mva_scores(mva: ak.Array) -> ak.Array:
-    """
-    Extract neural network score from an MVA output object.
-
-    Parameters
-    ----------
-    mva : object
-        Object containing the `nn_score` attribute.
-
-    Returns
-    -------
-    ak.Array
-        Neural network score array.
-    """
-    return mva.nn_score
+get_mva_scores = lambda mva: mva.nn_score
