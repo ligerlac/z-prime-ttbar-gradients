@@ -3,6 +3,7 @@ from coffea.analysis_tools import PackedSelection
 import numpy as np
 import jax
 import jax.numpy as jnp
+from functools import partial
 
 ak.jax.register_and_check()
 
@@ -91,16 +92,20 @@ def Zprime_baseline(muons, jets, fatjets, met):
 #===================
 #Selection which will not be optimised from WS
 #===================
-def Zprime_hardcuts(muons,):
+def Zprime_hardcuts(muons, jets, fatjets):
     """
     Select events based on the Zprime workshop selection criteria.
     """
     selections = PackedSelection(dtype="uint64")
     selections.add("exactly_1mu", ak.num(muons, axis=1) == 1)
+    selections.add("atleast_1jet", ak.num(jets, axis=1) > 0)
+    selections.add("atleast_1fj", ak.num(fatjets, axis=1) > 0)
     selections.add(
         "Zprime_channel",
         selections.all(
             "exactly_1mu",
+            "atleast_1jet",
+            "atleast_1fj",
         ),
     )
 
@@ -128,6 +133,7 @@ def Zprime_softcuts_nonjax_workshop(muons, jets, fatjets, met):
 #====================
 # JAX version of the workshop selection
 #====================
+#@jax.jit
 def Zprime_softcuts_jax_workshop(muons, jets, fatjets, met, params):
     """
     Differentiable version of analysis cuts, suitable for JAX-based optimization.
@@ -150,25 +156,28 @@ def Zprime_softcuts_jax_workshop(muons, jets, fatjets, met, params):
     """
 
     # All inputs are now pure JAX arrays
-    met_pt = met.pt
-    jets_btag = jets.btagDeepB
-    lep_ht = muons.pt + met_pt
+    # met_pt = met.pt
+    # jets_btag = jets.btagDeepB
+    # lep_ht = muons.pt + met_pt
+    #met_pt = met
+    #jets_btag = jets
+    #lep_ht = muons[:,0] + met
 
     # Soft cuts with differentiable thresholds
     cuts = {
         'met_cut': jax.nn.sigmoid(
-            (met_pt - params['met_threshold']) / params['met_scale']
+            (ak.to_jax(met) - params['met_threshold']) / params['met_scale']
         ),
-        'btag_cut': jax.nn.sigmoid(
-        (jets_btag - params['btag_threshold']) * 10
-        ),
-        'lep_ht_cut': jax.nn.sigmoid(
-            (lep_ht - params['lep_ht_threshold']) / 50.0
-        )
+        # 'btag_cut': jax.nn.sigmoid(
+        # (jets - params['btag_threshold']) * 10
+        # ),
+        # 'lep_ht_cut': jax.nn.sigmoid(
+        #     (lep_ht - params['lep_ht_threshold']) / 50.0
+        # )
     }
 
     # Combine cuts (product gives intersection-like behavior)
-    cut_values = jnp.stack([cuts['met_cut'], cuts['btag_cut'], cuts['lep_ht_cut']])
+    cut_values = jnp.stack([cuts['met_cut']])#, cuts['btag_cut'], cuts['lep_ht_cut']])
     selection_weight = jnp.prod(cut_values, axis=0)
 
     return selection_weight

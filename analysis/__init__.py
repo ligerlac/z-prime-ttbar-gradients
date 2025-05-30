@@ -1,7 +1,7 @@
 import logging
 
 from . import base as base
-#from . import diff as diff
+from . import diff as diff
 from . import nondiff as nondiff
 
 

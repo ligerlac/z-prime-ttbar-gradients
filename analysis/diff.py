@@ -1,19 +1,20 @@
+import copy
 from collections import defaultdict
-from functools import reduce
+import glob
 import logging
-import operator
 import os
 from typing import Any, Literal, Optional
 
 import awkward as ak
-import cabinetry
 from coffea.analysis_tools import PackedSelection
-import hist
+from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
+import jax
+import jax.numpy as jnp
 import numpy as np
+import uproot
 import vector
 
 from analysis.base import Analysis
-
 
 # -----------------------------
 # Register backends
@@ -29,13 +30,29 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger("ZprimeAnalysis")
 logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 
+def merge_histograms(existing, new):
+    """
+    Recursively merge `new` histogram dict into `existing`.
+    Both must follow the structure:
+    histograms[variation][region][observable] = jnp.ndarray
+    """
+    for variation, region_dict in new.items():
+        for region, obs_dict in region_dict.items():
+            for observable, array in obs_dict.items():
+                existing[variation].setdefault(region, {})
+                if observable in existing[variation][region]:
+                    existing[variation][region][observable] += array
+                else:
+                    existing[variation][region][observable] = array
+    return existing
+
 # --------------------------------
 # Differnetiable Analysis
 # --------------------------------
 class DifferentiableAnalysis(Analysis):
 
     def __init__(self, config):
-        super.__init__(config)
+        super().__init__(config)
         # 4 indices
         self.histograms = defaultdict(
             lambda: defaultdict(
@@ -44,7 +61,7 @@ class DifferentiableAnalysis(Analysis):
 
     def set_histograms(
         self,
-        histograms: dict[str, dict[str, dict[str,jnp.Array]]]
+        histograms: dict[str, dict[str, dict[str,jnp.array]]]
     ) -> None:
         """
         Set the histograms for the analysis for all processes, variations, channels,
@@ -65,6 +82,7 @@ class DifferentiableAnalysis(Analysis):
         variation: str,
         xsec_weight: float,
         analysis: str,
+        params,
         event_syst: Optional[dict[str, Any]] = None,
         direction: Literal["up", "down", "nominal"] = "nominal",
     ) -> Optional[ak.Array]:
@@ -95,23 +113,33 @@ class DifferentiableAnalysis(Analysis):
         dict
             Updated histogram dictionary.
         """
+        ak.to_backend(events, "jax")
         histograms = defaultdict(dict)
         if process == "data" and variation != "nominal":
             return histograms
+
+        object_copies ={
+            collection: ak.Array(var.layout)
+            for collection, var in object_copies.items()
+        }
 
         jax_config = self.config.jax
 
         diff_selection_args = self._get_function_arguments(
                     jax_config.soft_selection.use, object_copies
                 )
+
         diff_selection_weights = (
             jax_config.soft_selection.function(*diff_selection_args,
-                                                self.config.params)
+                                                params)
         )
 
         for channel in self.channels:
             # skip channels in non-differentiable analysis
             if not channel.use_in_diff:
+                logger.warning(
+                    f"Skipping channel {channel.name} in differentiable analysis"
+                )
                 continue
 
             chname = channel["name"]
@@ -136,12 +164,13 @@ class DifferentiableAnalysis(Analysis):
                     packed_selection.all(packed_selection.names[-1])
                 )
 
+            mask = ak.to_backend(mask, "jax")
             if process == "data":
-                mask = mask & lumi_mask(
-                    self.config.general.lumifile,
-                    object_copies["run"],
-                    object_copies["luminosityBlock"],
-                )
+                mask = mask #& ak.to_backend(lumi_mask(
+                #     self.config.general.lumifile,
+                #     object_copies["run"],
+                #     object_copies["luminosityBlock"],
+                # ), "jax")
 
             if ak.sum(mask) == 0:
                 logger.warning(
@@ -162,7 +191,7 @@ class DifferentiableAnalysis(Analysis):
                     / abs(events[mask].genWeight)
                 )
             else:
-                weights = np.ones(ak.sum(mask))
+                weights = ak.Array(np.ones(ak.sum(mask)))
 
             weights = jnp.array(weights.to_numpy())
 
@@ -171,6 +200,9 @@ class DifferentiableAnalysis(Analysis):
                     weights, event_syst, direction, object_copies_channel
                 )
 
+            mask = ak.to_jax(mask)
+            diff_selection_weights = diff_selection_weights[mask]
+            weights = ak.to_jax(weights)
             logger.info(f"Number of weighted events in {chname}: {ak.sum(weights):.2f}")
             logger.info(f"Number of raw events in {chname}: {ak.sum(mask)}")
 
@@ -181,12 +213,12 @@ class DifferentiableAnalysis(Analysis):
 
                 logger.info(f"Computing observable {observable['name']}")
                 observable_name = observable["name"]
-                observable_label = observable["label"]
 
                 observable_args = self._get_function_arguments(
                     observable["use"], object_copies_channel
                 )
                 observable_vals = observable["function"](*observable_args)
+                observable_vals = ak.to_jax(observable_vals)
                 observable_binning = observable["binning"]
 
                 # WIP:: need to enforce presence of this in config
@@ -206,16 +238,18 @@ class DifferentiableAnalysis(Analysis):
                     loc=observable_vals.reshape(1, -1),
                     scale=bandwidth
                 )
-
                 # Weight each event's contribution by selection weight
-                weighted_cdf = cdf * diff_selection_weights.reshape(1, -1) * weights.reshape(-1, 1)
+                weighted_cdf = cdf * diff_selection_weights.reshape(1, -1) * weights.reshape(1, -1)
                 bin_weights = weighted_cdf[1:, :] - weighted_cdf[:-1, :]
                 histogram = jnp.sum(bin_weights, axis=1)
                 histograms[chname][observable_name] = histogram
 
+        return histograms
+
 
     def process(
         self, events: ak.Array, metadata: dict[str, Any],
+        params: dict[str, Any],
     ) -> None:
         """
         Run the full analysis logic on a batch of events.
@@ -244,8 +278,7 @@ class DifferentiableAnalysis(Analysis):
         lumi = self.config["general"]["lumi"]
         xsec_weight = (xsec * lumi / n_gen) if process != "data" else 1.0
 
-        # move everything to JAX backend
-        ak.to_backend(events, "jax")
+
         # Nominal processing
         obj_copies = self.get_object_copies(events)
         # Filter objects
@@ -257,6 +290,14 @@ class DifferentiableAnalysis(Analysis):
                     raise KeyError(f"Object {obj} not found in object_copies")
                 obj_copies[obj] = filtered
 
+        # move everything to JAX backend
+        events = ak.to_backend(events, "jax")
+
+        obj_copies = {
+            coll: ak.to_backend(var, "jax")
+            for coll, var in obj_copies.items()
+        }
+
         # Apply baseline selection
         baseline_args = self._get_function_arguments(
             self.config.baseline_selection["use"], obj_copies
@@ -266,6 +307,7 @@ class DifferentiableAnalysis(Analysis):
             *baseline_args
         )
         mask = ak.Array(packed_selection.all(packed_selection.names[-1]))
+        mask = ak.to_backend(mask, "jax")
         obj_copies = {
             collection: variable[mask]
             for collection, variable in obj_copies.items()
@@ -285,6 +327,11 @@ class DifferentiableAnalysis(Analysis):
             obj: var
             for obj, var in obj_copies_corrected.items()
         }
+
+        obj_copies_corrected = {
+            coll: ak.to_backend(var, "jax")
+            for coll, var in obj_copies_corrected.items()
+        }
         histograms = self.histogramming(
             obj_copies_corrected,
             events,
@@ -292,8 +339,16 @@ class DifferentiableAnalysis(Analysis):
             "nominal",
             xsec_weight,
             analysis,
+            params,
         )
         all_histograms["nominal"] = histograms
+
+        # move everything to CPU backend
+        events = ak.to_backend(events, "cpu")
+        obj_copies = {
+            coll: ak.to_backend(var, "cpu")
+            for coll, var in obj_copies.items()
+        }
 
         # Systematic variations
         for syst in self.systematics + self.corrections:
@@ -314,6 +369,11 @@ class DifferentiableAnalysis(Analysis):
                     obj_copies, [syst], direction=direction
                 )
                 varname = f"{syst['name']}_{direction}"
+                events = ak.to_backend(events, "jax")
+                obj_copies_corrected = {
+                    coll: ak.to_backend(var, "jax")
+                    for coll, var in obj_copies.items()
+                }
                 histograms = self.histogramming(
                     obj_copies_corrected,
                     events,
@@ -321,6 +381,7 @@ class DifferentiableAnalysis(Analysis):
                     varname,
                     xsec_weight,
                     analysis,
+                    params,
                     event_syst=syst,
                     direction=direction,
                 )
@@ -399,3 +460,94 @@ class DifferentiableAnalysis(Analysis):
         significance = signal_yield_total / denom
 
         return significance
+
+
+    def run_analysis_chain(self, params, fileset):
+
+        config = self.config
+        process_histograms = defaultdict(dict)
+        for dataset, content in fileset.items():
+
+            metadata = content["metadata"]
+            metadata["dataset"] = dataset
+            process_name = metadata["process"]
+            if process_name not in process_histograms:
+                process_histograms[process_name] = defaultdict(lambda: defaultdict(dict))
+
+            if (req_processes := config.general.processes) is not None:
+                if process_name not in req_processes:
+                    continue
+
+            os.makedirs(f"{config.general.output_dir}/{dataset}", exist_ok=True)
+
+            logger.info("========================================")
+            logger.info(f"🚀 Processing dataset: {dataset}")
+
+            for idx, (file_path, tree) in enumerate(content["files"].items()):
+                output_dir = (
+                    f"output/{dataset}/file__{idx}/"
+                    if not config.general.preprocessed_dir
+                    else f"{config.general.preprocessed_dir}/{dataset}/file__{idx}/"
+                )
+                if (
+                    config.general.max_files != -1
+                    and idx >= config.general.max_files
+                ):
+                    continue
+
+                skimmed_files = glob.glob(f"{output_dir}/part*.root")
+                skimmed_files = [f"{f}:{tree}" for f in skimmed_files]
+                remaining = sum(uproot.open(f).num_entries for f in skimmed_files)
+                logger.info(f"✅ Events retained after filtering: {remaining:,}")
+
+                for skimmed in skimmed_files:
+                    logger.info(f"📘 Processing skimmed file: {skimmed}")
+                    logger.info("📈 Processing for Differentiable analysis")
+                    events = NanoEventsFactory.from_root(
+                        skimmed, schemaclass=NanoAODSchema, delayed=False
+                    ).events()
+                    histograms = self.process(events, metadata, params)
+                    logger.info("📈 Non-differentiable histogram-filling complete.")
+                    process_histograms[process_name] = (
+                        merge_histograms(process_histograms[process_name], dict(histograms))
+                    )
+
+
+            logger.info(f"🏁 Finished dataset: {dataset}\n")
+
+        self.set_histograms(process_histograms)
+        # compute signifcance
+        significance = self._calculate_significance()
+
+        # Report end of processing
+        logger.info("✅ All datasets processed.")
+
+        return significance
+
+    def run_analysis_chain_with_gradients(self, fileset):
+        """
+       Run the analysis chain and extract gradients
+
+        Parameters:
+        -----------
+        process_data_dict : dict
+            Dictionary with process names as keys and JAX data as values
+            e.g., {'signal': jax_data, 'ttbar': jax_data, 'wjets': jax_data}
+        """
+
+
+        # Compute significance
+        significance = self.run_analysis_chain(self.config.jax.params, fileset)
+
+        print("Running differentiable event loop for multiple processes...")
+        print(f"Processes: {list(self.histograms.keys())}")
+
+        # Create gradient function
+        grad_fn = jax.grad(self.run_analysis_chain, argnums=0)
+        gradients = grad_fn(self.config.jax.params, fileset)
+
+        print(f"Signal significance: {significance}")
+        print(f"Parameter gradients: {gradients}")
+
+        return significance, gradients
+

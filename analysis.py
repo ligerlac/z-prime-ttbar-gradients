@@ -35,7 +35,7 @@ import vector
 
 
 from analysis.nondiff import NonDiffAnalysis
-#from analysis.diff import DifferentiableAnalysis
+from analysis.diff import DifferentiableAnalysis
 
 from utils.configuration import config as ZprimeConfig
 from utils.cuts import lumi_mask
@@ -85,9 +85,11 @@ def main():
         n_files_max_per_sample=config.general.max_files
     )
 
-    nondiff_analysis = NonDiffAnalysis(config)
-    nondiff_analysis.run_analysis_chain(fileset)
-    #diff_analysis = DifferentiableAnalysis(config)
+    #nondiff_analysis = NonDiffAnalysis(config)
+    #nondiff_analysis.run_analysis_chain(fileset)
+
+    diff_analysis = DifferentiableAnalysis(config)
+    diff_analysis.run_analysis_chain_with_gradients(fileset)
 
     # plot_nominal_histograms("output/histograms/histograms.root")
     # plot_cms_style(histograms_file="output/histograms/histograms.pkl")

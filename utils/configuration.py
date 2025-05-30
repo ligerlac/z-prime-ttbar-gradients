@@ -5,6 +5,7 @@ from utils.cuts import (
     Zprime_hardcuts,
     Zprime_softcuts_nonjax_paper,
     Zprime_softcuts_nonjax_workshop,
+    Zprime_softcuts_jax_workshop,
     Zprime_softcuts_CR1,
     Zprime_softcuts_CR2,
     Zprime_softcuts_SR_notag,
@@ -78,12 +79,12 @@ config = {
     },
     "jax": {
         "soft_selection": {
-            "function": Zprime_softcuts_nonjax_workshop,
+            "function": Zprime_softcuts_jax_workshop,
             "use": [
-                ("Muon", None),
-                ("Jet", None),
-                ("FatJet", None),
-                ("PuppiMET", None),
+                ("Muon", "pt"),
+                ("Jet", "btagDeepB"),
+                ("FatJet", "pt"),
+                ("PuppiMET", "pt"),
             ],
         },
         "params": {
@@ -143,6 +144,9 @@ config = {
             "selection_function": Zprime_hardcuts,
             "selection_use": [
                 ("Muon", None),
+                ("Jet", None),
+                ("FatJet", None),
+
             ],
             "soft_selection_function": Zprime_softcuts_nonjax_workshop,
             "soft_selection_use": [
@@ -151,6 +155,7 @@ config = {
                 ("FatJet", None),
                 ("PuppiMET", None),
             ],
+            "use_in_diff": True,
         },
     ],
     "ghost_observables": [],

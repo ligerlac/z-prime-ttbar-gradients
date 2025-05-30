@@ -54,7 +54,6 @@ class Analysis:
         self.systematics = config.systematics
         self.corrections = config.corrections
         self.corrlib_evaluators = self._load_correctionlib()
-        self.nD_hists_per_region = self._init_histograms()
 
 
     def _load_correctionlib(self) -> dict[str, CorrectionSet]:
