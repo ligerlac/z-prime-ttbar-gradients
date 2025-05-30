@@ -269,7 +269,7 @@ class DifferentiableAnalysis(Analysis):
         dict
             Histogram dictionary after processing.
         """
-        all_histograms = copy.deepcopy(self.histograms)
+        all_histograms = self.histograms.copy()
         analysis = self.__class__.__name__
 
         process = metadata["process"]
@@ -353,42 +353,43 @@ class DifferentiableAnalysis(Analysis):
             for coll, var in obj_copies.items()
         }
 
-        # Systematic variations
-        for syst in self.systematics + self.corrections:
-            if syst["name"] == "nominal":
-                continue
-            for direction in ["up", "down"]:
-                # Filter objects
-                # Get object masks from configuration:
-                if (obj_masks := self.config.good_object_masks) != []:
-                    filtered_objs = self.get_good_objects(obj_copies, obj_masks)
-                    for obj, filtered in filtered_objs.items():
-                        if obj not in obj_copies:
-                            raise KeyError(f"Object {obj} not found in object_copies")
-                        obj_copies[obj] = filtered
+        if self.config.general.run_systematics:
+            # Systematic variations
+            for syst in self.systematics + self.corrections:
+                if syst["name"] == "nominal":
+                    continue
+                for direction in ["up", "down"]:
+                    # Filter objects
+                    # Get object masks from configuration:
+                    if (obj_masks := self.config.good_object_masks) != []:
+                        filtered_objs = self.get_good_objects(obj_copies, obj_masks)
+                        for obj, filtered in filtered_objs.items():
+                            if obj not in obj_copies:
+                                raise KeyError(f"Object {obj} not found in object_copies")
+                            obj_copies[obj] = filtered
 
-                # apply corrections
-                obj_copies_corrected = self.apply_object_corrections(
-                    obj_copies, [syst], direction=direction
-                )
-                varname = f"{syst['name']}_{direction}"
-                events = ak.to_backend(events, "jax")
-                obj_copies_corrected = {
-                    coll: ak.to_backend(var, "jax")
-                    for coll, var in obj_copies.items()
-                }
-                histograms = self.histogramming(
-                    obj_copies_corrected,
-                    events,
-                    process,
-                    varname,
-                    xsec_weight,
-                    analysis,
-                    params,
-                    event_syst=syst,
-                    direction=direction,
-                )
-                all_histograms[varname] = histograms
+                    # apply corrections
+                    obj_copies_corrected = self.apply_object_corrections(
+                        obj_copies, [syst], direction=direction
+                    )
+                    varname = f"{syst['name']}_{direction}"
+                    events = ak.to_backend(events, "jax")
+                    obj_copies_corrected = {
+                        coll: ak.to_backend(var, "jax")
+                        for coll, var in obj_copies.items()
+                    }
+                    histograms = self.histogramming(
+                        obj_copies_corrected,
+                        events,
+                        process,
+                        varname,
+                        xsec_weight,
+                        analysis,
+                        params,
+                        event_syst=syst,
+                        direction=direction,
+                    )
+                    all_histograms[varname] = histograms
 
 
         return all_histograms
@@ -505,12 +506,12 @@ class DifferentiableAnalysis(Analysis):
 
                 for skimmed in skimmed_files:
                     logger.info(f"📘 Processing skimmed file: {skimmed}")
-                    logger.info("📈 Processing for Differentiable analysis")
+                    logger.info("📈 Processing histograms for differentiable analysis")
                     events = NanoEventsFactory.from_root(
                         skimmed, schemaclass=NanoAODSchema, delayed=False
                     ).events()
                     histograms = self.process(events, metadata, params)
-                    logger.info("📈 Non-differentiable histogram-filling complete.")
+                    logger.info("📈 Completed.")
                     process_histograms[process_name] = (
                         merge_histograms(process_histograms[process_name], dict(histograms))
                     )
@@ -554,3 +555,92 @@ class DifferentiableAnalysis(Analysis):
 
         return significance, gradients
 
+
+    def optimize_analysis_cuts(self, fileset):
+        """
+        Example of how to optimize analysis cuts using multiple processes to maximize significance.
+        """
+        significance, gradients = self.run_analysis_chain_with_gradients(fileset)
+
+        print(f"Initial significance: {significance:.4f}")
+        print(f"Initial gradients: {gradients}")
+
+        # The objective is the differentiable_event_loop itself
+        def objective(params):
+            return self.run_analysis_chain(params, fileset)
+
+        print("\nRunning optimization to maximize significance...")
+
+        # Simple gradient ascent with parameter constraints
+        learning_rate = 0.01
+        params = self.config.jax.params.copy()
+
+        print(f"{'Step':>4} {'Significance':>12} {'MET Cut':>8} {'B-tag Cut':>10} {'Lep HT Cut':>11}")
+        print("-" * 55)
+
+        for i in range(25):
+            significance = objective(params)
+            grads = jax.grad(objective)(params)
+
+            # Update parameters with constraints
+            for key in params:
+                if key.endswith('_threshold'):
+                    # For cut thresholds, use smaller learning rate and constrain ranges
+                    if key == 'met_threshold':
+                        print(params[key] + learning_rate * grads[key])
+                        params[key] = jnp.clip(
+                            params[key] + learning_rate * grads[key],
+                            20.0, 150.0
+                        )
+                    elif key == 'btag_threshold':
+                        params[key] = jnp.clip(
+                            params[key] + learning_rate * grads[key],
+                            0.1, 0.9
+                        )
+                    elif key == 'lep_ht_threshold':
+                        params[key] = jnp.clip(
+                            params[key] + learning_rate * grads[key],
+                            50.0, 300.0
+                        )
+                elif key.endswith('_weight'):
+                    # For weights, constrain to positive values
+                    params[key] = jnp.maximum(
+                        params[key] + learning_rate * grads[key],
+                        0.01
+                    )
+                elif key.endswith('_scale'):
+                    # Process scales should stay positive and reasonable
+                    params[key] = jnp.clip(
+                        params[key] + learning_rate * grads[key],
+                        0.1, 10.0
+                    )
+                else:
+                    # Other parameters
+                    params[key] = params[key] + learning_rate * grads[key]
+
+            #if (i + 1) % 5 == 0 or i == 0:
+            print(f"{i+1:4d} {significance:12.4f} {params['met_threshold']:8.1f} "
+                f"{params['btag_threshold']:10.3f} {params['lep_ht_threshold']:11.1f}")
+
+        final_significance = objective(params)
+        print(f"\nOptimization complete!")
+        print(f"Initial significance: {significance:.4f}")
+        print(f"Final significance: {final_significance:.4f}")
+        print(f"Improvement: {((final_significance/significance - 1) * 100):.1f}%")
+
+        print(f"\nOptimized parameters:")
+        for key, value in params.items():
+            if isinstance(value, (int, float)) or hasattr(value, 'item'):
+                print(f"  {key}: {float(value):.4f}")
+
+        # # Show process contributions at optimal cuts
+        # print(f"\nProcess contributions at optimal cuts:")
+        # histograms = {}
+        # for process_name, jax_data in process_data_dict.items():
+        #     if len(jax_data['met_pt']) == 0:
+        #         continue
+        #     selection_weight, _ = analysis.diff_selections.soft_selection_cuts(params, jax_data)
+        #     total_weight = jnp.sum(selection_weight)
+        #     print(f"  {process_name}: {float(total_weight):.1f} events")
+
+        return params, final_significance

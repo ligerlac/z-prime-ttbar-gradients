@@ -89,7 +89,7 @@ def main():
     #nondiff_analysis.run_analysis_chain(fileset)
 
     diff_analysis = DifferentiableAnalysis(config)
-    diff_analysis.run_analysis_chain_with_gradients(fileset)
+    diff_analysis.optimize_analysis_cuts(fileset)
 
     # plot_nominal_histograms("output/histograms/histograms.root")
     # plot_cms_style(histograms_file="output/histograms/histograms.pkl")

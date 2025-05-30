@@ -100,6 +100,13 @@ class GeneralConfig(SubscriptableModel):
             description="Whether to run statistical analysis step",
         ),
     ]
+    run_systematics: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Whether to run systematic variations step",
+        ),
+    ]
     output_dir: Annotated[
         Optional[str],
         Field(default="output/", description="Directory for output files"),

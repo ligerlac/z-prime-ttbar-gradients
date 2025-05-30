@@ -320,35 +320,36 @@ class NonDiffAnalysis(Analysis):
             analysis,
         )
 
-        # Systematic variations
-        for syst in self.systematics + self.corrections:
-            if syst["name"] == "nominal":
-                continue
-            for direction in ["up", "down"]:
-                # Filter objects
-                # Get object masks from configuration:
-                if (obj_masks := self.config.good_object_masks) != []:
-                    filtered_objs = self.get_good_objects(obj_copies, obj_masks)
-                    for obj, filtered in filtered_objs.items():
-                        if obj not in obj_copies:
-                            raise KeyError(f"Object {obj} not found in object_copies")
-                        obj_copies[obj] = filtered
+        if self.config.general.run_systematics:
+            # Systematic variations
+            for syst in self.systematics + self.corrections:
+                if syst["name"] == "nominal":
+                    continue
+                for direction in ["up", "down"]:
+                    # Filter objects
+                    # Get object masks from configuration:
+                    if (obj_masks := self.config.good_object_masks) != []:
+                        filtered_objs = self.get_good_objects(obj_copies, obj_masks)
+                        for obj, filtered in filtered_objs.items():
+                            if obj not in obj_copies:
+                                raise KeyError(f"Object {obj} not found in object_copies")
+                            obj_copies[obj] = filtered
 
-                # apply corrections
-                obj_copies_corrected = self.apply_object_corrections(
-                    obj_copies, [syst], direction=direction
-                )
-                varname = f"{syst['name']}_{direction}"
-                self.histogramming(
-                    obj_copies_corrected,
-                    events,
-                    process,
-                    varname,
-                    xsec_weight,
-                    analysis,
-                    event_syst=syst,
-                    direction=direction,
-                )
+                    # apply corrections
+                    obj_copies_corrected = self.apply_object_corrections(
+                        obj_copies, [syst], direction=direction
+                    )
+                    varname = f"{syst['name']}_{direction}"
+                    self.histogramming(
+                        obj_copies_corrected,
+                        events,
+                        process,
+                        varname,
+                        xsec_weight,
+                        analysis,
+                        event_syst=syst,
+                        direction=direction,
+                    )
 
 
     def run_fit(

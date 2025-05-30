@@ -56,10 +56,12 @@ config = {
         "run_preprocessing": False,
         "run_histogramming": False,
         "run_statistics": True,
+        "run_systematics": False,
         "output_dir": "output/",
         "preprocessed_dir": "./preproc_uproot/z-prime-ttbar-data/",
         "processor": "uproot",
         "lumifile": "./corrections/Cert_271036-284044_13TeV_Legacy2016_Collisions16_JSON.txt",
+
     },
     "preprocess": {
         "branches": {
