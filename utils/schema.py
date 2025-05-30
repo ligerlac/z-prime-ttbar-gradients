@@ -23,7 +23,7 @@ class SubscriptableModel(BaseModel):
         return getattr(self, key, default)
 
 
-class BaselineSelectionConfig(SubscriptableModel):
+class SelectionConfig(SubscriptableModel):
     function: Annotated[
         Callable,
         Field(
@@ -129,6 +129,21 @@ class GeneralConfig(SubscriptableModel):
         ),
     ]
 
+# ------------------------
+# JAX configuration
+# ------------------------
+class JaxConfig(SubscriptableModel):
+    soft_selection: Annotated[
+        SelectionConfig,
+        Field(
+            description="Soft selection function for JAX-mode observable shaping. "
+            "Should return a dictionary of soft selections."
+        ),
+    ]
+    params: Annotated[
+        dict[str, float],
+        Field(description="Thresholds, weights, and scaling factors used in JAX backend."),
+    ]
 
 # ------------------------
 # Preprocessing configuration
@@ -342,6 +357,15 @@ class ChannelConfig(SubscriptableModel):
         ),
     ]
 
+    use_in_diff: Annotated[
+        Optional[bool],
+        Field(
+            default=False,
+            description="Whether to use this channel in differentiable analysis. "
+            + "If None, defaults to True.",
+        ),
+    ]
+
     @model_validator(mode="after")
     def validate_fields(self) -> "ChannelConfig":
         if self.selection_function and not self.selection_use:
@@ -509,6 +533,10 @@ class Config(SubscriptableModel):
     general: Annotated[
         GeneralConfig, Field(description="Global settings for the analysis")
     ]
+    jax: Annotated[
+        Optional[JaxConfig],
+        Field(default=None, description="JAX configuration block for differentiable analysis"),
+    ]
     ghost_observables: Annotated[
         Optional[List[GhostObservable]],
         Field(
@@ -519,7 +547,7 @@ class Config(SubscriptableModel):
         ),
     ]
     baseline_selection: Annotated[
-        Optional[BaselineSelectionConfig],
+        Optional[SelectionConfig],
         Field(
             default=None,
             description="Baseline event selection applied before "

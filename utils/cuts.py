@@ -1,6 +1,8 @@
 import awkward as ak
 from coffea.analysis_tools import PackedSelection
 import numpy as np
+import jax
+import jax.numpy as jnp
 
 ak.jax.register_and_check()
 
@@ -123,6 +125,53 @@ def Zprime_softcuts_nonjax_workshop(muons, jets, fatjets, met):
 
     return soft_cuts
 
+#====================
+# JAX version of the workshop selection
+#====================
+def Zprime_softcuts_jax_workshop(muons, jets, fatjets, met, params):
+    """
+    Differentiable version of analysis cuts, suitable for JAX-based optimization.
+    Must return analysis selections as weights. JAX functions must take
+    a params argument in the very end to set initial values of cuts.
+    The params argument is passed automatically in the analysis class.
+
+    Parameters:
+    -----------
+    muons: JAX array of muon objects
+    jets: JAX array of jet objects
+    fatjets: JAX array of fatjet objects
+    met: JAX array of missing transverse energy (MET) objects
+    params: dictionary of parameters for the cuts, e.g. thresholds
+
+    Returns:
+    --------
+    selection_weight: JAX array of selection weights based on the cuts
+
+    """
+
+    # All inputs are now pure JAX arrays
+    met_pt = met.pt
+    jets_btag = jets.btagDeepB
+    lep_ht = muons.pt + met_pt
+
+    # Soft cuts with differentiable thresholds
+    cuts = {
+        'met_cut': jax.nn.sigmoid(
+            (met_pt - params['met_threshold']) / params['met_scale']
+        ),
+        'btag_cut': jax.nn.sigmoid(
+        (jets_btag - params['btag_threshold']) * 10
+        ),
+        'lep_ht_cut': jax.nn.sigmoid(
+            (lep_ht - params['lep_ht_threshold']) / 50.0
+        )
+    }
+
+    # Combine cuts (product gives intersection-like behavior)
+    cut_values = jnp.stack([cuts['met_cut'], cuts['btag_cut'], cuts['lep_ht_cut']])
+    selection_weight = jnp.prod(cut_values, axis=0)
+
+    return selection_weight
 
 #===========================================================
 # Regions from paper
