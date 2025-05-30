@@ -209,6 +209,9 @@ class DifferentiableAnalysis(Analysis):
             for observable in channel["observables"]:
                 # check if observable works with JAX
                 if not observable.works_with_jax:
+                    logger.warning(
+                        f"Observable {observable['name']} does not work with JAX, skipping."
+                    )
                     continue
 
                 logger.info(f"Computing observable {observable['name']}")
