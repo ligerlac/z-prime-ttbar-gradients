@@ -5,6 +5,7 @@ from utils.cuts import (
     Zprime_hardcuts,
     Zprime_softcuts_nonjax_paper,
     Zprime_softcuts_nonjax_workshop,
+    Zprime_softcuts_jax_workshop,
     Zprime_softcuts_CR1,
     Zprime_softcuts_CR2,
     Zprime_softcuts_SR_notag,
@@ -32,116 +33,6 @@ from utils.observables import (
 )
 from utils.systematics import jet_pt_resolution, jet_pt_scale
 LIST_OF_VARS = [
-                # {
-                #     "name": "mva_score",
-                #     "binning": "-1,1,50",
-                #     "label": r"NN score",
-                #     "function": get_mva_scores,
-                #     "use": [
-                #         ("mva", None),
-                #     ],
-                #     "works_with_jax": False,
-                # },
-                # {
-                #     "name": "n_jet",
-                #     "label": r"N_{\mathrm{jets}}",
-                #     "binning": "0,14,10",
-                #     "function": get_n_jet,
-                #     "use": [("mva", None)],
-                #     "works_with_jax": False,
-                # },
-                # {
-                #     "name": "leading_jet_mass",
-                #     "label": r"m_{j_1} [GeV]",
-                #     "binning": "0,600,40",
-                #     "function": get_leading_jet_mass,
-                #     "use": [("mva", None)],
-                #     "works_with_jax": False,
-                # },
-                # {
-                #     "name": "subleading_jet_mass",
-                #     "label": r"m_{j_2} [GeV]",
-                #     "binning": "0,600,40",
-                #     "function": get_subleading_jet_mass,
-                #     "use": [("mva", None)],
-                #     "works_with_jax": False,
-                # },
-                # {
-                #     "name": "st",
-                #     "label": r"S_T [GeV]",
-                #     "binning": "0,3000,50",
-                #     "function": get_st,
-                #     "use": [("mva", None)],
-                #     "works_with_jax": False,
-                # },
-                # {
-                #     "name": "leading_jet_btag_score",
-                #     "label": r"b-tag(j_1)",
-                #     "binning": "-1,1,50",
-                #     "function": get_leading_jet_btag_score,
-                #     "use": [("mva", None)],
-                #     "works_with_jax": False,
-                # },
-                # {
-                #     "name": "subleading_jet_btag_score",
-                #     "label": r"b-tag(j_2)",
-                #     "binning": "-1,1,50",
-                #     "function": get_subleading_jet_btag_score,
-                #     "use": [("mva", None)],
-                #     "works_with_jax": False,
-                # },
-                # {
-                #     "name": "S_zz",
-                #     "label": r"S_{zz}",
-                #     "binning": "0,1,50",
-                #     "function": get_S_zz,
-                #     "use": [("mva", None)],
-                #     "works_with_jax": False,
-                # },
-                # {
-                #     "name": "deltaR",
-                #     "label": r"\Delta R(\mu,\mathrm{jet})",
-                #     "binning":  "0,7,50",
-                #     "function": get_deltaR,
-                #     "use": [("mva", None)],
-                #     "works_with_jax": False,
-                # },
-                # {
-                #     "name": "pt_rel",
-                #     "label": r"p_T^{\mathrm{rel}} [GeV]",
-                #     "binning": "0,500,50",
-                #     "function": get_pt_rel,
-                #     "use": [("mva", None)],
-                #     "works_with_jax": False,
-                # },
-                # {
-                #     "name": "deltaR_times_pt",
-                #     "label": r"\Delta R \times p_T^{\mathrm{jet}}",
-                #     "binning": "0,500,50",
-                #     "function": get_deltaR_times_pt,
-                #     "use": [("mva", None)],
-                #     "works_with_jax": False,
-                # },
-                # {
-                #     "name": "ttbar_chi2",
-                #     "binning": "0,200,50",
-                #     "label": r"\chi^2(t\bar{t})",
-                #     "function": chi2_from_ttbar_reco,
-                #     "use": [
-                #         ("ttbar_reco", None),
-                #     ],
-                #     "works_with_jax": True,
-                # },
-                # {
-                #     "name": "mtt_chi2",
-                #     "binning": "0,3000,50",
-                #     "label": r"\chi^2(t\bar{t})",
-                #     "function": mtt_from_ttbar_reco,
-                #     "use": [
-                #         ("ttbar_reco", None),
-                #     ],
-                #     "works_with_jax": True,
-                # },
                 {
                     "name": "workshop_mtt",
                     "binning": "0,3000,50",
@@ -165,10 +56,57 @@ config = {
         "run_preprocessing": False,
         "run_histogramming": False,
         "run_statistics": True,
+        "run_systematics": False,
         "output_dir": "output/",
         "preprocessed_dir": "./preproc_uproot/z-prime-ttbar-data/",
         "processor": "uproot",
         "lumifile": "./corrections/Cert_271036-284044_13TeV_Legacy2016_Collisions16_JSON.txt",
+
+    },
+    "preprocess": {
+        "branches": {
+            "Muon": ["pt", "eta", "phi", "mass", "miniIsoId", "tightId", "charge"],
+            "FatJet": ["particleNet_TvsQCD", "pt", "eta", "phi", "mass"],
+            "Jet": ["btagDeepB", "jetId", "pt", "eta", "phi", "mass"],
+            "PuppiMET": ["pt", "phi"],
+            "HLT": ["TkMu50"],
+            "Pileup": ["nTrueInt"],
+            "event": ["genWeight", "run", "luminosityBlock"],
+        },
+        "ignore_missing": False,  # is this implemented?
+        "mc_branches": {
+            "event": ["genWeight", "luminosityBlock"],
+            "Pileup": ["nTrueInt"],
+        },
+    },
+    "jax": {
+        "soft_selection": {
+            "function": Zprime_softcuts_jax_workshop,
+            "use": [
+                ("Muon", "pt"),
+                ("Jet", "btagDeepB"),
+                ("FatJet", "pt"),
+                ("PuppiMET", "pt"),
+            ],
+        },
+        "params": {
+            'met_threshold': 50.0,
+            'met_scale': 25.0,
+            'btag_threshold': 0.5,
+            'lep_ht_threshold': 150.0,
+            'muon_weight': 1.0,
+            'jet_weight': 0.1,
+            'met_weight': 1.0,
+            'kde_bandwidth': 10.0,
+            # Process-specific scales (cross-section * luminosity / n_events)
+            'signal_scale': 1.0,
+            'ttbar_scale': 1.0,
+            'wjets_scale': 1.0,
+            'other_scale': 1.0,
+            # Systematic uncertainties
+            'signal_systematic': 0.05,  # 5% on signal
+            'background_systematic': 0.1,  # 10% on background
+        }
     },
     "baseline_selection": {
         "function": Zprime_baseline,
@@ -200,44 +138,6 @@ config = {
             "use": [("FatJet", None)],
         },
     ],
-    "preprocess": {
-        "branches": {
-            "Muon": [
-                "pt",
-                "eta",
-                "phi",
-                "mass",
-                "miniIsoId",
-                "tightId",
-                "charge",
-            ],
-            "FatJet": [
-                "particleNet_TvsQCD",
-                "pt",
-                "eta",
-                "phi",
-                "mass",
-            ],
-            "Jet": [
-                "btagDeepB",
-                "jetId",
-                "pt",
-                "eta",
-                "phi",
-                "mass",
-            ],
-            "PuppiMET": ["pt", "phi"],
-            "HLT": ["TkMu50"],
-            "Pileup": ["nTrueInt"],
-            "event": ["genWeight", "run", "luminosityBlock"],
-        },
-        "ignore_missing": False,  # is this implemented?
-        "mc_branches": {
-            "event": ["genWeight", "luminosityBlock"],
-            "Pileup": ["nTrueInt"],
-        },
-    },
-    "statistics": {"cabinetry_config": "cabinetry/cabinetry_config.yaml"},
     "channels": [
         {
             "name": "CMS_WORKSHOP",
@@ -246,6 +146,9 @@ config = {
             "selection_function": Zprime_hardcuts,
             "selection_use": [
                 ("Muon", None),
+                ("Jet", None),
+                ("FatJet", None),
+
             ],
             "soft_selection_function": Zprime_softcuts_nonjax_workshop,
             "soft_selection_use": [
@@ -254,64 +157,10 @@ config = {
                 ("FatJet", None),
                 ("PuppiMET", None),
             ],
+            "use_in_diff": True,
         },
-        # {
-        #     "name": "baseline",
-        #     "fit_observable": "mtt_chi2",
-        #     "observables": LIST_OF_VARS,
-        #     "selection_function": Zprime_baseline,
-        #     "selection_use": [
-        #         ("Muon", None),
-        #         ("Jet", None),
-        #         ("FatJet", None),
-        #         ("PuppiMET", None),
-        #     ],
-        # },
     ],
-    "ghost_observables": [
-        # {
-        #     "names": ("chi2", "mtt"),
-        #     "collections": "ttbar_reco",
-        #     "function": ttbar_reco,
-        #     "use": [
-        #         ("Muon", None),
-        #         ("Jet", None),
-        #         ("FatJet", None),
-        #         ("PuppiMET", None),
-        #     ],
-        #     "works_with_jax": False,
-        # },
-        # {
-        #     "names": "nn_score",
-        #     "collections": "mva",
-        #     "function": compute_mva_scores,
-        #     "use": [
-        #         ("Muon", None),
-        #         ("Jet", None),
-        #     ],
-        # },
-        # {
-        #     "names": (
-        #         "n_jet",
-        #         "leading_jet_mass",
-        #         "subleading_jet_mass",
-        #         "st",
-        #         "leading_jet_btag_score",
-        #         "subleading_jet_btag_score",
-        #         "S_zz",
-        #         "deltaR",
-        #         "pt_rel",
-        #         "deltaR_times_pt",
-        #     ),
-        #     "collections": "mva",
-        #     "function": get_mva_vars,
-        #     "use": [
-        #         ("Muon", None),
-        #         ("Jet", None),
-        #     ],
-        #     "works_with_jax": False,
-        # },
-    ],
+    "ghost_observables": [],
     "corrections": [
         {
             "name": "pu_weight",
@@ -353,4 +202,7 @@ config = {
             "type": "object",
         },
     ],
+    "statistics": {
+        "cabinetry_config": "cabinetry/cabinetry_config.yaml"
+    },
 }

@@ -41,11 +41,10 @@ def get_mtt(
         Flattened array of reconstructed m_tt values per event.
     """
 
-    jets = jets[(jets.btagDeepB > 0.5) & (jets.jetId > 4)]
+    #jets = jets[(jets.btagDeepB > 0.5) & (jets.jetId > 4)]
     jets = jets[:, 0]  # only the first jet per event
-    fatjets = fatjets[(fatjets.particleNet_TvsQCD > 0.5) & (fatjets.pt > 500.)]
+    fatjets = fatjets[:, 0]
     p4mu,p4fj,p4j,p4met = ak.unzip(ak.cartesian([muons, fatjets, jets, met]))
-
     # Convert to 4-vectors
     p4mu, p4fj, p4j = [
         ak.zip(
