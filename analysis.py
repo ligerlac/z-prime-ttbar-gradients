@@ -31,14 +31,10 @@ def main():
     Main driver function for running the Zprime analysis framework.
     Loads configuration, runs preprocessing, and dispatches analysis over datasets.
     """
-
     cli_args = sys.argv[1:]
     full_config = load_config_with_restricted_cli(ZprimeConfig, cli_args)
     config = Config(**full_config)  # Pydantic validation
-    # ✅ You now have a fully validated config object
     logger.info(f"Luminosity: {config.general.lumi}")
-
-
 
     fileset = construct_fileset(
         n_files_max_per_sample=config.general.max_files
@@ -57,18 +53,17 @@ def main():
     else:
         logger.info("Running both Non-Differentiable and Differentiable Analysis")
         # Non-differentiable analysis
+        logger.info("Running Non-Differentiable Analysis")
         nondiff_analysis = NonDiffAnalysis(config)
         nondiff_analysis.run_analysis_chain(fileset)
         # Differentiable analysis
+        logger.info("Running Differentiable Analysis")
         diff_analysis = DifferentiableAnalysis(config)
         diff_analysis.optimize_analysis_cuts(fileset)
 
 
     # plot_nominal_histograms("output/histograms/histograms.root")
     # plot_cms_style(histograms_file="output/histograms/histograms.pkl")
-
-
-
 
 if __name__ == "__main__":
     main()
