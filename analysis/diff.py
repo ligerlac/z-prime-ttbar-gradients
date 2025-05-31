@@ -1,36 +1,55 @@
-import copy
-from collections import defaultdict
+from __future__ import annotations
+
 import glob
 import logging
 import os
+import warnings
+from collections import defaultdict
+from collections.abc import Mapping, Sequence
+import hashlib
+import cloudpickle
+from pprint import pformat
 from typing import Any, Literal, Optional
 
+
 import awkward as ak
-from coffea.analysis_tools import PackedSelection
-from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 import jax
 import jax.numpy as jnp
 import numpy as np
+from tabulate import tabulate
 import uproot
 import vector
+from coffea.analysis_tools import PackedSelection
+from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 
 from analysis.base import Analysis
+from utils.cuts import lumi_mask
 
-# -----------------------------
-# Register backends
-# -----------------------------
+
+# -----------------------------------------------------------------------------
+# Backend & Logging Setup
+# -----------------------------------------------------------------------------
 ak.jax.register_and_check()
 vector.register_awkward()
 
-# -----------------------------
-# Logging Configuration
-# -----------------------------
-
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-logger = logging.getLogger("ZprimeAnalysis")
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s: %(name)s] %(message)s")
+logger = logging.getLogger("DiffAnalysis")
 logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 
-def merge_histograms(existing, new):
+NanoAODSchema.warn_missing_crossrefs = False
+warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
+
+# colours to use in printouts
+GREEN = "\033[92m"
+RESET = "\033[0m"
+
+# -----------------------------------------------------------------------------
+# Utility Functions
+# -----------------------------------------------------------------------------
+def merge_histograms(
+    existing: dict[str, dict[str, dict[str, jnp.ndarray]]],
+    new: dict[str, dict[str, dict[str, jnp.ndarray]]],
+) -> dict[str, dict[str, dict[str, jnp.ndarray]]]:
     """
     Recursively merge `new` histogram dict into `existing`.
     Both must follow the structure:
@@ -46,34 +65,136 @@ def merge_histograms(existing, new):
                     existing[variation][region][observable] = array
     return existing
 
-# --------------------------------
-# Differnetiable Analysis
-# --------------------------------
-class DifferentiableAnalysis(Analysis):
 
-    def __init__(self, config):
+def recursive_to_backend(data: Any, backend: str = "jax") -> Any:
+    """
+    Recursively move data structures containing Awkward Arrays to the specified
+    backend.
+
+    Parameters
+    ----------
+    data : Any
+        Object, list, or dict containing awkward Arrays
+    backend : str
+        Target backend ('jax', 'cpu', etc.)
+
+    Returns
+    -------
+    Any
+        Data with all awkward arrays moved to the specified backend
+    """
+    if isinstance(data, ak.Array):
+        if ak.backend(data) != backend:
+            return ak.to_backend(data, backend)
+        return data
+    elif isinstance(data, Mapping):
+        return {k: recursive_to_backend(v, backend) for k, v in data.items()}
+    elif isinstance(data, Sequence) and not isinstance(data, (str, bytes)):
+        return [recursive_to_backend(v, backend) for v in data]
+    else:
+        return data
+
+
+# -----------------------------------------------------------------------------
+# DifferentiableAnalysis Class Definition
+# -----------------------------------------------------------------------------
+class DifferentiableAnalysis(Analysis):
+    def __init__(self, config: dict[str, Any]) -> None:
+        """Initialize the DifferentiableAnalysis."""
         super().__init__(config)
-        # 4 indices
-        self.histograms = defaultdict(
-            lambda: defaultdict(
-                lambda: defaultdict(dict))
-            )
+        self.histograms: dict[str, dict[str, dict[str, jnp.ndarray]]] = defaultdict(
+            lambda: defaultdict(lambda: defaultdict(dict))
+        )
 
     def set_histograms(
-        self,
-        histograms: dict[str, dict[str, dict[str,jnp.array]]]
+        self, histograms: dict[str, dict[str, dict[str, jnp.ndarray]]]
     ) -> None:
-        """
-        Set the histograms for the analysis for all processes, variations, channels,
-        and observables.
-
-        Parameters
-        ----------
-        histograms : dict
-            Dictionary of histograms with channel, observable, and variation.
-        """
+        """Set the final histograms after processing."""
         self.histograms = histograms
 
+    # -------------------------------------------------------------------------
+    # Significance Calculation
+    # -------------------------------------------------------------------------
+    def _calculate_significance(self) -> jnp.ndarray:
+        """
+        Calculate signal significance using KDE-smoothed nominal histograms.
+
+        Returns
+        -------
+        jnp.ndarray
+            Significance estimate (S / sqrt(B + δS^2 + δB^2))
+        """
+
+        # ------------------------
+        # Accumulate signal & bkg
+        # ------------------------
+        params = self.config.jax.params
+        signal_yield_total = 0.0
+        background_yield_total = 0.0
+        variation = "nominal"
+
+        for channel in self.channels:
+            if not getattr(channel, "use_in_diff", False):
+                continue
+
+            region = channel.name
+            observable = getattr(channel, "fit_observable", None)
+            if observable is None:
+                logger.warning(
+                    f"[Significance] No fit_observable in {region}, skipping."
+                )
+                continue
+
+            bin_vals_signal = bin_vals_bkg = None
+
+            for process, proc_hists in self.histograms.items():
+                if variation not in proc_hists or region not in proc_hists[variation]:
+                    continue
+                if observable not in proc_hists[variation][region]:
+                    continue
+
+                hist = proc_hists[variation][region][observable]
+
+                # -------------
+                # Init storage
+                # -------------
+                if bin_vals_signal is None:
+                    bin_vals_signal = jnp.zeros_like(hist)
+                    bin_vals_bkg = jnp.zeros_like(hist)
+
+                # -------------
+                # Accumulate
+                # -------------
+                if process in {"signal", "zprime"}:
+                    bin_vals_signal += hist
+                elif process != "data":
+                    bin_vals_bkg += hist
+
+            if bin_vals_signal is None:
+                logger.warning(
+                    f"[Significance] No histogram for {region}/{observable}"
+                )
+                continue
+
+            signal_yield_total += jnp.sum(bin_vals_signal)
+            background_yield_total += jnp.sum(bin_vals_bkg)
+
+        # -----------------------------
+        # Compute significance formula
+        # -----------------------------
+        signal_syst = params.get("signal_systematic", 0.05) * signal_yield_total
+        background_syst = (
+            params.get("background_systematic", 0.1) * background_yield_total
+        )
+
+        denom = jnp.sqrt(
+            background_yield_total + signal_syst**2 + background_syst**2 + 1e-6
+        )
+        return signal_yield_total / denom
+
+    # -------------------------------------------------------------------------
+    # Histogramming Logic
+    # -------------------------------------------------------------------------
     def histogramming(
         self,
         object_copies: dict[str, ak.Array],
@@ -82,180 +203,189 @@ class DifferentiableAnalysis(Analysis):
         variation: str,
         xsec_weight: float,
         analysis: str,
-        params,
+        params: dict[str, Any],
         event_syst: Optional[dict[str, Any]] = None,
         direction: Literal["up", "down", "nominal"] = "nominal",
-    ) -> Optional[ak.Array]:
+    ) -> dict[str, jnp.ndarray]:
         """
-        Apply physics selections and fill histograms.
+        Apply selections and fill histograms for each observable and channel.
 
         Parameters
         ----------
         object_copies : dict
             Corrected event-level objects.
         events : ak.Array
-            Original NanoAOD event collection.
+            Original NanoAOD events.
         process : str
-            Sample name.
+            Sample label (e.g. 'ttbar', 'data').
         variation : str
             Systematic variation label.
         xsec_weight : float
-            Normalization weight.
+            Cross-section normalization.
         analysis : str
             Analysis name string.
+        params : dict
+            JAX parameters used in soft selections.
         event_syst : dict, optional
-            Event-level systematic to apply.
+            Event-level systematic.
         direction : str, optional
-            Systematic direction: 'up', 'down', or 'nominal'.
+            Systematic direction: 'up', 'down', 'nominal'.
 
         Returns
         -------
-        dict
-            Updated histogram dictionary.
+        dict[str, jnp.ndarray]
+            Histogram dictionary for the channel and observables.
         """
-        ak.to_backend(events, "jax")
+
+        # ---------------------------
+        # Setup and fast exits
+        # ---------------------------
+        jax_config = self.config.jax
         histograms = defaultdict(dict)
+
         if process == "data" and variation != "nominal":
             return histograms
 
-        object_copies ={
-            collection: ak.Array(var.layout)
-            for collection, var in object_copies.items()
-        }
+        # ---------------------------
+        # Move data to JAX backend
+        # ---------------------------
+        events = recursive_to_backend(events, "jax")
+        object_copies = recursive_to_backend(object_copies, "jax")
 
-        jax_config = self.config.jax
-
+        # ---------------------------
+        # Compute soft selection weights using differentiable function
+        # ---------------------------
         diff_selection_args = self._get_function_arguments(
-                    jax_config.soft_selection.use, object_copies
-                )
-
-        diff_selection_weights = (
-            jax_config.soft_selection.function(*diff_selection_args,
-                                                params)
+            jax_config.soft_selection.use, object_copies
+        )
+        diff_selection_weights = jax_config.soft_selection.function(
+            *diff_selection_args, params
         )
 
+        # ---------------------------
+        # Loop over channels
+        # ---------------------------
         for channel in self.channels:
-            # skip channels in non-differentiable analysis
             if not channel.use_in_diff:
-                logger.warning(
-                    f"Skipping channel {channel.name} in differentiable analysis"
-                )
+                logger.warning(f"Skipping channel {channel.name} in diff analysis")
                 continue
 
             chname = channel["name"]
-            if (req_channels := self.config.general.channels) is not None:
-                if chname not in req_channels:
-                    continue
-            logger.info(
-                f"Applying selection for {chname} in {process}")
-            mask = 1
             if (
-                selection_funciton := channel["selection_function"]
-            ) is not None:
-                selection_args = self._get_function_arguments(
-                    channel["selection_use"], object_copies
-                )
-                packed_selection = selection_funciton(*selection_args)
-                if not isinstance(packed_selection, PackedSelection):
-                    raise ValueError(
-                        f"PackedSelection expected, got {type(packed_selection)}"
-                    )
-                mask = ak.Array(
-                    packed_selection.all(packed_selection.names[-1])
-                )
-
-            mask = ak.to_backend(mask, "jax")
-            if process == "data":
-                mask = mask #& ak.to_backend(lumi_mask(
-                #     self.config.general.lumifile,
-                #     object_copies["run"],
-                #     object_copies["luminosityBlock"],
-                # ), "jax")
-
-            if ak.sum(mask) == 0:
-                logger.warning(
-                    f"{analysis}:: No events left in {chname} for {process} with "
-                    + "variation {variation}"
-                )
+                (req_channels := self.config.general.channels)
+                and chname not in req_channels
+            ):
                 continue
 
-            object_copies_channel = {
-                                collection: variable[mask]
-                                for collection, variable in object_copies.items()
-                            }
+            logger.info(f"Applying selection for {chname} in {process}")
 
+            # ---------------------------
+            # Apply packed selection mask
+            # ---------------------------
+            mask = 1
+            if (sel_fn := channel.selection.function):
+                selection_args = self._get_function_arguments(
+                    channel.selection.use, object_copies
+                )
+                packed = sel_fn(*selection_args)
+                if not isinstance(packed, PackedSelection):
+                    raise ValueError("Expected PackedSelection")
+                mask = ak.Array(packed.all(packed.names[-1]))
+
+            mask = recursive_to_backend(mask, "jax")
+
+            # If data, apply good run list via lumi mask
+            if process == "data":
+                good_runs = lumi_mask(
+                    self.config.general.lumifile,
+                    object_copies["run"],
+                    object_copies["luminosityBlock"],
+                    jax=True,
+                )
+                mask = mask & ak.to_backend(good_runs, "jax")
+
+            if ak.sum(mask) == 0:
+                logger.warning(f"No events left in {chname} for {process}.")
+                continue
+
+            # ---------------------------
+            # Apply selection mask to objects
+            # ---------------------------
+            obj_copies_ch = {
+                k: v[mask] for k, v in object_copies.items()
+            }
+
+            # Compute per-event weights
             if process != "data":
                 weights = (
-                    events[mask].genWeight
-                    * xsec_weight
+                    events[mask].genWeight * xsec_weight
                     / abs(events[mask].genWeight)
                 )
             else:
                 weights = ak.Array(np.ones(ak.sum(mask)))
 
-            weights = jnp.array(weights.to_numpy())
-
+            # Apply event-level systematic reweighting if needed
             if event_syst and process != "data":
                 weights = self.apply_event_weight_correction(
-                    weights, event_syst, direction, object_copies_channel
+                    weights, event_syst, direction, obj_copies_ch
                 )
 
-            mask = ak.to_jax(mask)
-            diff_selection_weights = diff_selection_weights[mask]
-            weights = ak.to_jax(weights)
-            logger.info(f"Number of weighted events in {chname}: {ak.sum(weights):.2f}")
-            logger.info(f"Number of raw events in {chname}: {ak.sum(mask)}")
+            weights = jnp.array(weights.to_numpy())
+            diff_selection_weights = diff_selection_weights[ak.to_jax(mask)]
 
+            logger.info(f"Events in {chname}: raw={ak.sum(mask)}, weighted={ak.sum(weights)}")
+
+            # ---------------------------
+            # Fill histograms for each observable
+            # ---------------------------
             for observable in channel["observables"]:
-                # check if observable works with JAX
                 if not observable.works_with_jax:
-                    logger.warning(
-                        f"Observable {observable['name']} does not work with JAX, skipping."
-                    )
+                    logger.warning(f"Skipping {observable['name']}, not JAX-compatible.")
                     continue
 
-                logger.info(f"Computing observable {observable['name']}")
-                observable_name = observable["name"]
-
+                # Evaluate observable values
                 observable_args = self._get_function_arguments(
-                    observable["use"], object_copies_channel
+                    observable["use"], obj_copies_ch
                 )
-                observable_vals = observable["function"](*observable_args)
-                observable_vals = ak.to_jax(observable_vals)
-                observable_binning = observable["binning"]
+                values = observable["function"](*observable_args)
+                binning = observable["binning"]
 
-                # WIP:: need to enforce presence of this in config
-                bandwidth = jax_config.params['kde_bandwidth']
-                if isinstance(observable_binning, str):
-                    low, high, nbins = map(
-                        float, observable_binning.split(",")
-                    )
-                    nbins = int(nbins)
-                    observable_binning = jnp.linspace(low, high, nbins)
+                # Parse binning string if needed
+                bandwidth = jax_config.params["kde_bandwidth"]
+                if isinstance(binning, str):
+                    low, high, nbins = map(float, binning.split(","))
+                    binning = jnp.linspace(low, high, int(nbins))
                 else:
-                    observable_binning = jnp.array(observable_binning)
+                    binning = jnp.array(binning)
 
-                # KDE-style soft binning
+                # KDE-based soft histogramming
                 cdf = jax.scipy.stats.norm.cdf(
-                    observable_binning.reshape(-1, 1),
-                    loc=observable_vals.reshape(1, -1),
-                    scale=bandwidth
+                    binning.reshape(-1, 1),
+                    loc=ak.to_jax(values).reshape(1, -1),
+                    scale=bandwidth,
                 )
-                # Weight each event's contribution by selection weight
-                weighted_cdf = cdf * diff_selection_weights.reshape(1, -1) * weights.reshape(1, -1)
+                weighted_cdf = (
+                    cdf * diff_selection_weights.reshape(1, -1)
+                    * weights.reshape(1, -1)
+                )
                 bin_weights = weighted_cdf[1:, :] - weighted_cdf[:-1, :]
                 histogram = jnp.sum(bin_weights, axis=1)
-                histograms[chname][observable_name] = histogram
+
+                histograms[chname][observable["name"]] = histogram
 
         return histograms
 
-
+    # -------------------------------------------------------------------------
+    # Event Processing Entry Point
+    # -------------------------------------------------------------------------
     def process(
-        self, events: ak.Array, metadata: dict[str, Any],
+        self,
+        events: ak.Array,
+        metadata: dict[str, Any],
         params: dict[str, Any],
-    ) -> None:
+    ) -> dict[str, dict[str, dict[str, jnp.ndarray]]]:
         """
-        Run the full analysis logic on a batch of events.
+        Run the full analysis logic on events from one dataset.
 
         Parameters
         ----------
@@ -263,78 +393,64 @@ class DifferentiableAnalysis(Analysis):
             Input NanoAOD events.
         metadata : dict
             Metadata with keys 'process', 'xsec', 'nevts', and 'dataset'.
+        params : dict
+            JAX parameter dictionary.
 
         Returns
         -------
         dict
-            Histogram dictionary after processing.
+            Histogram dictionary keyed by variation/channel/observable.
         """
-        all_histograms = self.histograms.copy()
-        analysis = self.__class__.__name__
 
+        # ------
+        # Metadata unpacking
+        # ------
+        all_histograms = self.histograms.copy()
         process = metadata["process"]
         variation = metadata.get("variation", "nominal")
-        logger.debug(f"Processing {process} with variation {variation}")
+        analysis = self.__class__.__name__
         xsec = metadata["xsec"]
         n_gen = metadata["nevts"]
-
         lumi = self.config["general"]["lumi"]
         xsec_weight = (xsec * lumi / n_gen) if process != "data" else 1.0
 
-
-        # Nominal processing
+        # ------
+        # Object preparation and baseline filtering
+        # ------
         obj_copies = self.get_object_copies(events)
-        # Filter objects
-        # Get object masks from configuration:
-        if (obj_masks := self.config.good_object_masks) != []:
-            filtered_objs = self.get_good_objects(obj_copies, obj_masks)
-            for obj, filtered in filtered_objs.items():
-                if obj not in obj_copies:
-                    raise KeyError(f"Object {obj} not found in object_copies")
-                obj_copies[obj] = filtered
 
-        # move everything to JAX backend
-        events = ak.to_backend(events, "jax")
+        # Use CPU backend for jagged masks
+        obj_copies = self.apply_object_masks(obj_copies)
 
-        obj_copies = {
-            coll: ak.to_backend(var, "jax")
-            for coll, var in obj_copies.items()
-        }
+        # Move to JAX for processing
+        events = recursive_to_backend(events, "jax")
+        obj_copies = recursive_to_backend(obj_copies, "jax")
 
-        # Apply baseline selection
+        # Apply baseline selection mask
         baseline_args = self._get_function_arguments(
             self.config.baseline_selection["use"], obj_copies
         )
+        packed = self.config.baseline_selection["function"](*baseline_args)
+        mask = ak.Array(packed.all(packed.names[-1]))
+        # Move mask to JAX backend
+        mask = recursive_to_backend(mask, "jax")
+        obj_copies = {k: v[mask] for k, v in obj_copies.items()}
 
-        packed_selection = self.config.baseline_selection["function"](
-            *baseline_args
-        )
-        mask = ak.Array(packed_selection.all(packed_selection.names[-1]))
-        mask = ak.to_backend(mask, "jax")
-        obj_copies = {
-            collection: variable[mask]
-            for collection, variable in obj_copies.items()
-        }
-        # apply ghost observables
-        obj_copies = self.compute_ghost_observables(
-            obj_copies,
-        )
-
-        # apply event-level corrections
-        # apply nominal corrections
+        # ------
+        # Ghost observable computation and object correction
+        # ------
+        # Compute ghost observables
+        obj_copies = self.compute_ghost_observables(obj_copies)
+        # Apply object corrections (e.g. JEC, JER)
         obj_copies_corrected = self.apply_object_corrections(
             obj_copies, self.corrections, direction="nominal"
         )
-        # apply selection and fill histograms
-        obj_copies_corrected = {
-            obj: var
-            for obj, var in obj_copies_corrected.items()
-        }
+        # Ensure corrected objects in JAX backend
+        obj_copies_corrected = recursive_to_backend(obj_copies_corrected, "jax")
 
-        obj_copies_corrected = {
-            coll: ak.to_backend(var, "jax")
-            for coll, var in obj_copies_corrected.items()
-        }
+        # ------
+        # Nominal histogramming
+        # ------
         histograms = self.histogramming(
             obj_copies_corrected,
             events,
@@ -346,38 +462,32 @@ class DifferentiableAnalysis(Analysis):
         )
         all_histograms["nominal"] = histograms
 
-        # move everything to CPU backend
-        events = ak.to_backend(events, "cpu")
-        obj_copies = {
-            coll: ak.to_backend(var, "cpu")
-            for coll, var in obj_copies.items()
-        }
-
+        # ------
+        # Loop over systematic variations
+        # ------
         if self.config.general.run_systematics:
-            # Systematic variations
             for syst in self.systematics + self.corrections:
                 if syst["name"] == "nominal":
                     continue
-                for direction in ["up", "down"]:
-                    # Filter objects
-                    # Get object masks from configuration:
-                    if (obj_masks := self.config.good_object_masks) != []:
-                        filtered_objs = self.get_good_objects(obj_copies, obj_masks)
-                        for obj, filtered in filtered_objs.items():
-                            if obj not in obj_copies:
-                                raise KeyError(f"Object {obj} not found in object_copies")
-                            obj_copies[obj] = filtered
 
-                    # apply corrections
+                for direction in ["up", "down"]:
+                    varname = f"{syst['name']}_{direction}"
+                    # Move objects to CPU backend for jagged masks
+                    events = recursive_to_backend(events, "cpu")
+                    obj_copies = recursive_to_backend(obj_copies, "cpu")
+                    obj_copies = self.apply_object_masks(obj_copies)
+
+                    # Move back to JAX for processing
+                    events = recursive_to_backend(events, "jax")
+                    obj_copies = recursive_to_backend(obj_copies, "jax")
+
+                    # Apply object corrections (e.g. JEC, JER)
                     obj_copies_corrected = self.apply_object_corrections(
                         obj_copies, [syst], direction=direction
                     )
-                    varname = f"{syst['name']}_{direction}"
-                    events = ak.to_backend(events, "jax")
-                    obj_copies_corrected = {
-                        coll: ak.to_backend(var, "jax")
-                        for coll, var in obj_copies.items()
-                    }
+                    # ------
+                    # Variation histogramming
+                    # ------
                     histograms = self.histogramming(
                         obj_copies_corrected,
                         events,
@@ -391,256 +501,309 @@ class DifferentiableAnalysis(Analysis):
                     )
                     all_histograms[varname] = histograms
 
-
         return all_histograms
 
-    def _calculate_significance(self, ) -> jnp.ndarray:
+    # -------------------------------------------------------------------------
+    # Main Analysis Loop
+    # -------------------------------------------------------------------------
+    def run_analysis_chain(
+        self,
+        params: dict[str, Any],
+        fileset: dict[str, Any],
+        read_from_cache: bool = False,
+        run_and_cache: bool = True,
+        cache_dir: Optional[str] = "/tmp/gradients_analysis/",
+    ) -> jnp.ndarray:
         """
-        Calculate signal significance using KDE-smoothed nominal histograms.
+        Run the full analysis on all datasets in the fileset.
 
         Parameters
         ----------
-        variation : str, optional
-            Systematic variation key to use. Default is "nominal".
+        params : dict
+            Dictionary of analysis parameters.
+        fileset : dict
+            Dictionary mapping dataset names to file and metadata.
 
         Returns
         -------
         jnp.ndarray
-            Signal significance (S / sqrt(B + δS² + δB²)).
+            Final signal significance.
         """
-        params = self.config.jax.params
-        signal_yield_total = 0.0
-        background_yield_total = 0.0
-        variation = "nominal" # nominal only test
-        for channel in self.channels:
-            if not getattr(channel, "use_in_diff", False):
-                continue
 
-            region = channel.name
-            observable = getattr(channel, "fit_observable", None)
-            if observable is None:
-                logger.warning(f"[Significance] No fit_observable in {region}, skipping.")
-                continue
-
-            bin_vals_signal = None
-            bin_vals_bkg = None
-
-            for process, proc_hists in self.histograms.items():
-                # Skip non-nominal or missing data
-                if variation not in proc_hists:
-                    continue
-                if region not in proc_hists[variation]:
-                    continue
-                if observable not in proc_hists[variation][region]:
-                    continue
-
-                hist = proc_hists[variation][region][observable]
-
-                # Lazy init based on first matching histogram
-                if bin_vals_signal is None:
-                    bin_vals_signal = jnp.zeros_like(hist)
-                    bin_vals_bkg = jnp.zeros_like(hist)
-
-                if process in {"signal", "zprime"}:
-                    bin_vals_signal += hist
-                elif process != "data":
-                    bin_vals_bkg += hist
-
-            if bin_vals_signal is None:
-                logger.warning(f"[Significance] No histograms found for {region}/{observable}")
-                continue
-
-            signal_yield = jnp.sum(bin_vals_signal)
-            background_yield = jnp.sum(bin_vals_bkg)
-
-            signal_yield_total += signal_yield
-            background_yield_total += background_yield
-
-        # Systematic uncertainties
-        signal_syst = params.get("signal_systematic", 0.05) * signal_yield_total
-        background_syst = params.get("background_systematic", 0.1) * background_yield_total
-
-        denom = jnp.sqrt(background_yield_total + signal_syst**2 + background_syst**2 + 1e-6)
-        significance = signal_yield_total / denom
-
-        return significance
-
-
-    def run_analysis_chain(self, params, fileset):
-
+        # ----------------------------
+        # Initialize histograms store
+        # ----------------------------
         config = self.config
-        process_histograms = defaultdict(dict)
-        for dataset, content in fileset.items():
+        process_histograms: dict[str, dict[str, dict[str, jnp.ndarray]]] = defaultdict(dict)
 
+        # ----------------------------
+        # Iterate over datasets
+        # ----------------------------
+        for dataset, content in fileset.items():
             metadata = content["metadata"]
             metadata["dataset"] = dataset
             process_name = metadata["process"]
-            if process_name not in process_histograms:
-                process_histograms[process_name] = defaultdict(lambda: defaultdict(dict))
 
-            if (req_processes := config.general.processes) is not None:
-                if process_name not in req_processes:
-                    continue
+            if process_name not in process_histograms:
+                process_histograms[process_name] = defaultdict(
+                    lambda: defaultdict(dict)
+                )
+
+            if (
+                (req_processes := config.general.processes)
+                and process_name not in req_processes
+            ):
+                continue
 
             os.makedirs(f"{config.general.output_dir}/{dataset}", exist_ok=True)
 
             logger.info("========================================")
             logger.info(f"🚀 Processing dataset: {dataset}")
 
-            for idx, (file_path, tree) in enumerate(content["files"].items()):
-                output_dir = (
-                    f"output/{dataset}/file__{idx}/"
-                    if not config.general.preprocessed_dir
-                    else f"{config.general.preprocessed_dir}/{dataset}/file__{idx}/"
-                )
+            # -----------------------------
+            # Iterate over skimmed files
+            # -----------------------------
+            for idx, (_, tree) in enumerate(content["files"].items()):
                 if (
                     config.general.max_files != -1
                     and idx >= config.general.max_files
                 ):
                     continue
 
+                output_dir = (
+                    f"output/{dataset}/file__{idx}/"
+                    if not config.general.preprocessed_dir
+                    else f"{config.general.preprocessed_dir}/{dataset}/file__{idx}/"
+                )
+
                 skimmed_files = glob.glob(f"{output_dir}/part*.root")
                 skimmed_files = [f"{f}:{tree}" for f in skimmed_files]
-                remaining = sum(uproot.open(f).num_entries for f in skimmed_files)
-                logger.info(f"✅ Events retained after filtering: {remaining:,}")
+                remaining = sum(
+                    uproot.open(f).num_entries for f in skimmed_files
+                )
+                logger.info(
+                    f"✅ Events retained after filtering: {remaining:,}"
+                )
 
                 for skimmed in skimmed_files:
                     logger.info(f"📘 Processing skimmed file: {skimmed}")
-                    logger.info("📈 Processing histograms for differentiable analysis")
-                    events = NanoEventsFactory.from_root(
-                        skimmed, schemaclass=NanoAODSchema, delayed=False
-                    ).events()
+                    # If caching is used, create cache directory and build
+                    # cache file name
+                    if run_and_cache or read_from_cache:
+                        os.makedirs(cache_dir, exist_ok=True)
+                        cache_key = hashlib.md5(skimmed.encode()).hexdigest()
+                        cache_file = os.path.join(cache_dir, f"{dataset}__{cache_key}.pkl")
+                    # If user asks to process data then cache it, do it
+                    if run_and_cache:
+                        events = NanoEventsFactory.from_root(
+                            skimmed, schemaclass=NanoAODSchema, delayed=False
+                        ).events()
+                        with open(cache_file, "wb") as f:
+                            cloudpickle.dump(events, f)
+                        logger.info(f"💾 Cached events to {cache_file}")
+
+                    # If user does not want to run then cache, they either want to
+                    # read from cache, or just reprocess without caching
+                    else:
+                        # If user wants to read from cache
+                        if read_from_cache:
+                            # Check if cache file exists and read from it
+                            if os.path.exists(cache_file):
+                                with open(cache_file, "rb") as f:
+                                    events = cloudpickle.load(f)
+                                logger.info(f"🔁 Loaded cached events from {cache_file}")
+
+                            # otherwise, reprocess the file and cache it
+                            else:
+                                logger.warning(
+                                    f"Cache file {cache_file} not found. Reprocessing."
+                                )
+                                events = NanoEventsFactory.from_root(
+                                    skimmed, schemaclass=NanoAODSchema, delayed=False
+                                ).events()
+                                with open(cache_file, "wb") as f:
+                                    cloudpickle.dump(events, f)
+                                logger.info(f"💾 Cached events to {cache_file}")
+                        # In this case user wants nothing to do with caching
+                        else:
+                            events = NanoEventsFactory.from_root(
+                                skimmed, schemaclass=NanoAODSchema, delayed=False
+                            ).events()
+
                     histograms = self.process(events, metadata, params)
-                    logger.info("📈 Completed.")
-                    process_histograms[process_name] = (
-                        merge_histograms(process_histograms[process_name], dict(histograms))
+                    process_histograms[process_name] = merge_histograms(
+                        process_histograms[process_name], dict(histograms)
                     )
 
+            logger.info(f"✅ Finished dataset: {dataset}\n")
 
-            logger.info(f"🏁 Finished dataset: {dataset}\n")
-
+        # -----------------------------
+        # Final aggregation and return
+        # -----------------------------
         self.set_histograms(process_histograms)
-        # compute signifcance
         significance = self._calculate_significance()
 
-        # Report end of processing
         logger.info("✅ All datasets processed.")
-
         return significance
 
-    def run_analysis_chain_with_gradients(self, fileset):
+    # -------------------------------------------------------------------------
+    # Run Full Chain with JAX Gradients
+    # -------------------------------------------------------------------------
+    def run_analysis_chain_with_gradients(
+        self, fileset: dict[str, dict[str, Any]],
+        read_from_cache: bool = False,
+        run_and_cache: bool = True,
+        cache_dir: Optional[str] = "/tmp/gradients_analysis/"
+    ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
         """
-       Run the analysis chain and extract gradients
+        Run the full analysis chain and compute gradients w.r.t. parameters.
 
-        Parameters:
-        -----------
-        process_data_dict : dict
-            Dictionary with process names as keys and JAX data as values
-            e.g., {'signal': jax_data, 'ttbar': jax_data, 'wjets': jax_data}
+        Parameters
+        ----------
+        fileset : dict
+            Dataset files and metadata
+
+        Returns
+        -------
+        tuple
+            (Significance, gradient dictionary)
         """
 
 
-        # Compute significance
-        significance = self.run_analysis_chain(self.config.jax.params, fileset)
+        # Compute significance from datasets
+        significance, gradients = jax.value_and_grad(
+                                    self.run_analysis_chain, argnums=0
+                                )(self.config.jax.params, fileset,
+                                  read_from_cache, run_and_cache, cache_dir)
 
-        print("Running differentiable event loop for multiple processes...")
-        print(f"Processes: {list(self.histograms.keys())}")
-
-        # Create gradient function
-        grad_fn = jax.grad(self.run_analysis_chain, argnums=0)
-        gradients = grad_fn(self.config.jax.params, fileset)
-
-        print(f"Signal significance: {significance}")
-        print(f"Parameter gradients: {gradients}")
+        logger.info(f"Signal significance: {significance:.4f}")
+        logger.info(f"Gradient dictionary: {pformat(gradients)}")
 
         return significance, gradients
 
-
-    def optimize_analysis_cuts(self, fileset):
+    # -------------------------------------------------------------------------
+    # Cut Optimization via Gradient Ascent
+    # -------------------------------------------------------------------------
+    def optimize_analysis_cuts(
+        self, fileset: dict[str, dict[str, Any]]
+    ) -> tuple[dict[str, jnp.ndarray], jnp.ndarray]:
         """
-        Example of how to optimize analysis cuts using multiple processes to maximize significance.
+        Optimize analysis cuts using gradient ascent.
+
+        Parameters
+        ----------
+        fileset : dict
+            File dictionary used for histogram generation.
+
+        Returns
+        -------
+        tuple
+            Optimized parameters and final significance.
         """
-        significance, gradients = self.run_analysis_chain_with_gradients(fileset)
+        logger.info("Running analysis chain with init values for all datasets...")
+        logger.info(f"Processes: {list(fileset.keys())}")
+        # Run the initial analysis chain to get starting significance and gradients
+        cache_dir = "/tmp/gradients_analysis/"
+        significance, gradients = (
+            self.run_analysis_chain_with_gradients(fileset,
+                                                    read_from_cache=False,
+                                                    run_and_cache=True,
+                                                    cache_dir=cache_dir)
+                                                )
 
-        print(f"Initial significance: {significance:.4f}")
-        print(f"Initial gradients: {gradients}")
-
-        # The objective is the differentiable_event_loop itself
-        def objective(params):
-            return self.run_analysis_chain(params, fileset)
-
-        print("\nRunning optimization to maximize significance...")
-
-        # Simple gradient ascent with parameter constraints
-        learning_rate = 0.01
         params = self.config.jax.params.copy()
+        if not self.config.jax.optimize:
+            return params, significance
 
-        print(f"{'Step':>4} {'Significance':>12} {'MET Cut':>8} {'B-tag Cut':>10} {'Lep HT Cut':>11}")
-        print("-" * 55)
+        logger.info("Starting parameter optimization...")
+        logger.info(f"Initial significance: {significance:.4f}")
 
-        for i in range(25):
-            significance = objective(params)
-            grads = jax.grad(objective)(params)
+        def objective(params):
+            return self.run_analysis_chain(params, fileset,
+                                            read_from_cache=True,
+                                            run_and_cache=False,
+                                            cache_dir=cache_dir)
 
-            # Update parameters with constraints
+        learning_rate = self.config.jax.learning_rate
+
+        # Save initial values for comparison
+        initial_params = {k: float(v) for k, v in params.items()}
+
+        logger.info("Starting optimization...\n")
+        print(self.config.jax.max_iterations)
+
+        for i in range(self.config.jax.max_iterations):
+            # Compute significance and gradients
+            significance, gradients = jax.value_and_grad(objective, argnums=0)(params)
+
+            # Parameter update
             for key in params:
-                if key.endswith('_threshold'):
-                    # For cut thresholds, use smaller learning rate and constrain ranges
-                    if key == 'met_threshold':
-                        print(params[key] + learning_rate * grads[key])
-                        params[key] = jnp.clip(
-                            params[key] + learning_rate * grads[key],
-                            20.0, 150.0
-                        )
-                    elif key == 'btag_threshold':
-                        params[key] = jnp.clip(
-                            params[key] + learning_rate * grads[key],
-                            0.1, 0.9
-                        )
-                    elif key == 'lep_ht_threshold':
-                        params[key] = jnp.clip(
-                            params[key] + learning_rate * grads[key],
-                            50.0, 300.0
-                        )
-                elif key.endswith('_weight'):
-                    # For weights, constrain to positive values
-                    params[key] = jnp.maximum(
-                        params[key] + learning_rate * grads[key],
-                        0.01
-                    )
-                elif key.endswith('_scale'):
-                    # Process scales should stay positive and reasonable
-                    params[key] = jnp.clip(
-                        params[key] + learning_rate * grads[key],
-                        0.1, 10.0
-                    )
-                else:
-                    # Other parameters
-                    params[key] = params[key] + learning_rate * grads[key]
+                delta = learning_rate * gradients[key]
+                update_fn = self.config.jax.param_updates.get(key, lambda x, d: x + d)
+                params[key] = update_fn(params[key], delta)
 
-            #if (i + 1) % 5 == 0 or i == 0:
-            print(f"{i+1:4d} {significance:12.4f} {params['met_threshold']:8.1f} "
-                f"{params['btag_threshold']:10.3f} {params['lep_ht_threshold']:11.1f}")
+            # Build table with value, gradient, and % change as columns
+            step_summary = [["Parameter", "Value", "Gradient", "% Change"]]
 
+            for key in sorted(params.keys()):
+                if isinstance(params[key], (int, float, jnp.ndarray)):
+                    new_val = float(params[key])
+                    grad = float(gradients[key])
+                    old_val = initial_params[key]
+                    percent_change = ((new_val - old_val) / (old_val + 1e-12)) * 100
+
+                    colored_val = f"{GREEN}{new_val:.4f}{RESET}" \
+                        if abs(new_val - old_val) > 1e-5 else f"{new_val:.4f}"
+                    step_summary.append([
+                        f"{key:<30}",
+                        colored_val,
+                        f"{grad:+.4f}",
+                        f"{percent_change:+.2f}%"
+                    ])
+
+            # Add significance row
+            step_summary.append(["-" * 30, "-" * 10, "-" * 10, "-" * 10])
+            step_summary.append(["Significance", f"{significance:.4f}", "", ""])
+
+            logger.info("\n" + "=" * 60)
+            logger.info(f" Step {i + 1}: Optimization Summary")
+            logger.info("\n" + tabulate(step_summary, tablefmt="fancy_grid", colalign=("left", "right", "right", "right")))
+            logger.info("=" * 60)
+
+        # After loop: Final summary
         final_significance = objective(params)
-        print(f"\nOptimization complete!")
-        print(f"Initial significance: {significance:.4f}")
-        print(f"Final significance: {final_significance:.4f}")
-        print(f"Improvement: {((final_significance/significance - 1) * 100):.1f}%")
+        improvement = ((final_significance / significance - 1) * 100)
 
-        print(f"\nOptimized parameters:")
-        for key, value in params.items():
-            if isinstance(value, (int, float)) or hasattr(value, 'item'):
-                print(f"  {key}: {float(value):.4f}")
+        # Build colored final param summary
+        param_summary = []
+        for key in sorted(params.keys()):
+            new_val = float(params[key])
+            old_val = initial_params[key]
+            delta = abs(new_val - old_val)
+            formatted_val = f"{new_val:.4f}"
+            formatted_key = f"{key:<30}"
+            if delta > 1e-5:
+                formatted_val = f"{GREEN}{formatted_val}{RESET}"
+                formatted_key = f"{GREEN}{formatted_key}{RESET}"
+            param_summary.append([formatted_key, formatted_val])
 
-        # # Show process contributions at optimal cuts
-        # print(f"\nProcess contributions at optimal cuts:")
-        # histograms = {}
-        # for process_name, jax_data in process_data_dict.items():
-        #     if len(jax_data['met_pt']) == 0:
-        #         continue
-        #     selection_weight, _ = analysis.diff_selections.soft_selection_cuts(params, jax_data)
-        #     total_weight = jnp.sum(selection_weight)
-        #     print(f"  {process_name}: {float(total_weight):.1f} events")
+        # Significance summary
+        final_stats = [
+            ["Initial Significance", f"{significance:.4f}"],
+            ["Final Significance", f"{final_significance:.4f}"],
+            ["Improvement (%)", f"{improvement:.2f}%"],
+        ]
+
+        # Print summaries
+        logger.info("\nFinal Optimized Parameters:")
+        logger.info("\n" + tabulate(param_summary,
+                                    headers=["Parameter", "Value"],
+                                    tablefmt="fancy_grid",
+                                    colalign=("left", "right")))
+
+        logger.info("Significance Summary:")
+        logger.info("\n" + tabulate(final_stats,
+                                    tablefmt="fancy_grid",
+                                    colalign=("left", "right")))
 
         return params, final_significance

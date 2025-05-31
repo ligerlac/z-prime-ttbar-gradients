@@ -23,19 +23,18 @@ class SubscriptableModel(BaseModel):
         return getattr(self, key, default)
 
 
-class SelectionConfig(SubscriptableModel):
+class FunctorConfig(SubscriptableModel):
     function: Annotated[
         Callable,
         Field(
-            description="Function to compute the baseline selection. "
-            "Must return a PackedSelection object."
+            description="Function to be computed."
         ),
     ]
     use: Annotated[
         Optional[List[ObjVar]],
         Field(
             default=None,
-            description="(object, variable) pairs for the selection function.",
+            description="(object, variable) pairs for the function.",
         ),
     ]
 
@@ -80,6 +79,11 @@ class GeneralConfig(SubscriptableModel):
         Field(
             description="Path to JSON file with good luminosity sections",
         ),
+    ]
+    analysis: Annotated[
+        Optional[str],
+        Field(default="nondiff",
+              description="Analysis MODE: 'diff', 'nondiff' or 'both'"),
     ]
     max_files: Annotated[
         Optional[int],
@@ -136,12 +140,21 @@ class GeneralConfig(SubscriptableModel):
         ),
     ]
 
+    @model_validator(mode="after")
+    def validate_general(self) -> "GeneralConfig":
+        if self.analysis not in ["diff", "nondiff", "both"]:
+            raise ValueError(
+                f"Invalid analysis mode '{self.analysis}'. Must be 'diff' or 'nondiff'."
+            )
+
+        return self
+
 # ------------------------
 # JAX configuration
 # ------------------------
 class JaxConfig(SubscriptableModel):
     soft_selection: Annotated[
-        SelectionConfig,
+        FunctorConfig,
         Field(
             description="Soft selection function for JAX-mode observable shaping. "
             "Should return a dictionary of soft selections."
@@ -151,7 +164,39 @@ class JaxConfig(SubscriptableModel):
         dict[str, float],
         Field(description="Thresholds, weights, and scaling factors used in JAX backend."),
     ]
-
+    optimize: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Whether to run JAX optimisation for soft selection parameters",
+        ),
+    ]
+    learning_rate: Annotated[
+        float,
+        Field(
+            default=0.01,
+            description="Learning rate for JAX optimisation",
+        ),
+    ]
+    max_iterations: Annotated[
+        Optional[int],
+        Field(
+            default=25,
+            description="Number of optimisation steps for JAX",
+        ),
+    ]
+    param_updates: Annotated[
+            dict[str, Callable[[float, float], float]],
+            Field(
+                default_factory=dict,
+                description=(
+                    "Optional per-parameter update rules. Maps parameter name to a callable "
+                    "that accepts (value, delta) and returns updated value. "
+                    "Delta is defined as `learning_rate * gradient`. "
+                    "Example: {'met_threshold': lambda x, d: jnp.clip(x + d, 20.0, 150.0)}"
+                ),
+            ),
+        ]
 # ------------------------
 # Preprocessing configuration
 # ------------------------
@@ -329,41 +374,15 @@ class ChannelConfig(SubscriptableModel):
         str,
         Field(description="Name of the observable to use for fitting"),
     ]
-
-    selection_function: Annotated[
-        Optional[Callable],
+    selection: Annotated[
+        Optional[FunctorConfig],
         Field(
             default=None,
-            description="Callable for event selection. If None, all events are "
-            + "selected. Must return a PackedSelection object.",
+            description="Event selection function for this channel. "
+            + "If None, all events are selected. Function must "
+            + "return a PackedSelection object.",
         ),
     ]
-    selection_use: Annotated[
-        Optional[List[ObjVar]],
-        Field(
-            default=None,
-            description="(object, variable) pairs for the selection function.",
-        ),
-    ]
-
-    soft_selection_function: Annotated[
-        Optional[Callable],
-        Field(
-            default=None,
-            description="Callable for soft event selection. If None, all events "
-            + "are selected. Must return a dictionary of cut name to mask. "
-            + "The selections do not apply in JAX version.",
-        ),
-    ]
-
-    soft_selection_use: Annotated[
-        Optional[List[ObjVar]],
-        Field(
-            default=None,
-            description="(object, variable) pairs for the soft selection function.",
-        ),
-    ]
-
     use_in_diff: Annotated[
         Optional[bool],
         Field(
@@ -375,15 +394,10 @@ class ChannelConfig(SubscriptableModel):
 
     @model_validator(mode="after")
     def validate_fields(self) -> "ChannelConfig":
-        if self.selection_function and not self.selection_use:
+        if self.selection.function and not self.selection.use:
             raise ValueError(
-                "If 'selection_function' is provided, 'selection_use' must also "
+                "If 'selection.function' is provided, 'selection.use' must also "
                 + "be specified."
-            )
-        if self.soft_selection_function and not self.soft_selection_use:
-            raise ValueError(
-                "If 'soft_selection_function' is provided, 'soft_selection_use' "
-                + "must also be specified."
             )
         if not self.observables:
             raise ValueError("Each channel must have at least one observable.")
@@ -554,7 +568,7 @@ class Config(SubscriptableModel):
         ),
     ]
     baseline_selection: Annotated[
-        Optional[SelectionConfig],
+        Optional[FunctorConfig],
         Field(
             default=None,
             description="Baseline event selection applied before "

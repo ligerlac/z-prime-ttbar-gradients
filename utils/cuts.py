@@ -7,84 +7,148 @@ from functools import partial
 
 ak.jax.register_and_check()
 
-
 #===================
-# Selection good-run data
+# Select good run data
 #===================
-# https://github.com/cms-opendata-workshop/workshop2024-lesson-event-selection/blob/main/instructors/dpoa_workshop_utilities.py
-def lumi_mask(lumifile, run, lumiBlock, verbose=False):
+def lumi_mask(
+    lumifile: str,
+    run: ak.Array,
+    lumiBlock: ak.Array,
+    verbose: bool = False,
+    jax: bool = False
+) -> ak.Array:
+    """
+    Create a boolean mask selecting events that pass the good run/lumi criteria.
+    https://github.com/cms-opendata-workshop/workshop2024-lesson-event-selection/blob/main/instructors/dpoa_workshop_utilities.py
 
-    # lumifile should be the name/path of the file
-    good_luminosity_sections = ak.from_json(open(lumifile, "rb"))
-    # Pull out the good runs as integers
-    good_runs = np.array(good_luminosity_sections.fields).astype(int)
+    This function compares the `(run, lumiBlock)` pairs in the dataset to the
+    certified good luminosity sections provided in a JSON file (e.g., from
+    CMS Golden JSON). It supports both CPU and JAX backends.
 
-    # Get the good blocks as an awkward array
-    # First loop over to get them as a list
-    all_good_blocks = []
-    for field in good_luminosity_sections.fields:
-        all_good_blocks.append(good_luminosity_sections[field])
+    Parameters
+    ----------
+    lumifile : str
+        Path to the JSON file defining the certified good lumi sections.
+    run : ak.Array
+        Run numbers for each event in the dataset.
+    lumiBlock : ak.Array
+        Luminosity block numbers for each event in the dataset.
+    verbose : bool, optional
+        If True, prints additional debug information.
+    jax : bool, optional
+        If True, converts result to JAX backend after masking.
 
-    # Turn the list into an awkward array
-    all_good_blocks = ak.to_backend(ak.Array(all_good_blocks), ak.backend(run))
+    Returns
+    -------
+    ak.Array
+        A boolean array (same length as `run`) indicating good events.
+    """
+    # -----------------------------
+    # Load good lumi sections JSON
+    # -----------------------------
+    good_lumi_sections = ak.from_json(open(lumifile, "rb"))
 
-    # ChatGPT helped me with this part!
-    # Find index of values in arr2 if those values appear in arr1
-    def find_indices(arr1, arr2):
+    # Extract good run numbers (as integers)
+    good_runs = np.array(good_lumi_sections.fields).astype(int)
+
+    # -----------------------------
+    # Build array of lumi blocks
+    # -----------------------------
+    good_blocks = [
+        good_lumi_sections[field] for field in good_lumi_sections.fields
+    ]
+    all_good_blocks = ak.to_backend(ak.Array(good_blocks), ak.backend(run))
+
+    # -----------------------------
+    # Match run numbers to good runs
+    # -----------------------------
+    def find_indices(arr1: np.ndarray, arr2: ak.Array) -> ak.Array:
         arr1_np = np.asarray(ak.to_numpy(arr1))
         arr2_np = np.asarray(ak.to_numpy(arr2))
 
-        # Sort arr1 and track original indices
+        # Sort arr1 and track indices
         sorter = np.argsort(arr1_np)
         sorted_arr1 = arr1_np[sorter]
 
-        # Search positions
+        # Find insertion positions of arr2 elements into arr1
         pos = np.searchsorted(sorted_arr1, arr2_np)
 
-        # Check if arr2 values actually exist in arr1
+        # Validate matches
         valid = (pos < len(arr1_np)) & (sorted_arr1[pos] == arr2_np)
 
-        # Prepare result
+        # Build result array
         out = np.full(len(arr2_np), -1, dtype=int)
         out[valid] = sorter[pos[valid]]
         return ak.to_backend(ak.Array(out), ak.backend(arr2))
 
-    # Get the indices that say where the good runs are in the lumi file
-    # for the runs that appear in the tree
-    good_runs_indices = find_indices(good_runs, run)
+    good_run_indices = find_indices(good_runs, run)
 
-    # For each event, calculate the difference between the luminosity block
-    # and the good luminosity blocks for that run for that event
-    diff = lumiBlock - all_good_blocks[good_runs_indices]
+    # -----------------------------
+    # Compute per-event lumi block diffs
+    # -----------------------------
+    # Optionally convert inputs to CPU before difference
+    if jax:
+        lumiBlock = ak.to_backend(lumiBlock, "cpu")
+        all_good_blocks = ak.to_backend(all_good_blocks, "cpu")
+        good_run_indices = ak.to_backend(good_run_indices, "cpu")
 
-    # If the lumi block appears between any of those good block numbers,
-    # then one difference will be positive and the other will be negative
-    #
-    # If it it outside of the range, both differences will be positive or
-    # both negative.
-    #
-    # The product will be negagive if the lumi block is in the range
-    # and positive if it is not in the range
+    # Calculate (event lumi - good lumi) for matched run
+    diff = lumiBlock - all_good_blocks[good_run_indices]
+
+    # Optionally switch back to JAX backend
+    if jax:
+        diff = ak.to_backend(diff, "jax")
+
+    # -----------------------------
+    # Evaluate mask from differences
+    # -----------------------------
+    # For a lumi to be valid, it must lie within one of the good ranges
+    # So the difference must have both positive and negative signs
     prod_diff = ak.prod(diff, axis=2)
     mask = ak.any(prod_diff <= 0, axis=1)
+
     return mask
 
 
 #===================
 #Selection which is applied to all regions
 #===================
-def Zprime_baseline(muons, jets, fatjets, met):
+def Zprime_baseline(
+    muons: ak.Array,
+    jets: ak.Array,
+    fatjets: ak.Array,
+    met: ak.Array
+) -> PackedSelection:
     """
-    Select events based on the Zprime workshop selection criteria.
+    Define baseline selection criteria used across all analysis regions.
+
+    Parameters
+    ----------
+    muons : ak.Array
+        Muon collection for the event.
+    jets : ak.Array
+        Jet collection (not used in baseline, included for interface consistency).
+    fatjets : ak.Array
+        Fat jet collection (not used here).
+    met : ak.Array
+        Missing transverse energy (MET), unused here but accepted for API uniformity.
+
+    Returns
+    -------
+    PackedSelection
+        Bitmask selection object with baseline cuts.
     """
     selections = PackedSelection(dtype="uint64")
-    selections.add("exactly_1mu", ak.num(muons) == 1)
-    selections.add(
-        "baseline",
-        selections.all(
-            "exactly_1mu",
-        ),
-    )
+
+    # ---------------------
+    # Require exactly 1 muon
+    # ---------------------
+    selections.add("exactly_1mu", ak.num(muons, axis=1) == 1)
+
+    # ---------------------
+    # Baseline composite mask
+    # ---------------------
+    selections.add("baseline", selections.all("exactly_1mu"))
 
     return selections
 
@@ -92,21 +156,45 @@ def Zprime_baseline(muons, jets, fatjets, met):
 #===================
 #Selection which will not be optimised from WS
 #===================
-def Zprime_hardcuts(muons, jets, fatjets):
+def Zprime_hardcuts(
+    muons: ak.Array,
+    jets: ak.Array,
+    fatjets: ak.Array
+) -> PackedSelection:
     """
-    Select events based on the Zprime workshop selection criteria.
+    Define non-optimizable kinematic cuts (used in JAX analysis)
+    These hard cuts + baseline cuts ensure observable calculations
+    can work without errors.
+
+    Parameters
+    ----------
+    muons : ak.Array
+        Muon collection.
+    jets : ak.Array
+        Jet collection.
+    fatjets : ak.Array
+        Fat jet collection.
+
+    Returns
+    -------
+    PackedSelection
+        Bitmask selection object containing hard selection criteria.
     """
     selections = PackedSelection(dtype="uint64")
+
+    # ---------------------
+    # Object count requirements
+    # ---------------------
     selections.add("exactly_1mu", ak.num(muons, axis=1) == 1)
     selections.add("atleast_1jet", ak.num(jets, axis=1) > 0)
     selections.add("atleast_1fj", ak.num(fatjets, axis=1) > 0)
+
+    # ---------------------
+    # Composite region selection
+    # ---------------------
     selections.add(
         "Zprime_channel",
-        selections.all(
-            "exactly_1mu",
-            "atleast_1jet",
-            "atleast_1fj",
-        ),
+        selections.all("exactly_1mu", "atleast_1jet", "atleast_1fj")
     )
 
     return selections
@@ -115,185 +203,346 @@ def Zprime_hardcuts(muons, jets, fatjets):
 #===================
 # All selection from workshop
 #===================
-def Zprime_softcuts_nonjax_workshop(muons, jets, fatjets, met):
+# -----------------------------------------------------------------------------
+# Zprime Softcuts (non-JAX, Workshop Version) — PackedSelection
+# -----------------------------------------------------------------------------
+def Zprime_workshop_cuts(
+    muons: ak.Array,
+    jets: ak.Array,
+    fatjets: ak.Array,
+    met: ak.Array
+) -> PackedSelection:
     """
-    Select events based on the Zprime workshop selection criteria.
-    """
-    # Leptonic HT
-    lep_ht = muons.pt + met.pt
-    soft_cuts = {
-        "atleast_1b": ak.sum((jets.btagDeepB > 0.5) & (jets.jetId >= 4), axis=1) > 0,
-        "met_cut": met.pt > 50,
-        "muon_ht": ak.sum(lep_ht > 150., axis=1) == 1,
-        "exactly_1fatjet": ak.sum((fatjets.particleNet_TvsQCD > 0.5) & (fatjets.pt > 500.), axis=1) == 1,
-    }
+    Apply all selection cuts for Zprime analysis from CMS workshop 2024.
 
-    return soft_cuts
+    These represent a non-optimized, physics-motivated set of cuts used during
+    prototyping and initial analysis, and match the OpenData workshop results.
+
+    Parameters
+    ----------
+    muons : ak.Array
+        Muon collection.
+    jets : ak.Array
+        Jet collection.
+    fatjets : ak.Array
+        Fat jet collection.
+    met : ak.Array
+        Missing transverse energy (MET).
+
+    Returns
+    -------
+    PackedSelection
+        Bitmask selection object containing workshop softcut flags.
+    """
+    selections = PackedSelection(dtype="uint64")
+
+    # ---------------------
+    # Basic object and MET cuts
+    # ---------------------
+    selections.add("exactly_1mu", ak.num(muons, axis=1) == 1)
+    selections.add(
+        "atleast_1b",
+        ak.sum((jets.btagDeepB > 0.5) & (jets.jetId >= 4), axis=1) > 0
+    )
+    selections.add("met_cut", met.pt > 50)
+
+    # ---------------------
+    # Leptonic HT (muon + MET)
+    # ---------------------
+    lep_ht = muons.pt + met.pt
+    selections.add("muon_ht", ak.sum(lep_ht > 150.0, axis=1) == 1)
+
+    # ---------------------
+    # Fatjet topology cut
+    # ---------------------
+    selections.add(
+        "exactly_1fatjet",
+        ak.sum(
+            (fatjets.particleNet_TvsQCD > 0.5) & (fatjets.pt > 500.0),
+            axis=1
+        ) == 1
+    )
+
+    # ---------------------
+    # Composite softcut channel
+    # ---------------------
+    selections.add(
+        "Zprime_channel",
+        selections.all(
+            "exactly_1mu",
+            "atleast_1b",
+            "met_cut",
+            "muon_ht",
+            "exactly_1fatjet"
+        )
+    )
+
+    return selections
 
 #====================
 # JAX version of the workshop selection
 #====================
 #@jax.jit
-def Zprime_softcuts_jax_workshop(muons, jets, fatjets, met, params):
+def Zprime_softcuts_jax_workshop(
+    muons: ak.Array,
+    jets: ak.Array,
+    fatjets: ak.Array,
+    met: ak.Array,
+    params: dict
+) -> jnp.ndarray:
     """
-    Differentiable version of analysis cuts, suitable for JAX-based optimization.
-    Must return analysis selections as weights. JAX functions must take
-    a params argument in the very end to set initial values of cuts.
-    The params argument is passed automatically in the analysis class.
+    Differentiable version of workshop-style softcuts using JAX.
 
-    Parameters:
-    -----------
-    muons: JAX array of muon objects
-    jets: JAX array of jet objects
-    fatjets: JAX array of fatjet objects
-    met: JAX array of missing transverse energy (MET) objects
-    params: dictionary of parameters for the cuts, e.g. thresholds
+    This returns a selection "weight" for each event based on smooth (sigmoid)
+    approximations of step functions to allow gradient-based optimization.
 
-    Returns:
-    --------
-    selection_weight: JAX array of selection weights based on the cuts
+    Parameters
+    ----------
+    muons : ak.Array
+        Muon collection in JAX backend.
+    jets : ak.Array
+        Jet collection in JAX backend.
+    fatjets : ak.Array
+        Fat jet collection in JAX backend.
+    met : ak.Array
+        MET collection in JAX backend.
+    params : dict
+        Dictionary of cut thresholds and scales (e.g. for MET cut).
 
+    Returns
+    -------
+    jnp.ndarray
+        Per-event array of selection weights (range [0, 1]) for gradient flow.
     """
-
-    # All inputs are now pure JAX arrays
     # met_pt = met.pt
     # jets_btag = jets.btagDeepB
     # lep_ht = muons.pt + met_pt
     #met_pt = met
     #jets_btag = jets
     #lep_ht = muons[:,0] + met
-
-    # Soft cuts with differentiable thresholds
+    # ---------------------
+    # Define differentiable sigmoid cuts
+    # ---------------------
     cuts = {
-        'met_cut': jax.nn.sigmoid(
-            (ak.to_jax(met) - params['met_threshold']) / params['met_scale']
+        "met_cut": jax.nn.sigmoid(
+            (ak.to_jax(met) - params["met_threshold"]) / params["met_scale"]
         ),
+        # Additional cuts can be added here similarly
         # 'btag_cut': jax.nn.sigmoid(
         # (jets - params['btag_threshold']) * 10
         # ),
         # 'lep_ht_cut': jax.nn.sigmoid(
         #     (lep_ht - params['lep_ht_threshold']) / 50.0
-        # )
     }
 
-    # Combine cuts (product gives intersection-like behavior)
-    cut_values = jnp.stack([cuts['met_cut']])#, cuts['btag_cut'], cuts['lep_ht_cut']])
+    # ---------------------
+    # Combine cut weights multiplicatively (AND logic)
+    # ---------------------
+    cut_values = jnp.stack([cuts["met_cut"]])
     selection_weight = jnp.prod(cut_values, axis=0)
 
     return selection_weight
 
-#===========================================================
-# Regions from paper
-#===========================================================
-#===================
-# Baseline selection
-#===================
-def Zprime_softcuts_nonjax_paper(muons, jets, fatjets, met):
+from coffea.analysis_tools import PackedSelection
+import awkward as ak
+
+# ===========================================================
+# Zprime Selection Regions Based on Physics Paper Definitions
+# ===========================================================
+def Zprime_softcuts_nonjax_paper(
+    muons: ak.Array,
+    jets: ak.Array,
+    fatjets: ak.Array,
+    met: ak.Array
+) -> PackedSelection:
     """
-    Select events based on the Zprime workshop selection criteria.
+    Paper-based soft selection cuts for the Zprime analysis.
+
+    Implements kinematic selections and object ID cuts as described in
+    section 7.2 of https://arxiv.org/pdf/1810.05905, including lepton
+    isolation, jet pT thresholds, and top-tagging constraints.
+
+    Parameters
+    ----------
+    muons : ak.Array
+        Muon candidates.
+    jets : ak.Array
+        Jet candidates.
+    fatjets : ak.Array
+        Large-R jet candidates.
+    met : ak.Array
+        Missing transverse energy.
+
+    Returns
+    -------
+    PackedSelection
+        Bitmask selection object with all softcut flags.
     """
-    # Leptonic HT
+    selections = PackedSelection(dtype="uint64")
+
     lep_ht = muons.pt + met.pt
 
-    # Minimum deltaR between muon and any jet
-    muon_in_pair, jet_in_pair = ak.unzip(ak.cartesian([muons, jets]))
+    # Compute deltaR and pTrel between muon and nearest jet
+    muon_jets = ak.cartesian([muons, jets], nested=True)
+    muon_in_pair, jet_in_pair = ak.unzip(muon_jets)
     deltaR = muon_in_pair.deltaR(jet_in_pair)
     min_deltaR = ak.min(deltaR, axis=1)
 
-    # pTrel
     closest_jet_idx = ak.argmin(deltaR, axis=1, keepdims=True)
     closest_jet = jet_in_pair[closest_jet_idx]
     delta_angle = muons.deltaangle(closest_jet)
-    pt_rel = muons.p * np.sin(delta_angle)
+    pt_rel = muons.p * ak.sin(delta_angle)
 
-    soft_cuts = {
-        "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
-        "met_cut": met.pt > 50,
-        "lep_ht_cut": ak.fill_none(ak.firsts(lep_ht) > 150, False),
-        "lepton_2d": ak.fill_none(ak.sum((min_deltaR > 0.4) | (pt_rel > 25.), axis=1) > 0, False),
-        "at_least_1_150gev_jet": ak.sum(jets.pt > 150, axis=1) > 0,
-        "at_least_1_50gev_jet": ak.sum(jets.pt > 50, axis=1) > 0,
-        "nomore_than_1_top_tagged_jet": ak.sum(fatjets.particleNet_TvsQCD > 0.5, axis=1) < 2,
-    }
+    selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
+    selections.add("met_cut", met.pt > 50)
+    selections.add("lep_ht_cut", ak.fill_none(ak.firsts(lep_ht) > 150, False))
+    selections.add(
+        "lepton_2d",
+        ak.fill_none(
+            ak.sum((min_deltaR > 0.4) | (pt_rel > 25.), axis=1) > 0, False
+        )
+    )
+    selections.add("at_least_1_150gev_jet", ak.sum(jets.pt > 150, axis=1) > 0)
+    selections.add("at_least_1_50gev_jet", ak.sum(jets.pt > 50, axis=1) > 0)
+    selections.add(
+        "nomore_than_1_top_tagged_jet",
+        ak.sum(fatjets.particleNet_TvsQCD > 0.5, axis=1) < 2
+    )
 
-    return soft_cuts
+    return selections
 
-#===================
-# SR (1Tag) selection
-#===================
-def Zprime_softcuts_SR_tag(muons, jets, fatjets, met, ttbar_reco, mva):
+
+def Zprime_softcuts_SR_tag(
+    muons: ak.Array,
+    jets: ak.Array,
+    fatjets: ak.Array,
+    met: ak.Array,
+    ttbar_reco: ak.Array,
+    mva: ak.Array
+) -> PackedSelection:
     """
-    Select events based on section 7.2 of
-    https://arxiv.org/pdf/1810.05905
+    Signal Region (1-tag) selection following Sec. 7.2 of the Zprime paper.
+
+    Parameters
+    ----------
+    muons : ak.Array
+    jets : ak.Array
+    fatjets : ak.Array
+    met : ak.Array
+    ttbar_reco : ak.Array
+        ttbar reconstruction output including chi2.
+    mva : ak.Array
+        Neural net discriminant scores.
+
+    Returns
+    -------
+    PackedSelection
     """
+    selections = PackedSelection(dtype="uint64")
     lep_ht = muons.pt + met.pt
-    soft_cuts = {
-        "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
-        "met_cut": met.pt > 50,
-        "lep_ht_cut": ak.fill_none(ak.firsts(lep_ht) > 150, False),
-        "exactly_1fatjet":  ak.sum(fatjets.particleNet_TvsQCD > 0.5, axis=1) == 1,
-        "chi2_cut": ttbar_reco.chi2 < 30.,
-        "nn_score": mva.nn_score >= 0.5,
-    }
 
-    return soft_cuts
+    selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
+    selections.add("met_cut", met.pt > 50)
+    selections.add("lep_ht_cut", ak.fill_none(ak.firsts(lep_ht) > 150, False))
+    selections.add(
+        "exactly_1fatjet",
+        ak.sum(fatjets.particleNet_TvsQCD > 0.5, axis=1) == 1
+    )
+    selections.add("chi2_cut", ttbar_reco.chi2 < 30.)
+    selections.add("nn_score", mva.nn_score >= 0.5)
+
+    return selections
 
 
-#===================
-# SR (0Tag) selection
-#===================
-def Zprime_softcuts_SR_notag(muons, jets, fatjets, met, ttbar_reco, mva):
+def Zprime_softcuts_SR_notag(
+    muons: ak.Array,
+    jets: ak.Array,
+    fatjets: ak.Array,
+    met: ak.Array,
+    ttbar_reco: ak.Array,
+    mva: ak.Array
+) -> PackedSelection:
     """
-    Select events based on section 7.2 of
-    https://arxiv.org/pdf/1810.05905
+    Signal Region (0-tag) selection (no top-tagged fatjets).
+
+    Parameters
+    ----------
+    muons : ak.Array
+    jets : ak.Array
+    fatjets : ak.Array
+    met : ak.Array
+    ttbar_reco : ak.Array
+    mva : ak.Array
+
+    Returns
+    -------
+    PackedSelection
     """
+    selections = PackedSelection(dtype="uint64")
     lep_ht = muons.pt + met.pt
-    soft_cuts = {
-        "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
-        "met_cut": met.pt > 50,
-        "lep_ht_cut": ak.fill_none(ak.firsts(lep_ht) > 150, False),
-        "exactly_1fatjet": ak.num(fatjets) == 0,
-        "chi2_cut": ttbar_reco.chi2 < 30.,
-        "nn_score": mva.nn_score >= 0.5,
-    }
 
-    return soft_cuts
+    selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
+    selections.add("met_cut", met.pt > 50)
+    selections.add("lep_ht_cut", ak.fill_none(ak.firsts(lep_ht) > 150, False))
+    selections.add("exactly_0fatjet", ak.num(fatjets) == 0)
+    selections.add("chi2_cut", ttbar_reco.chi2 < 30.)
+    selections.add("nn_score", mva.nn_score >= 0.5)
+
+    return selections
 
 
-#===================
-# CR1 selection (wjets)
-#===================
-def Zprime_softcuts_CR1(muons, jets, fatjets, met, ttbar_reco, mva):
+def Zprime_softcuts_CR1(
+    muons: ak.Array,
+    jets: ak.Array,
+    fatjets: ak.Array,
+    met: ak.Array,
+    ttbar_reco: ak.Array,
+    mva: ak.Array
+) -> PackedSelection:
     """
-    Select events based on section 7.2 of
-    https://arxiv.org/pdf/1810.05905
+    Control Region 1 (W+jets enriched) selection as in paper Sec. 7.2.
+
+    Returns
+    -------
+    PackedSelection
     """
+    selections = PackedSelection(dtype="uint64")
     lep_ht = muons.pt + met.pt
-    soft_cuts = {
-        "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
-        "met_cut": met.pt > 50,
-        "lep_ht_cut": ak.fill_none(ak.firsts(lep_ht) > 150, False),
-        "chi2_cut": ttbar_reco.chi2 < 30.,
-        "nn_score": mva.nn_score < -0.75,
-    }
 
-    return soft_cuts
+    selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
+    selections.add("met_cut", met.pt > 50)
+    selections.add("lep_ht_cut", ak.fill_none(ak.firsts(lep_ht) > 150, False))
+    selections.add("chi2_cut", ttbar_reco.chi2 < 30.)
+    selections.add("nn_score", mva.nn_score < -0.75)
 
-#===================
-# CR2 selection (ttbar)
-#===================
-def Zprime_softcuts_CR2(muons, jets, fatjets, met, ttbar_reco, mva):
+    return selections
+
+
+def Zprime_softcuts_CR2(
+    muons: ak.Array,
+    jets: ak.Array,
+    fatjets: ak.Array,
+    met: ak.Array,
+    ttbar_reco: ak.Array,
+    mva: ak.Array
+) -> PackedSelection:
     """
-    Select events based on section 7.2 of
-    https://arxiv.org/pdf/1810.05905
+    Control Region 2 (ttbar enriched) selection.
+
+    Returns
+    -------
+    PackedSelection
     """
+    selections = PackedSelection(dtype="uint64")
     lep_ht = muons.pt + met.pt
-    soft_cuts = {
-        "atleast_1b": ak.sum(jets.btagDeepB > 0.5, axis=1) > 0,
-        "met_cut": met.pt > 50,
-        "lep_ht_cut": ak.fill_none(ak.firsts(lep_ht) > 150, False),
-        "chi2_cut": ttbar_reco.chi2 < 30.,
-        "nn_score":  ((mva.nn_score < 0.5) & (mva.nn_score > 0.0)),
-    }
 
-    return soft_cuts
+    selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
+    selections.add("met_cut", met.pt > 50)
+    selections.add("lep_ht_cut", ak.fill_none(ak.firsts(lep_ht) > 150, False))
+    selections.add("chi2_cut", ttbar_reco.chi2 < 30.)
+    selections.add(
+        "nn_score_range",
+        (mva.nn_score > 0.0) & (mva.nn_score < 0.5)
+    )
+
+    return selections

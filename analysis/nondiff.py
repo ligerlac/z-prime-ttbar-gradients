@@ -5,6 +5,7 @@ import logging
 import operator
 import os
 from typing import Any, Literal, Optional
+import warnings
 
 import awkward as ak
 import cabinetry
@@ -31,10 +32,12 @@ vector.register_awkward()
 # -----------------------------
 # Logging Configuration
 # -----------------------------
-
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-logger = logging.getLogger("ZprimeAnalysis")
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s: %(name)s] %(message)s")
+logger = logging.getLogger("NonDiffAnalysis")
 logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
+
+NanoAODSchema.warn_missing_crossrefs = False
+warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
 
 # -----------------------------
 # ZprimeAnalysis Class Definition
@@ -154,10 +157,10 @@ class NonDiffAnalysis(Analysis):
                 f"Applying selection for {chname} in {process}")
             mask = 1
             if (
-                selection_funciton := channel["selection_function"]
+                selection_funciton := channel.selection.function
             ) is not None:
                 selection_args = self._get_function_arguments(
-                    channel["selection_use"], object_copies
+                    channel.selection.use, object_copies
                 )
                 packed_selection = selection_funciton(*selection_args)
                 if not isinstance(packed_selection, PackedSelection):
@@ -186,31 +189,6 @@ class NonDiffAnalysis(Analysis):
                                 collection: variable[mask]
                                 for collection, variable in object_copies.items()
                             }
-
-            # WIP:: This should be fully removed (no need anymore, all cuts equal footing)
-            soft_mask = 1.0
-            if (
-                soft_selection_funciton := channel[
-                    "soft_selection_function"
-                ]
-            ) is not None:
-                soft_selection_args = self._get_function_arguments(
-                    channel["soft_selection_use"], object_copies_channel
-                )
-                soft_selection_dict = soft_selection_funciton(
-                    *soft_selection_args
-                )
-
-                soft_mask = reduce(
-                    operator.and_, soft_selection_dict.values()
-                )
-
-            if not isinstance(soft_mask, float):
-                mask = mask[mask] & soft_mask
-                object_copies_channel = {
-                    collection: variable[mask]
-                    for collection, variable in object_copies_channel.items()
-                }
 
             if process != "data":
                 weights = (
@@ -275,13 +253,7 @@ class NonDiffAnalysis(Analysis):
         # Nominal processing
         obj_copies = self.get_object_copies(events)
         # Filter objects
-        # Get object masks from configuration:
-        if (obj_masks := self.config.good_object_masks) != []:
-            filtered_objs = self.get_good_objects(obj_copies, obj_masks)
-            for obj, filtered in filtered_objs.items():
-                if obj not in obj_copies:
-                    raise KeyError(f"Object {obj} not found in object_copies")
-                obj_copies[obj] = filtered
+        obj_copies = self.apply_object_masks(obj_copies)
 
         # Apply baseline selection
         baseline_args = self._get_function_arguments(
@@ -306,11 +278,8 @@ class NonDiffAnalysis(Analysis):
         obj_copies_corrected = self.apply_object_corrections(
             obj_copies, self.corrections, direction="nominal"
         )
+
         # apply selection and fill histograms
-        obj_copies_corrected = {
-            obj: var
-            for obj, var in obj_copies_corrected.items()
-        }
         self.histogramming(
             obj_copies_corrected,
             events,
@@ -327,13 +296,7 @@ class NonDiffAnalysis(Analysis):
                     continue
                 for direction in ["up", "down"]:
                     # Filter objects
-                    # Get object masks from configuration:
-                    if (obj_masks := self.config.good_object_masks) != []:
-                        filtered_objs = self.get_good_objects(obj_copies, obj_masks)
-                        for obj, filtered in filtered_objs.items():
-                            if obj not in obj_copies:
-                                raise KeyError(f"Object {obj} not found in object_copies")
-                            obj_copies[obj] = filtered
+                    obj_copies = self.apply_object_masks(obj_copies)
 
                     # apply corrections
                     obj_copies_corrected = self.apply_object_corrections(

@@ -20,8 +20,8 @@ vector.register_awkward()
 # Logging Configuration
 # -----------------------------
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-logger = logging.getLogger("ZprimeAnalysis")
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s: %(name)s] %(message)s")
+logger = logging.getLogger("BaseAnalysis")
 logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 
 NanoAODSchema.warn_missing_crossrefs = False
@@ -119,6 +119,17 @@ class Analysis:
             good_objects[obj_mask.object] = object_copies[obj_mask.object][mask]
 
         return good_objects
+
+    def apply_object_masks(self, obj_copies):
+        if (obj_masks := self.config.good_object_masks) == []:
+            return obj_copies
+        filtered = self.get_good_objects(obj_copies, obj_masks)
+        for k in filtered:
+            if k not in obj_copies:
+                logger.error(f"Object {k} not found in original object copies")
+                raise KeyError
+            obj_copies[k] = filtered[k]
+        return obj_copies
 
     def apply_correctionlib(
         self,
