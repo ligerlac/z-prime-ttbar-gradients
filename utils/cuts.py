@@ -12,7 +12,7 @@ ak.jax.register_and_check()
 # Selection good-run data
 #===================
 # https://github.com/cms-opendata-workshop/workshop2024-lesson-event-selection/blob/main/instructors/dpoa_workshop_utilities.py
-def lumi_mask(lumifile, run, lumiBlock, verbose=False):
+def lumi_mask(lumifile, run, lumiBlock, verbose=False, jax=False):
 
     # lumifile should be the name/path of the file
     good_luminosity_sections = ak.from_json(open(lumifile, "rb"))
@@ -55,7 +55,14 @@ def lumi_mask(lumifile, run, lumiBlock, verbose=False):
 
     # For each event, calculate the difference between the luminosity block
     # and the good luminosity blocks for that run for that event
+    if jax:
+        lumiBlock = ak.to_backend(lumiBlock, "cpu")
+        all_good_blocks = ak.to_backend(all_good_blocks, "cpu")
+        good_runs_indices = ak.to_backend(good_runs_indices, "cpu")
+    # Ensure lumiBlock is in the same backend
     diff = lumiBlock - all_good_blocks[good_runs_indices]
+    if jax:
+        diff = ak.to_backend(diff, "jax")
 
     # If the lumi block appears between any of those good block numbers,
     # then one difference will be positive and the other will be negative
@@ -67,6 +74,7 @@ def lumi_mask(lumifile, run, lumiBlock, verbose=False):
     # and positive if it is not in the range
     prod_diff = ak.prod(diff, axis=2)
     mask = ak.any(prod_diff <= 0, axis=1)
+    print(mask)
     return mask
 
 

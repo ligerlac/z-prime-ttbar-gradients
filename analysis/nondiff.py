@@ -5,6 +5,7 @@ import logging
 import operator
 import os
 from typing import Any, Literal, Optional
+import warnings
 
 import awkward as ak
 import cabinetry
@@ -31,10 +32,12 @@ vector.register_awkward()
 # -----------------------------
 # Logging Configuration
 # -----------------------------
-
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-logger = logging.getLogger("ZprimeAnalysis")
+logger = logging.getLogger("NonDiffAnalysis")
 logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
+
+NanoAODSchema.warn_missing_crossrefs = False
+warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
 
 # -----------------------------
 # ZprimeAnalysis Class Definition
@@ -275,13 +278,7 @@ class NonDiffAnalysis(Analysis):
         # Nominal processing
         obj_copies = self.get_object_copies(events)
         # Filter objects
-        # Get object masks from configuration:
-        if (obj_masks := self.config.good_object_masks) != []:
-            filtered_objs = self.get_good_objects(obj_copies, obj_masks)
-            for obj, filtered in filtered_objs.items():
-                if obj not in obj_copies:
-                    raise KeyError(f"Object {obj} not found in object_copies")
-                obj_copies[obj] = filtered
+        obj_copies = self.apply_object_masks(obj_copies)
 
         # Apply baseline selection
         baseline_args = self._get_function_arguments(
@@ -306,11 +303,8 @@ class NonDiffAnalysis(Analysis):
         obj_copies_corrected = self.apply_object_corrections(
             obj_copies, self.corrections, direction="nominal"
         )
+
         # apply selection and fill histograms
-        obj_copies_corrected = {
-            obj: var
-            for obj, var in obj_copies_corrected.items()
-        }
         self.histogramming(
             obj_copies_corrected,
             events,
@@ -327,13 +321,7 @@ class NonDiffAnalysis(Analysis):
                     continue
                 for direction in ["up", "down"]:
                     # Filter objects
-                    # Get object masks from configuration:
-                    if (obj_masks := self.config.good_object_masks) != []:
-                        filtered_objs = self.get_good_objects(obj_copies, obj_masks)
-                        for obj, filtered in filtered_objs.items():
-                            if obj not in obj_copies:
-                                raise KeyError(f"Object {obj} not found in object_copies")
-                            obj_copies[obj] = filtered
+                    obj_copies = self.apply_object_masks(obj_copies)
 
                     # apply corrections
                     obj_copies_corrected = self.apply_object_corrections(

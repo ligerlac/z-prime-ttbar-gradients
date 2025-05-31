@@ -120,6 +120,17 @@ class Analysis:
 
         return good_objects
 
+    def apply_object_masks(self, obj_copies):
+        if (obj_masks := self.config.good_object_masks) == []:
+            return obj_copies
+        filtered = self.get_good_objects(obj_copies, obj_masks)
+        for k in filtered:
+            if k not in obj_copies:
+                logger.error(f"Object {k} not found in original object copies")
+                raise KeyError
+            obj_copies[k] = filtered[k]
+        return obj_copies
+
     def apply_correctionlib(
         self,
         name: str,

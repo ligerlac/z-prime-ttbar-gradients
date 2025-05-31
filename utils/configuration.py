@@ -56,7 +56,7 @@ config = {
         "run_preprocessing": False,
         "run_histogramming": False,
         "run_statistics": True,
-        "run_systematics": False,
+        "run_systematics": True,
         "output_dir": "output/",
         "preprocessed_dir": "./preproc_uproot/z-prime-ttbar-data/",
         "processor": "uproot",

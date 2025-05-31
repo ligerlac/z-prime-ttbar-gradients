@@ -1,9 +1,10 @@
-import copy
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 import glob
 import logging
 import os
 from typing import Any, Literal, Optional
+import warnings
 
 import awkward as ak
 from coffea.analysis_tools import PackedSelection
@@ -15,6 +16,7 @@ import uproot
 import vector
 
 from analysis.base import Analysis
+from utils.cuts import lumi_mask
 
 # -----------------------------
 # Register backends
@@ -25,10 +27,12 @@ vector.register_awkward()
 # -----------------------------
 # Logging Configuration
 # -----------------------------
-
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-logger = logging.getLogger("ZprimeAnalysis")
+logger = logging.getLogger("DiffAnalysis")
 logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
+
+NanoAODSchema.warn_missing_crossrefs = False
+warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
 
 def merge_histograms(existing, new):
     """
@@ -46,11 +50,38 @@ def merge_histograms(existing, new):
                     existing[variation][region][observable] = array
     return existing
 
+
+def recursive_to_backend(data, backend: str = "jax"):
+    """
+    Recursively move data structures with Awkward
+    arrays to the specified backend.
+
+    Parameters
+    ----------
+    data : Any
+        Object, list, or dict containing awkward Arrays
+    backend : str
+        Target backend ('jax', 'cpu', etc.)
+
+    Returns
+    -------
+    Same structure as input, with awkward Arrays moved to backend.
+    """
+    if isinstance(data, ak.Array):
+        if ak.backend(data) != backend:
+            return ak.to_backend(data, backend)
+        return data
+    elif isinstance(data, Mapping):
+        return {k: recursive_to_backend(v, backend) for k, v in data.items()}
+    elif isinstance(data, Sequence) and not isinstance(data, (str, bytes)):
+        return [recursive_to_backend(v, backend) for v in data]
+    else:
+        return data
+
 # --------------------------------
 # Differnetiable Analysis
 # --------------------------------
 class DifferentiableAnalysis(Analysis):
-
     def __init__(self, config):
         super().__init__(config)
         # 4 indices
@@ -113,17 +144,18 @@ class DifferentiableAnalysis(Analysis):
         dict
             Updated histogram dictionary.
         """
-        ak.to_backend(events, "jax")
+        jax_config = self.config.jax
         histograms = defaultdict(dict)
         if process == "data" and variation != "nominal":
             return histograms
+
+        events = recursive_to_backend(events, "jax")
+        object_copies = recursive_to_backend(object_copies, "jax")
 
         object_copies ={
             collection: ak.Array(var.layout)
             for collection, var in object_copies.items()
         }
-
-        jax_config = self.config.jax
 
         diff_selection_args = self._get_function_arguments(
                     jax_config.soft_selection.use, object_copies
@@ -164,13 +196,15 @@ class DifferentiableAnalysis(Analysis):
                     packed_selection.all(packed_selection.names[-1])
                 )
 
-            mask = ak.to_backend(mask, "jax")
+            mask = recursive_to_backend(mask, "jax")
             if process == "data":
-                mask = mask #& ak.to_backend(lumi_mask(
-                #     self.config.general.lumifile,
-                #     object_copies["run"],
-                #     object_copies["luminosityBlock"],
-                # ), "jax")
+                good_runs = lumi_mask(
+                    self.config.general.lumifile,
+                    object_copies["run"],
+                    object_copies["luminosityBlock"],
+                    jax=True
+                )
+                mask = mask & ak.to_backend(good_runs, "jax")
 
             if ak.sum(mask) == 0:
                 logger.warning(
@@ -178,7 +212,6 @@ class DifferentiableAnalysis(Analysis):
                     + "variation {variation}"
                 )
                 continue
-
             object_copies_channel = {
                                 collection: variable[mask]
                                 for collection, variable in object_copies.items()
@@ -193,16 +226,15 @@ class DifferentiableAnalysis(Analysis):
             else:
                 weights = ak.Array(np.ones(ak.sum(mask)))
 
-            weights = jnp.array(weights.to_numpy())
 
             if event_syst and process != "data":
                 weights = self.apply_event_weight_correction(
                     weights, event_syst, direction, object_copies_channel
                 )
 
-            mask = ak.to_jax(mask)
-            diff_selection_weights = diff_selection_weights[mask]
-            weights = ak.to_jax(weights)
+            weights = jnp.array(weights.to_numpy())
+            diff_selection_weights = diff_selection_weights[ak.to_jax(mask)]
+
             logger.info(f"Number of weighted events in {chname}: {ak.sum(weights):.2f}")
             logger.info(f"Number of raw events in {chname}: {ak.sum(mask)}")
 
@@ -221,7 +253,6 @@ class DifferentiableAnalysis(Analysis):
                     observable["use"], object_copies_channel
                 )
                 observable_vals = observable["function"](*observable_args)
-                observable_vals = ak.to_jax(observable_vals)
                 observable_binning = observable["binning"]
 
                 # WIP:: need to enforce presence of this in config
@@ -238,7 +269,7 @@ class DifferentiableAnalysis(Analysis):
                 # KDE-style soft binning
                 cdf = jax.scipy.stats.norm.cdf(
                     observable_binning.reshape(-1, 1),
-                    loc=observable_vals.reshape(1, -1),
+                    loc=ak.to_jax(observable_vals).reshape(1, -1),
                     scale=bandwidth
                 )
                 # Weight each event's contribution by selection weight
@@ -281,25 +312,16 @@ class DifferentiableAnalysis(Analysis):
         lumi = self.config["general"]["lumi"]
         xsec_weight = (xsec * lumi / n_gen) if process != "data" else 1.0
 
-
         # Nominal processing
         obj_copies = self.get_object_copies(events)
-        # Filter objects
-        # Get object masks from configuration:
-        if (obj_masks := self.config.good_object_masks) != []:
-            filtered_objs = self.get_good_objects(obj_copies, obj_masks)
-            for obj, filtered in filtered_objs.items():
-                if obj not in obj_copies:
-                    raise KeyError(f"Object {obj} not found in object_copies")
-                obj_copies[obj] = filtered
 
-        # move everything to JAX backend
-        events = ak.to_backend(events, "jax")
+        # Apply object masks
+        # object masks break in JAX due to jagged masking
+        obj_copies = self.apply_object_masks(obj_copies)
 
-        obj_copies = {
-            coll: ak.to_backend(var, "jax")
-            for coll, var in obj_copies.items()
-        }
+        # Move all data to JAX backend
+        events = recursive_to_backend(events, "jax")
+        obj_copies = recursive_to_backend(obj_copies, "jax")
 
         # Apply baseline selection
         baseline_args = self._get_function_arguments(
@@ -310,31 +332,28 @@ class DifferentiableAnalysis(Analysis):
             *baseline_args
         )
         mask = ak.Array(packed_selection.all(packed_selection.names[-1]))
-        mask = ak.to_backend(mask, "jax")
+        mask = recursive_to_backend(mask, "jax")
         obj_copies = {
             collection: variable[mask]
             for collection, variable in obj_copies.items()
         }
-        # apply ghost observables
+
+        # Compute ghost observables and store them
         obj_copies = self.compute_ghost_observables(
             obj_copies,
         )
 
-        # apply event-level corrections
-        # apply nominal corrections
+        # Apply object corrections
         obj_copies_corrected = self.apply_object_corrections(
             obj_copies, self.corrections, direction="nominal"
         )
-        # apply selection and fill histograms
-        obj_copies_corrected = {
-            obj: var
-            for obj, var in obj_copies_corrected.items()
-        }
 
-        obj_copies_corrected = {
-            coll: ak.to_backend(var, "jax")
-            for coll, var in obj_copies_corrected.items()
-        }
+        # Move objects to JAX backend
+        obj_copies_corrected = recursive_to_backend(
+            obj_copies_corrected, "jax"
+        )
+
+        # Produce histograms
         histograms = self.histogramming(
             obj_copies_corrected,
             events,
@@ -346,38 +365,36 @@ class DifferentiableAnalysis(Analysis):
         )
         all_histograms["nominal"] = histograms
 
-        # move everything to CPU backend
-        events = ak.to_backend(events, "cpu")
-        obj_copies = {
-            coll: ak.to_backend(var, "cpu")
-            for coll, var in obj_copies.items()
-        }
 
         if self.config.general.run_systematics:
             # Systematic variations
             for syst in self.systematics + self.corrections:
-                if syst["name"] == "nominal":
-                    continue
-                for direction in ["up", "down"]:
-                    # Filter objects
-                    # Get object masks from configuration:
-                    if (obj_masks := self.config.good_object_masks) != []:
-                        filtered_objs = self.get_good_objects(obj_copies, obj_masks)
-                        for obj, filtered in filtered_objs.items():
-                            if obj not in obj_copies:
-                                raise KeyError(f"Object {obj} not found in object_copies")
-                            obj_copies[obj] = filtered
+                # Skip nominal variations
+                if syst["name"] == "nominal":   continue
 
-                    # apply corrections
+                # Loop over up/down variations
+                for direction in ["up", "down"]:
+                    # Get systematic name
+                    varname = f"{syst['name']}_{direction}"
+
+                    # Move back to CPU backend before object masking
+                    # object masks break in JAX due to jagged masking
+                    events = recursive_to_backend(events, "cpu")
+                    obj_copies = recursive_to_backend(obj_copies, "cpu")
+
+                    # Filter objects
+                    obj_copies = self.apply_object_masks(obj_copies)
+
+                    # Move to JAX backend
+                    events = recursive_to_backend(events, "jax")
+                    obj_copies = recursive_to_backend(obj_copies, "jax")
+
+                    # Apply object corrections
                     obj_copies_corrected = self.apply_object_corrections(
                         obj_copies, [syst], direction=direction
                     )
-                    varname = f"{syst['name']}_{direction}"
-                    events = ak.to_backend(events, "jax")
-                    obj_copies_corrected = {
-                        coll: ak.to_backend(var, "jax")
-                        for coll, var in obj_copies.items()
-                    }
+
+                    # Produce histograms
                     histograms = self.histogramming(
                         obj_copies_corrected,
                         events,
@@ -390,7 +407,6 @@ class DifferentiableAnalysis(Analysis):
                         direction=direction,
                     )
                     all_histograms[varname] = histograms
-
 
         return all_histograms
 
