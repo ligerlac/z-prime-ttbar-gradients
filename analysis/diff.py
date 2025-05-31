@@ -16,6 +16,7 @@ import awkward as ak
 import jax
 import jax.numpy as jnp
 import numpy as np
+from tabulate import tabulate
 import uproot
 import vector
 from coffea.analysis_tools import PackedSelection
@@ -23,6 +24,7 @@ from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 
 from analysis.base import Analysis
 from utils.cuts import lumi_mask
+
 
 # -----------------------------------------------------------------------------
 # Backend & Logging Setup
@@ -37,6 +39,9 @@ logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 NanoAODSchema.warn_missing_crossrefs = False
 warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
 
+# colours to use in printouts
+GREEN = "\033[92m"
+RESET = "\033[0m"
 
 # -----------------------------------------------------------------------------
 # Utility Functions
@@ -720,11 +725,6 @@ class DifferentiableAnalysis(Analysis):
                                             cache_dir=cache_dir)
 
         learning_rate = self.config.jax.learning_rate
-
-        from tabulate import tabulate
-
-        GREEN = "\033[92m"
-        RESET = "\033[0m"
 
         # Save initial values for comparison
         initial_params = {k: float(v) for k, v in params.items()}
