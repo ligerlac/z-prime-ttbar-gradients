@@ -346,24 +346,6 @@ class ChannelConfig(SubscriptableModel):
         ),
     ]
 
-    soft_selection_function: Annotated[
-        Optional[Callable],
-        Field(
-            default=None,
-            description="Callable for soft event selection. If None, all events "
-            + "are selected. Must return a dictionary of cut name to mask. "
-            + "The selections do not apply in JAX version.",
-        ),
-    ]
-
-    soft_selection_use: Annotated[
-        Optional[List[ObjVar]],
-        Field(
-            default=None,
-            description="(object, variable) pairs for the soft selection function.",
-        ),
-    ]
-
     use_in_diff: Annotated[
         Optional[bool],
         Field(

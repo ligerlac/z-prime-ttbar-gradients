@@ -1,15 +1,9 @@
 import numpy as np
 
 from utils.cuts import (
-    Zprime_baseline,
     Zprime_hardcuts,
-    Zprime_softcuts_nonjax_paper,
-    Zprime_softcuts_nonjax_workshop,
     Zprime_softcuts_jax_workshop,
-    Zprime_softcuts_CR1,
-    Zprime_softcuts_CR2,
-    Zprime_softcuts_SR_notag,
-    Zprime_softcuts_SR_tag,
+    Zprime_workshop_cuts
 )
 
 from utils.observables import (
@@ -109,7 +103,7 @@ config = {
         }
     },
     "baseline_selection": {
-        "function": Zprime_baseline,
+        "function": Zprime_hardcuts,
         "use": [
             ("Muon", None),
             ("Jet", None),
@@ -140,7 +134,7 @@ config = {
     ],
     "channels": [
         {
-            "name": "CMS_WORKSHOP",
+            "name": "CMS_WORKSHOP_JAX",
             "fit_observable": "workshop_mtt",
             "observables": LIST_OF_VARS,
             "selection_function": Zprime_hardcuts,
@@ -150,12 +144,18 @@ config = {
                 ("FatJet", None),
 
             ],
-            "soft_selection_function": Zprime_softcuts_nonjax_workshop,
-            "soft_selection_use": [
+            "use_in_diff": True,
+        },
+        {
+            "name": "CMS_WORKSHOP",
+            "fit_observable": "workshop_mtt",
+            "observables": LIST_OF_VARS,
+            "selection_function": Zprime_workshop_cuts,
+            "selection_use": [
                 ("Muon", None),
                 ("Jet", None),
                 ("FatJet", None),
-                ("PuppiMET", None),
+
             ],
             "use_in_diff": True,
         },
