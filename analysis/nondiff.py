@@ -157,10 +157,10 @@ class NonDiffAnalysis(Analysis):
                 f"Applying selection for {chname} in {process}")
             mask = 1
             if (
-                selection_funciton := channel["selection_function"]
+                selection_funciton := channel.selection.function
             ) is not None:
                 selection_args = self._get_function_arguments(
-                    channel["selection_use"], object_copies
+                    channel.selection.use, object_copies
                 )
                 packed_selection = selection_funciton(*selection_args)
                 if not isinstance(packed_selection, PackedSelection):
@@ -189,31 +189,6 @@ class NonDiffAnalysis(Analysis):
                                 collection: variable[mask]
                                 for collection, variable in object_copies.items()
                             }
-
-            # WIP:: This should be fully removed (no need anymore, all cuts equal footing)
-            soft_mask = 1.0
-            if (
-                soft_selection_funciton := channel[
-                    "soft_selection_function"
-                ]
-            ) is not None:
-                soft_selection_args = self._get_function_arguments(
-                    channel["soft_selection_use"], object_copies_channel
-                )
-                soft_selection_dict = soft_selection_funciton(
-                    *soft_selection_args
-                )
-
-                soft_mask = reduce(
-                    operator.and_, soft_selection_dict.values()
-                )
-
-            if not isinstance(soft_mask, float):
-                mask = mask[mask] & soft_mask
-                object_copies_channel = {
-                    collection: variable[mask]
-                    for collection, variable in object_copies_channel.items()
-                }
 
             if process != "data":
                 weights = (

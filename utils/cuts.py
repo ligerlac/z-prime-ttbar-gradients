@@ -62,7 +62,7 @@ def lumi_mask(
     # -----------------------------
     # Match run numbers to good runs
     # -----------------------------
-    def find_indices(arr1: np.ndarray, arr2: Union[np.ndarray, ak.Array]) -> ak.Array:
+    def find_indices(arr1: np.ndarray, arr2: ak.Array) -> ak.Array:
         arr1_np = np.asarray(ak.to_numpy(arr1))
         arr2_np = np.asarray(ak.to_numpy(arr2))
 

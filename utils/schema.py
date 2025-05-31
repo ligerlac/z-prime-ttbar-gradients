@@ -23,19 +23,18 @@ class SubscriptableModel(BaseModel):
         return getattr(self, key, default)
 
 
-class SelectionConfig(SubscriptableModel):
+class FunctorConfig(SubscriptableModel):
     function: Annotated[
         Callable,
         Field(
-            description="Function to compute the baseline selection. "
-            "Must return a PackedSelection object."
+            description="Function to be computed."
         ),
     ]
     use: Annotated[
         Optional[List[ObjVar]],
         Field(
             default=None,
-            description="(object, variable) pairs for the selection function.",
+            description="(object, variable) pairs for the function.",
         ),
     ]
 
@@ -141,7 +140,7 @@ class GeneralConfig(SubscriptableModel):
 # ------------------------
 class JaxConfig(SubscriptableModel):
     soft_selection: Annotated[
-        SelectionConfig,
+        FunctorConfig,
         Field(
             description="Soft selection function for JAX-mode observable shaping. "
             "Should return a dictionary of soft selections."
@@ -329,23 +328,15 @@ class ChannelConfig(SubscriptableModel):
         str,
         Field(description="Name of the observable to use for fitting"),
     ]
-
-    selection_function: Annotated[
-        Optional[Callable],
+    selection: Annotated[
+        Optional[FunctorConfig],
         Field(
             default=None,
-            description="Callable for event selection. If None, all events are "
-            + "selected. Must return a PackedSelection object.",
+            description="Event selection function for this channel. "
+            + "If None, all events are selected. Function must "
+            + "return a PackedSelection object.",
         ),
     ]
-    selection_use: Annotated[
-        Optional[List[ObjVar]],
-        Field(
-            default=None,
-            description="(object, variable) pairs for the selection function.",
-        ),
-    ]
-
     use_in_diff: Annotated[
         Optional[bool],
         Field(
@@ -357,15 +348,10 @@ class ChannelConfig(SubscriptableModel):
 
     @model_validator(mode="after")
     def validate_fields(self) -> "ChannelConfig":
-        if self.selection_function and not self.selection_use:
+        if self.selection.function and not self.selection.use:
             raise ValueError(
-                "If 'selection_function' is provided, 'selection_use' must also "
+                "If 'selection.function' is provided, 'selection.use' must also "
                 + "be specified."
-            )
-        if self.soft_selection_function and not self.soft_selection_use:
-            raise ValueError(
-                "If 'soft_selection_function' is provided, 'soft_selection_use' "
-                + "must also be specified."
             )
         if not self.observables:
             raise ValueError("Each channel must have at least one observable.")
@@ -536,7 +522,7 @@ class Config(SubscriptableModel):
         ),
     ]
     baseline_selection: Annotated[
-        Optional[SelectionConfig],
+        Optional[FunctorConfig],
         Field(
             default=None,
             description="Baseline event selection applied before "

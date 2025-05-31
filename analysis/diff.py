@@ -278,9 +278,9 @@ class DifferentiableAnalysis(Analysis):
             # Apply packed selection mask
             # ---------------------------
             mask = 1
-            if (sel_fn := channel["selection_function"]):
+            if (sel_fn := channel.selection.function):
                 selection_args = self._get_function_arguments(
-                    channel["selection_use"], object_copies
+                    channel.selection.use, object_copies
                 )
                 packed = sel_fn(*selection_args)
                 if not isinstance(packed, PackedSelection):

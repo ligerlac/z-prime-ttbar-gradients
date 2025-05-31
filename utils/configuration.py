@@ -5,27 +5,15 @@ from utils.cuts import (
     Zprime_softcuts_jax_workshop,
     Zprime_workshop_cuts
 )
-
 from utils.observables import (
-    chi2_from_ttbar_reco,
-    compute_mva_scores,
-    get_deltaR,
-    get_deltaR_times_pt,
-    get_leading_jet_btag_score,
-    get_leading_jet_mass,
     get_mtt,
-    get_mva_scores,
-    get_mva_vars,
-    get_n_jet,
-    get_pt_rel,
-    get_S_zz,
-    get_st,
-    get_subleading_jet_btag_score,
-    get_subleading_jet_mass,
-    mtt_from_ttbar_reco,
-    ttbar_reco,
 )
-from utils.systematics import jet_pt_resolution, jet_pt_scale
+from utils.systematics import (
+    jet_pt_resolution,
+    jet_pt_scale
+)
+
+
 LIST_OF_VARS = [
                 {
                     "name": "workshop_mtt",
@@ -108,7 +96,6 @@ config = {
             ("Muon", None),
             ("Jet", None),
             ("FatJet", None),
-            ("PuppiMET", None),
         ],
     },
     "good_object_masks": [
@@ -137,27 +124,30 @@ config = {
             "name": "CMS_WORKSHOP_JAX",
             "fit_observable": "workshop_mtt",
             "observables": LIST_OF_VARS,
-            "selection_function": Zprime_hardcuts,
-            "selection_use": [
-                ("Muon", None),
-                ("Jet", None),
-                ("FatJet", None),
-
-            ],
+            "selection": {
+                "function": Zprime_hardcuts,
+                "use": [
+                    ("Muon", None),
+                    ("Jet", None),
+                    ("FatJet", None),
+                ],
+            },
             "use_in_diff": True,
         },
         {
             "name": "CMS_WORKSHOP",
             "fit_observable": "workshop_mtt",
             "observables": LIST_OF_VARS,
-            "selection_function": Zprime_workshop_cuts,
-            "selection_use": [
-                ("Muon", None),
-                ("Jet", None),
-                ("FatJet", None),
-
-            ],
-            "use_in_diff": True,
+            "selection":{
+                "function": Zprime_workshop_cuts,
+                "use": [
+                    ("Muon", None),
+                    ("Jet", None),
+                    ("FatJet", None),
+                    ("PuppiMET", None),
+                ],
+            },
+            "use_in_diff": False,
         },
     ],
     "ghost_observables": [],
