@@ -56,11 +56,11 @@ def lumi_mask(lumifile, run, lumiBlock, verbose=False, jax=False):
     # For each event, calculate the difference between the luminosity block
     # and the good luminosity blocks for that run for that event
     if jax:
-        lumiBlock = ak.to_backend(lumiBlock, "cpu")
+        lumi_block = ak.to_backend(lumiBlock, "cpu")
         all_good_blocks = ak.to_backend(all_good_blocks, "cpu")
         good_runs_indices = ak.to_backend(good_runs_indices, "cpu")
     # Ensure lumiBlock is in the same backend
-    diff = lumiBlock - all_good_blocks[good_runs_indices]
+    diff = lumi_block - all_good_blocks[good_runs_indices]
     if jax:
         diff = ak.to_backend(diff, "jax")
 
@@ -74,7 +74,6 @@ def lumi_mask(lumifile, run, lumiBlock, verbose=False, jax=False):
     # and positive if it is not in the range
     prod_diff = ak.prod(diff, axis=2)
     mask = ak.any(prod_diff <= 0, axis=1)
-    print(mask)
     return mask
 
 

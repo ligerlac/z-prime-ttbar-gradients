@@ -32,7 +32,7 @@ vector.register_awkward()
 # -----------------------------
 # Logging Configuration
 # -----------------------------
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s: %(name)s] %(message)s")
 logger = logging.getLogger("NonDiffAnalysis")
 logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 

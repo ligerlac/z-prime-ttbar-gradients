@@ -19,7 +19,7 @@ from utils.schema import Config, load_config_with_restricted_cli
 # -----------------------------
 # Logging Configuration
 # -----------------------------
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logging.basicConfig(level=logging.INFO, format="[%(name)s::%(levelname)s] %(message)s")
 logger = logging.getLogger("AnalysisDriver")
 logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 
