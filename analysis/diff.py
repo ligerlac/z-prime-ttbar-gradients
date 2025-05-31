@@ -663,8 +663,7 @@ class DifferentiableAnalysis(Analysis):
         tuple
             (Significance, gradient dictionary)
         """
-        logger.info("Running the analysis chain for all datasets...")
-        logger.info(f"Processes: {list(fileset.keys())}")
+
 
         # Compute significance from datasets
         significance, gradients = jax.value_and_grad(
@@ -696,7 +695,8 @@ class DifferentiableAnalysis(Analysis):
         tuple
             Optimized parameters and final significance.
         """
-        logger.info("Starting cut optimisation...")
+        logger.info("Running analysis chain with init values for all datasets...")
+        logger.info(f"Processes: {list(fileset.keys())}")
         # Run the initial analysis chain to get starting significance and gradients
         cache_dir = "/tmp/gradients_analysis/"
         significance, gradients = (
@@ -706,6 +706,11 @@ class DifferentiableAnalysis(Analysis):
                                                     cache_dir=cache_dir)
                                                 )
 
+        params = self.config.jax.params.copy()
+        if not self.config.jax.optimize:
+            return params, significance
+
+        logger.info("Starting parameter optimization...")
         logger.info(f"Initial significance: {significance:.4f}")
 
         def objective(params):
@@ -714,43 +719,91 @@ class DifferentiableAnalysis(Analysis):
                                             run_and_cache=False,
                                             cache_dir=cache_dir)
 
-        learning_rate = 0.01
-        params = self.config.jax.params.copy()
+        learning_rate = self.config.jax.learning_rate
 
-        logger.info("\nRunning optimization to maximize significance...")
-        logger.info("Step  Significance  MET  B-tag  Lep HT")
-        logger.info("-------------------------------------------")
+        from tabulate import tabulate
 
-        for i in range(25):
-            significance = objective(params)
-            grads = jax.grad(objective)(params)
+        GREEN = "\033[92m"
+        RESET = "\033[0m"
 
+        # Save initial values for comparison
+        initial_params = {k: float(v) for k, v in params.items()}
+
+        logger.info("Starting optimization...\n")
+        print(self.config.jax.max_iterations)
+
+        for i in range(self.config.jax.max_iterations):
+            # Compute significance and gradients
+            significance, gradients = jax.value_and_grad(objective, argnums=0)(params)
+
+            # Parameter update
             for key in params:
-                if key.endswith("_threshold"):
-                    if key == "met_threshold":
-                        params[key] = jnp.clip(params[key] + learning_rate * grads[key], 20.0, 150.0)
-                    elif key == "btag_threshold":
-                        params[key] = jnp.clip(params[key] + learning_rate * grads[key], 0.1, 0.9)
-                    elif key == "lep_ht_threshold":
-                        params[key] = jnp.clip(params[key] + learning_rate * grads[key], 50.0, 300.0)
-                elif key.endswith("_weight"):
-                    params[key] = jnp.maximum(params[key] + learning_rate * grads[key], 0.01)
-                elif key.endswith("_scale"):
-                    params[key] = jnp.clip(params[key] + learning_rate * grads[key], 0.1, 10.0)
-                else:
-                    params[key] += learning_rate * grads[key]
+                delta = learning_rate * gradients[key]
+                update_fn = self.config.jax.param_updates.get(key, lambda x, d: x + d)
+                params[key] = update_fn(params[key], delta)
 
-            logger.info(f"{i+1:4d} {significance:12.4f} {params['met_threshold']:8.1f} "
-                        f"{params['btag_threshold']:10.3f} {params['lep_ht_threshold']:11.1f}")
+            # Build table with value, gradient, and % change as columns
+            step_summary = [["Parameter", "Value", "Gradient", "% Change"]]
 
+            for key in sorted(params.keys()):
+                if isinstance(params[key], (int, float, jnp.ndarray)):
+                    new_val = float(params[key])
+                    grad = float(gradients[key])
+                    old_val = initial_params[key]
+                    percent_change = ((new_val - old_val) / (old_val + 1e-12)) * 100
+
+                    colored_val = f"{GREEN}{new_val:.4f}{RESET}" \
+                        if abs(new_val - old_val) > 1e-5 else f"{new_val:.4f}"
+                    step_summary.append([
+                        f"{key:<30}",
+                        colored_val,
+                        f"{grad:+.4f}",
+                        f"{percent_change:+.2f}%"
+                    ])
+
+            # Add significance row
+            step_summary.append(["-" * 30, "-" * 10, "-" * 10, "-" * 10])
+            step_summary.append(["Significance", f"{significance:.4f}", "", ""])
+
+            logger.info("\n" + "=" * 60)
+            logger.info(f" Step {i + 1}: Optimization Summary")
+            logger.info("\n" + tabulate(step_summary, tablefmt="fancy_grid", colalign=("left", "right", "right", "right")))
+            logger.info("=" * 60)
+
+        # After loop: Final summary
         final_significance = objective(params)
-        logger.info("\nOptimization complete!")
-        logger.info(f"Final significance: {final_significance:.4f}")
-        logger.info(f"Improvement: {((final_significance/significance - 1) * 100):.1f}%")
+        improvement = ((final_significance / significance - 1) * 100)
 
-        logger.info("\nOptimized parameters:")
-        for key, value in params.items():
-            if isinstance(value, (int, float)) or hasattr(value, 'item'):
-                logger.info(f"  {key}: {float(value):.4f}")
+        # Build colored final param summary
+        param_summary = []
+        for key in sorted(params.keys()):
+            new_val = float(params[key])
+            old_val = initial_params[key]
+            delta = abs(new_val - old_val)
+            formatted_val = f"{new_val:.4f}"
+            formatted_key = f"{key:<30}"
+            if delta > 1e-5:
+                formatted_val = f"{GREEN}{formatted_val}{RESET}"
+                formatted_key = f"{GREEN}{formatted_key}{RESET}"
+            param_summary.append([formatted_key, formatted_val])
+
+        # Significance summary
+        final_stats = [
+            ["Initial Significance", f"{significance:.4f}"],
+            ["Final Significance", f"{final_significance:.4f}"],
+            ["Improvement (%)", f"{improvement:.2f}%"],
+        ]
+
+        # Print summaries
+        logger.info("\nFinal Optimized Parameters:")
+        logger.info("\n" + tabulate(param_summary,
+                                    headers=["Parameter", "Value"],
+                                    tablefmt="fancy_grid",
+                                    colalign=("left", "right")))
+
+        logger.info("Significance Summary:")
+        logger.info("\n" + tabulate(final_stats,
+                                    tablefmt="fancy_grid",
+                                    colalign=("left", "right")))
 
         return params, final_significance

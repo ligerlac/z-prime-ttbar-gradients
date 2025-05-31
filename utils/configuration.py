@@ -1,4 +1,5 @@
 import numpy as np
+import jax.numpy as jnp
 
 from utils.cuts import (
     Zprime_hardcuts,
@@ -12,7 +13,6 @@ from utils.systematics import (
     jet_pt_resolution,
     jet_pt_scale
 )
-
 
 LIST_OF_VARS = [
                 {
@@ -39,7 +39,7 @@ config = {
         "run_preprocessing": False,
         "run_histogramming": False,
         "run_statistics": True,
-        "run_systematics": True,
+        "run_systematics": False,
         "output_dir": "output/",
         "preprocessed_dir": "./preproc_uproot/z-prime-ttbar-data/",
         "processor": "uproot",
@@ -63,6 +63,7 @@ config = {
         },
     },
     "jax": {
+        "optimize": True,
         "soft_selection": {
             "function": Zprime_softcuts_jax_workshop,
             "use": [
@@ -72,6 +73,8 @@ config = {
                 ("PuppiMET", "pt"),
             ],
         },
+        "learning_rate": 0.01,
+        "max_iterations": 25,
         "params": {
             'met_threshold': 50.0,
             'met_scale': 25.0,
@@ -89,6 +92,33 @@ config = {
             # Systematic uncertainties
             'signal_systematic': 0.05,  # 5% on signal
             'background_systematic': 0.1,  # 10% on background
+        },
+        "param_updates": {
+            # Thresholds: clip within physics-motivated bounds
+            "met_threshold": lambda x, d: jnp.clip(x + d, 20.0, 150.0),
+            "btag_threshold": lambda x, d: jnp.clip(x + d, 0.1, 0.9),
+            "lep_ht_threshold": lambda x, d: jnp.clip(x + d, 50.0, 300.0),
+
+            # Sigmoid scaling factors: constrain to non-degenerate reasonable positive values
+            "met_scale": lambda x, d: jnp.clip(x + d, 1.0, 100.0),
+
+            # Feature weights: allow any positive value, enforce minimum
+            "muon_weight": lambda x, d: jnp.maximum(x + d, 0.01),
+            "jet_weight": lambda x, d: jnp.maximum(x + d, 0.01),
+            "met_weight": lambda x, d: jnp.maximum(x + d, 0.01),
+
+            # KDE smoothing: keep bandwidth strictly positive and reasonably sized
+            "kde_bandwidth": lambda x, d: jnp.clip(x + d, 1.0, 50.0),
+
+            # Process normalizations: float freely, but constrain to positive domain
+            "signal_scale": lambda x, d: jnp.maximum(x + d, 0.01),
+            "ttbar_scale": lambda x, d: jnp.maximum(x + d, 0.01),
+            "wjets_scale": lambda x, d: jnp.maximum(x + d, 0.01),
+            "other_scale": lambda x, d: jnp.maximum(x + d, 0.01),
+
+            # Systematic uncertainties: must remain in [0, 1]
+            "signal_systematic": lambda x, d: jnp.clip(x + d, 0.0, 1.0),
+            "background_systematic": lambda x, d: jnp.clip(x + d, 0.0, 1.0),
         }
     },
     "baseline_selection": {

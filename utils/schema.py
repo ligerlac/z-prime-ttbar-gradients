@@ -164,7 +164,39 @@ class JaxConfig(SubscriptableModel):
         dict[str, float],
         Field(description="Thresholds, weights, and scaling factors used in JAX backend."),
     ]
-
+    optimize: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Whether to run JAX optimisation for soft selection parameters",
+        ),
+    ]
+    learning_rate: Annotated[
+        float,
+        Field(
+            default=0.01,
+            description="Learning rate for JAX optimisation",
+        ),
+    ]
+    max_iterations: Annotated[
+        Optional[int],
+        Field(
+            default=25,
+            description="Number of optimisation steps for JAX",
+        ),
+    ]
+    param_updates: Annotated[
+            dict[str, Callable[[float, float], float]],
+            Field(
+                default_factory=dict,
+                description=(
+                    "Optional per-parameter update rules. Maps parameter name to a callable "
+                    "that accepts (value, delta) and returns updated value. "
+                    "Delta is defined as `learning_rate * gradient`. "
+                    "Example: {'met_threshold': lambda x, d: jnp.clip(x + d, 20.0, 150.0)}"
+                ),
+            ),
+        ]
 # ------------------------
 # Preprocessing configuration
 # ------------------------
