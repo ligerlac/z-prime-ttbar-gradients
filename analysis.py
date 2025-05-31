@@ -44,11 +44,25 @@ def main():
         n_files_max_per_sample=config.general.max_files
     )
 
-    nondiff_analysis = NonDiffAnalysis(config)
-    nondiff_analysis.run_analysis_chain(fileset)
+    analysis_mode = config.general.analysis
+    if analysis_mode == "nondiff":
+        logger.info("Running Non-Differentiable Analysis")
+        nondiff_analysis = NonDiffAnalysis(config)
+        nondiff_analysis.run_analysis_chain(fileset)
 
-    diff_analysis = DifferentiableAnalysis(config)
-    diff_analysis.optimize_analysis_cuts(fileset)
+    elif analysis_mode == "diff":
+        logger.info("Running Differentiable Analysis")
+        diff_analysis = DifferentiableAnalysis(config)
+        diff_analysis.optimize_analysis_cuts(fileset)
+    else:
+        logger.info("Running both Non-Differentiable and Differentiable Analysis")
+        # Non-differentiable analysis
+        nondiff_analysis = NonDiffAnalysis(config)
+        nondiff_analysis.run_analysis_chain(fileset)
+        # Differentiable analysis
+        diff_analysis = DifferentiableAnalysis(config)
+        diff_analysis.optimize_analysis_cuts(fileset)
+
 
     # plot_nominal_histograms("output/histograms/histograms.root")
     # plot_cms_style(histograms_file="output/histograms/histograms.pkl")

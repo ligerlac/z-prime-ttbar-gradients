@@ -80,6 +80,11 @@ class GeneralConfig(SubscriptableModel):
             description="Path to JSON file with good luminosity sections",
         ),
     ]
+    analysis: Annotated[
+        Optional[str],
+        Field(default="nondiff",
+              description="Analysis MODE: 'diff', 'nondiff' or 'both'"),
+    ]
     max_files: Annotated[
         Optional[int],
         Field(default=1, description="Maximum number of files to process"),
@@ -134,6 +139,15 @@ class GeneralConfig(SubscriptableModel):
             description="List of channels to include in the analysis",
         ),
     ]
+
+    @model_validator(mode="after")
+    def validate_general(self) -> "GeneralConfig":
+        if self.analysis not in ["diff", "nondiff", "both"]:
+            raise ValueError(
+                f"Invalid analysis mode '{self.analysis}'. Must be 'diff' or 'nondiff'."
+            )
+
+        return self
 
 # ------------------------
 # JAX configuration

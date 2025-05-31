@@ -35,6 +35,7 @@ config = {
         "lumi": 16400,
         "weights_branch": "genWeight",
         "max_files": -1,
+        "analysis": "nondiff",
         "run_preprocessing": False,
         "run_histogramming": False,
         "run_statistics": True,
