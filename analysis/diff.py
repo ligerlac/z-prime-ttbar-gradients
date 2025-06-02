@@ -9,12 +9,15 @@ from collections.abc import Mapping, Sequence
 import hashlib
 import cloudpickle
 from pprint import pformat
-from typing import Any, Literal, Optional
-
+from typing import Any, Literal, NamedTuple, Optional
 
 import awkward as ak
+import equinox as eqx
+import evermore as evm
+import optax
 import jax
 import jax.numpy as jnp
+from jaxtyping import Array, PyTree
 import numpy as np
 from tabulate import tabulate
 import uproot
@@ -24,7 +27,7 @@ from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 
 from analysis.base import Analysis
 from utils.cuts import lumi_mask
-
+from utils.evm_stats import calculate_significance
 
 # -----------------------------------------------------------------------------
 # Backend & Logging Setup
@@ -95,6 +98,106 @@ def recursive_to_backend(data: Any, backend: str = "jax") -> Any:
         return data
 
 
+class FitResult(NamedTuple):
+    params: Any
+    loss: float
+    uncertainties: dict[str, float]
+    covariance: Optional[jnp.ndarray]
+
+def summarize_fit_result(fit: FitResult, title: str) -> None:
+    """
+    Print a formatted summary of all fit parameter values and uncertainties,
+    including both differentiable and static (frozen) parameters.
+    Ensures each parameter appears only once and only unfrozen params get uncertainties.
+    """
+    from tabulate import tabulate
+    import jax
+
+    entries = []
+    seen = set()
+    diffable_param_names = set()
+
+    # First: collect names of diffable params so we know which ones had gradients
+    def get_diffable_names(tree, prefix=""):
+        if isinstance(tree, dict):
+            for k, v in tree.items():
+                get_diffable_names(v, prefix + f"{k}.")
+        elif hasattr(tree, "_fields"):
+            for field in tree._fields:
+                get_diffable_names(getattr(tree, field), prefix + f"{field}.")
+        else:
+            name = prefix.rstrip(".")
+            diffable_param_names.add(name)
+
+    # Then: walk both trees and build entry rows
+    def collect_named_values(tree, prefix="", frozen=False):
+        if isinstance(tree, dict):
+            for k, v in tree.items():
+                collect_named_values(v, prefix + f"{k}.", frozen)
+        elif hasattr(tree, "_fields"):
+            for field in tree._fields:
+                collect_named_values(getattr(tree, field), prefix + f"{field}.", frozen)
+        else:
+            name = prefix.rstrip(".")
+            if name in seen:
+                return
+            seen.add(name)
+
+            raw_val = tree.value
+            if raw_val is None:
+                val_str = "n/a"
+            else:
+                val = jax.device_get(raw_val).astype(float).item()
+                val_str = f"{val:+.4f}"
+
+            # Only show uncertainty if param was in diffable during this fit
+            print(name, diffable_param_names)
+            if name in diffable_param_names:
+                print(fit.uncertainties.get(name, None))
+                unc = fit.uncertainties.get(name, None)
+                unc_str = f"{jax.device_get(unc).item():.4f}" if unc is not None else "n/a"
+            else:
+                unc_str = "n/a"
+
+            entries.append([name, val_str, unc_str, "✓" if frozen else ""])
+
+    diffable, static = evm.parameter.partition(fit.params)
+    get_diffable_names(diffable)
+    collect_named_values(diffable, frozen=False)
+    collect_named_values(static, frozen=True)
+
+    entries.sort(key=lambda x: x[0])
+    entries.append(["Final loss", f"{fit.loss:.4f}", "", ""])
+
+    print(f"\n📋 {title}")
+    print(tabulate(entries,
+                   headers=["Parameter", "Value", "Uncertainty", "Frozen"],
+                   tablefmt="fancy_grid"))
+
+def get_param_names_and_values(tree, prefix=""):
+    """
+    Flatten the tree with matching parameter names and values,
+    preserving the same traversal order as ravel_pytree.
+    """
+    names = []
+    values = []
+
+    if isinstance(tree, dict):
+        for k in sorted(tree):  # Ensure consistent order
+            subnames, subvals = get_param_names_and_values(tree[k], prefix + f"{k}.")
+            names.extend(subnames)
+            values.extend(subvals)
+    elif hasattr(tree, "_fields"):  # NamedTuple
+        for field in tree._fields:
+            subnames, subvals = get_param_names_and_values(getattr(tree, field), prefix + f"{field}.")
+            names.extend(subnames)
+            values.extend(subvals)
+    else:
+        names.append(prefix.rstrip("."))
+        values.append(tree)
+
+    return names, values
+
 # -----------------------------------------------------------------------------
 # DifferentiableAnalysis Class Definition
 # -----------------------------------------------------------------------------
@@ -112,85 +215,282 @@ class DifferentiableAnalysis(Analysis):
         """Set the final histograms after processing."""
         self.histograms = histograms
 
+
     # -------------------------------------------------------------------------
     # Significance Calculation
     # -------------------------------------------------------------------------
     def _calculate_significance(self) -> jnp.ndarray:
         """
-        Calculate signal significance using KDE-smoothed nominal histograms.
+        Generalized significance calculation using evermore with multi-channel,
+        multi-process, and systematic-aware modeling.
 
         Returns
         -------
         jnp.ndarray
-            Significance estimate (S / sqrt(B + δS^2 + δB^2))
+            Asymptotic significance (sqrt(q0)) from a profile likelihood ratio.
         """
+        return calculate_significance(self.histograms, self.channels)
 
-        # ------------------------
-        # Accumulate signal & bkg
-        # ------------------------
-        params = self.config.jax.params
-        signal_yield_total = 0.0
-        background_yield_total = 0.0
-        variation = "nominal"
+    # def _calculate_significance(self) -> jnp.ndarray:
+    #     """
+    #     Calculate signal significance using evermore for binned likelihood analysis.
+    #     Returns significance as sqrt(q0) using the Asimov dataset (background-only).
+    #     """
+    #     from typing import NamedTuple
+    #     import equinox as eqx
+    #     import jax
+    #     import evermore as evm
+    #     import optax  # For optimization
+    #     from jaxtyping import Array, PyTree
 
-        for channel in self.channels:
-            if not getattr(channel, "use_in_diff", False):
-                continue
+    #     jax.config.update("jax_enable_x64", True)
 
-            region = channel.name
-            observable = getattr(channel, "fit_observable", None)
-            if observable is None:
-                logger.warning(
-                    f"[Significance] No fit_observable in {region}, skipping."
-                )
-                continue
+    #     # ------------------------------------------------------------
+    #     # 1. Collect histograms from all channels and processes
+    #     # ------------------------------------------------------------
+    #     channel_data = []
+    #     signal_kappa = self.config.jax.params.get("signal_systematic", 0.05)
+    #     background_kappa = self.config.jax.params.get("background_systematic", 0.1)
 
-            bin_vals_signal = bin_vals_bkg = None
+    #     for channel in self.channels:
+    #         if not getattr(channel, "use_in_diff", False):
+    #             continue
 
-            for process, proc_hists in self.histograms.items():
-                if variation not in proc_hists or region not in proc_hists[variation]:
-                    continue
-                if observable not in proc_hists[variation][region]:
-                    continue
+    #         region = channel.name
+    #         observable = getattr(channel, "fit_observable", None)
+    #         if observable is None:
+    #             logger.warning(f"[evermore] No fit_observable in {region}, skipping.")
+    #             continue
 
-                hist = proc_hists[variation][region][observable]
+    #         # Collect signal histogram
+    #         signal_hist = None
+    #         for signal_name in ["signal", "zprime"]:  # Add other signal names as needed
+    #             if (signal_name in self.histograms and
+    #                 "nominal" in self.histograms[signal_name] and
+    #                 region in self.histograms[signal_name]["nominal"] and
+    #                 observable in self.histograms[signal_name]["nominal"][region]):
+    #                 signal_hist = self.histograms[signal_name]["nominal"][region][observable]
+    #                 break
 
-                # -------------
-                # Init storage
-                # -------------
-                if bin_vals_signal is None:
-                    bin_vals_signal = jnp.zeros_like(hist)
-                    bin_vals_bkg = jnp.zeros_like(hist)
+    #         if signal_hist is None:
+    #             continue
 
-                # -------------
-                # Accumulate
-                # -------------
-                if process in {"signal", "zprime"}:
-                    bin_vals_signal += hist
-                elif process != "data":
-                    bin_vals_bkg += hist
+    #         # Sum background histograms
+    #         background_hist = jnp.zeros_like(signal_hist)
+    #         for process, proc_hists in self.histograms.items():
+    #             if process in ["signal", "data"]:
+    #                 continue
+    #             if ("nominal" in proc_hists and
+    #                 region in proc_hists["nominal"] and
+    #                 observable in proc_hists["nominal"][region]):
+    #                 background_hist += proc_hists["nominal"][region][observable]
 
-            if bin_vals_signal is None:
-                logger.warning(
-                    f"[Significance] No histogram for {region}/{observable}"
-                )
-                continue
+    #         # Get data histogram
+    #         data_hist = None
+    #         if ("data" in self.histograms and
+    #             "nominal" in self.histograms["data"] and
+    #             region in self.histograms["data"]["nominal"] and
+    #             observable in self.histograms["data"]["nominal"][region]):
+    #             data_hist = self.histograms["data"]["nominal"][region][observable]
 
-            signal_yield_total += jnp.sum(bin_vals_signal)
-            background_yield_total += jnp.sum(bin_vals_bkg)
+    #         if data_hist is None:
+    #             continue
 
-        # -----------------------------
-        # Compute significance formula
-        # -----------------------------
-        signal_syst = params.get("signal_systematic", 0.05) * signal_yield_total
-        background_syst = (
-            params.get("background_systematic", 0.1) * background_yield_total
-        )
+    #         channel_data.append({
+    #             "region": region,
+    #             "observable": observable,
+    #             "signal": signal_hist,
+    #             "background": background_hist,
+    #             "data": data_hist,
+    #             "signal_syst": signal_kappa,
+    #             "background_syst": background_kappa,
+    #         })
 
-        denom = jnp.sqrt(
-            background_yield_total + signal_syst**2 + background_syst**2 + 1e-6
-        )
-        return signal_yield_total / denom
+    #     print(signal_hist)
+    #     print(background_hist)
+    #     print(data_hist)
+    #     if not channel_data:
+    #         logger.warning("[evermore] No valid channels found for significance calculation")
+    #         return jnp.array(0.0)
+
+    #     # ------------------------------------------------------------
+    #     # 2. Define the statistical model
+    #     # ------------------------------------------------------------
+    #     class Params(NamedTuple):
+    #         mu: evm.Parameter  # Signal strength (POI)
+    #         # We'll create one nuisance parameter per systematic per channel
+    #         theta_s: list[evm.NormalParameter]  # Signal systematics
+    #         theta_b: list[evm.NormalParameter]  # Background systematics
+
+    #     def model(params: Params, channel_data: list) -> list[jnp.ndarray]:
+    #         expectations = []
+    #         for i, channel in enumerate(channel_data):
+    #             # Get modifiers for this channel
+    #             mu_modifier = params.mu.scale()
+    #             signal_modifier = params.theta_s[i].scale(offset=1.0, slope=channel["signal_syst"])
+    #             bkg_modifier = params.theta_b[i].scale(offset=1.0, slope=channel["background_syst"])
+
+    #             # Calculate expectation: μ × signal × (1 + θ_s × κ_s) + bkg × (1 + θ_b × κ_b)
+    #             signal_part = mu_modifier(channel["signal"]) * signal_modifier(channel["signal"])
+    #             bkg_part = bkg_modifier(channel["background"])
+    #             expectations.append(signal_part + bkg_part)
+    #         return expectations
+
+
+    #     print(jax.device_get(model()))
+
+    #     def loss(
+    #         diffable: PyTree,
+    #         static: PyTree,
+    #         channel_data: list,
+    #     ) -> Array:
+    #         params = eqx.combine(diffable, static)
+    #         expectations = model(params, channel_data)
+
+    #         total_log_likelihood = 0.0
+    #         for i, channel in enumerate(channel_data):
+    #             # Poisson log-likelihood for this channel
+    #             poisson_llh = evm.pdf.Poisson(lamb=expectations[i]).log_prob(channel["data"]).sum()
+    #             total_log_likelihood += poisson_llh
+
+    #             # Constraints for nuisance parameters (Gaussian)
+    #             signal_constraint = evm.pdf.Normal(mean=0.0, width=1.0).log_prob(params.theta_s[i].value)
+    #             bkg_constraint = evm.pdf.Normal(mean=0.0, width=1.0).log_prob(params.theta_b[i].value)
+    #             total_log_likelihood += signal_constraint + bkg_constraint
+
+    #         return -jnp.sum(total_log_likelihood)  # Negative log-likelihood for minimization
+
+    #     # ------------------------------------------------------------
+    #     # 3. Parameter setup and fitting
+    #     # ------------------------------------------------------------
+    #     # Initialize parameters
+    #     init_params = Params(
+    #         mu=evm.Parameter(1.0),
+    #         theta_s=[evm.NormalParameter(0.0) for _ in channel_data],
+    #         theta_b=[evm.NormalParameter(0.0) for _ in channel_data],
+    #     )
+
+    #     # Partition parameters into differentiable and static parts
+    #     diffable, static = evm.parameter.partition(init_params)
+
+    #     # Create optimizer
+    #     optimizer = optax.adam(learning_rate=0.1)
+    #     opt_state = optimizer.init(diffable)
+
+    #     # Minimization function
+    #     @jax.jit
+    #     def step(diffable, static, opt_state):
+    #         loss_value, grads = eqx.filter_value_and_grad(loss)(diffable, static, channel_data)
+    #         updates, opt_state = optimizer.update(grads, opt_state)
+    #         diffable = optax.apply_updates(diffable, updates)
+    #         return diffable, opt_state, loss_value
+
+    #     # ------------------------------------------------------------
+    #     # 4. Fit under alternative hypothesis (μ free)
+    #     # ------------------------------------------------------------
+    #     print("Fitting alternative hypothesis (μ free)...")
+    #     for i in range(100):  # Fixed number of iterations for simplicity
+    #         diffable, opt_state, loss_value = step(diffable, static, opt_state)
+    #         loss_value = jax.device_get(loss_value).item()  # Ensure loss is a scalar
+    #         if i % 10 == 0:
+    #             print(f"Step {i}: loss = {loss_value:.4f}")
+
+    #     alt_loss = loss_value
+    #     alt_params = eqx.combine(diffable, static)
+
+    #     # ------------------------------------------------------------
+    #     # 5. Fit under null hypothesis (μ = 0)
+    #     # ------------------------------------------------------------
+    #     print("Fitting null hypothesis (μ = 0)...")
+    #     # Create new parameters with μ frozen at 0
+    #     null_params = Params(
+    #         mu=evm.Parameter(0.0, frozen=True),
+    #         theta_s=alt_params.theta_s,
+    #         theta_b=alt_params.theta_b,
+    #     )
+    #     diffable_null, static_null = evm.parameter.partition(null_params)
+    #     opt_state_null = optimizer.init(diffable_null)
+
+    #     for i in range(100):
+    #         diffable_null, opt_state_null, loss_value = step(diffable_null, static_null, opt_state_null)
+    #         loss_value = jax.device_get(loss_value).item()  # Ensure loss is a scalar
+    #         if i % 10 == 0:
+    #             print(f"Step {i}: loss = {loss_value:.4f}")
+
+    #     null_loss = loss_value
+
+    #     # ------------------------------------------------------------
+    #     # 6. Compute test statistic and significance
+    #     # ------------------------------------------------------------
+    #     # q0 = -2 log(λ) = 2 * [L(null) - L(alt)]
+    #     # Where L = log-likelihood (but our loss is negative log-likelihood)
+    #     q0 = 2 * (null_loss - alt_loss)  # Note: loss = -logL ⇒ logL = -loss
+    #     q0 = jnp.clip(q0, 0.0)  # Ensure non-negative
+    #     significance = jnp.sqrt(q0)
+
+    #     print("\n" + "="*50)
+    #     print(f"Null loss: {null_loss:.4f}, Alt loss: {alt_loss:.4f}")
+    #     print(f"q0 = {q0:.4f}, Significance = {significance:.4f}σ")
+    #     print("="*50)
+
+        # from typing import NamedTuple
+
+        # import equinox as eqx
+        # from jaxtyping import Array, PyTree
+
+        # import evermore as evm
+
+        # jax.config.update("jax_enable_x64", True)
+
+
+        # # define a simple model with two processes and two parameters
+        # def model(params: PyTree, hists: dict[str, Array]) -> Array:
+        #     mu_modifier = params.mu.scale()
+        #     syst_modifier = params.syst.scale_log(up=1.1, down=0.9)
+        #     return mu_modifier(hists["signal"]) + syst_modifier(hists["background"])
+
+
+        # def loss(
+        #     diffable: PyTree,
+        #     static: PyTree,
+        #     hists: dict[str, Array],
+        #     observation: Array,
+        # ) -> Array:
+        #     params = eqx.combine(diffable, static)
+        #     expectation = model(params, hists)
+        #     # Poisson NLL of the expectation and observation
+        #     log_likelihood = evm.pdf.Poisson(lamb=expectation).log_prob(observation).sum()
+        #     # Add parameter constraints from logpdfs
+        #     constraints = evm.loss.get_log_probs(params)
+        #     log_likelihood += evm.util.sum_over_leaves(constraints)
+        #     return -jnp.sum(log_likelihood)
+
+
+        # # setup data
+
+        # hists = {"signal":  self.histograms["signal"]["nominal"]["CMS_WORKSHOP_JAX"]["workshop_mtt"],
+        #         "background": self.histograms["ttbar_semilep"]["nominal"]["CMS_WORKSHOP_JAX"]["workshop_mtt"]
+        #         }
+
+        # observation = self.histograms["data"]["nominal"]["CMS_WORKSHOP_JAX"]["workshop_mtt"]
+
+
+        # # define parameters, can be any PyTree of evm.Parameters
+        # class Params(NamedTuple):
+        #     mu: evm.Parameter
+        #     syst: evm.NormalParameter
+
+
+        # params = Params(mu=evm.Parameter(1.0), syst=evm.NormalParameter(0.0))
+        # diffable, static = evm.parameter.partition(params)
+
+        # # Calculate negative log-likelihood/loss
+        # loss_val = loss(diffable, static, hists, observation)
+        # # gradients of negative log-likelihood w.r.t. diffable parameters
+        # grads = eqx.filter_grad(loss)(diffable, static, hists, observation)
+        # print(f"{grads.mu.value=}, {grads.syst.value=}")
+
+        return 2.5
 
     # -------------------------------------------------------------------------
     # Histogramming Logic
@@ -704,10 +1004,14 @@ class DifferentiableAnalysis(Analysis):
         logger.info(f"Processes: {list(fileset.keys())}")
         # Run the initial analysis chain to get starting significance and gradients
         cache_dir = "/tmp/gradients_analysis/"
+        if self.config.general.read_from_cache:
+            read_from_cache = True
+            run_and_cache = False
+
         significance, gradients = (
             self.run_analysis_chain_with_gradients(fileset,
-                                                    read_from_cache=False,
-                                                    run_and_cache=True,
+                                                    read_from_cache=read_from_cache,
+                                                    run_and_cache=run_and_cache,
                                                     cache_dir=cache_dir)
                                                 )
 

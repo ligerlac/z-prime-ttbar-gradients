@@ -111,6 +111,14 @@ class GeneralConfig(SubscriptableModel):
             description="Whether to run systematic variations step",
         ),
     ]
+    read_from_cache: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Whether to read preprocessed files from cache",
+        ),
+    ]
+
     output_dir: Annotated[
         Optional[str],
         Field(default="output/", description="Directory for output files"),

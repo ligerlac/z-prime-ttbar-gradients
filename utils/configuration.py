@@ -40,6 +40,7 @@ config = {
         "run_histogramming": False,
         "run_statistics": True,
         "run_systematics": False,
+        "read_from_cache": True,
         "output_dir": "output/",
         "preprocessed_dir": "./preproc_uproot/z-prime-ttbar-data/",
         "processor": "uproot",
@@ -63,7 +64,9 @@ config = {
         },
     },
     "jax": {
-        "optimize": True,
+        "optimize": False,
+        "learning_rate": 0.01,
+        "max_iterations": 1,
         "soft_selection": {
             "function": Zprime_softcuts_jax_workshop,
             "use": [
@@ -73,8 +76,6 @@ config = {
                 ("PuppiMET", "pt"),
             ],
         },
-        "learning_rate": 0.01,
-        "max_iterations": 25,
         "params": {
             'met_threshold': 50.0,
             'met_scale': 25.0,

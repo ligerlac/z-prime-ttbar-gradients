@@ -9,6 +9,7 @@ from . import output_files as output_files
 from . import preproc as preproc
 from . import schema as schema
 from . import systematics as systematics
+from . import evm_stats as evm_stats
 
 
 __all__ = [
@@ -21,6 +22,7 @@ __all__ = [
     "preproc",
     "schema",
     "systematics",
+    "evm_stats"
 ]
 
 
