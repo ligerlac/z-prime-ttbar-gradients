@@ -1,8 +1,11 @@
-import jax
-import jax.numpy as jnp
-import awkward as ak
+from typing import Dict, Any, Tuple, Optional, NamedTuple
 from functools import partial
 import numpy as np
+import jax
+import jax.numpy as jnp
+from jaxtyping import Array, PyTree
+import awkward as ak
+import evermore as evm
 
 
 class DifferentiablePhysicsSelections:
@@ -35,18 +38,15 @@ class DifferentiablePhysicsSelections:
         # Soft cuts with differentiable thresholds
         cuts = {
             'met_cut': jax.nn.sigmoid(
-                (region_met_pt - params['met_threshold']) / params['met_scale']
+                (region_met_pt - params['met_threshold']) / 25.0
             ),
             'btag_cut': jax.nn.sigmoid(
-            (region_jets_btag - params['btag_threshold']) * 10
+                (region_jets_btag - params['btag_threshold']) * 10
             ),
-            'lep_ht_cut': jax.nn.sigmoid(
-                (region_lep_ht - params['lep_ht_threshold']) / 50.0
-            )
         }
         
         # Combine cuts (product gives intersection-like behavior)
-        cut_values = jnp.stack([cuts['met_cut'], cuts['btag_cut'], cuts['lep_ht_cut']])
+        cut_values = jnp.stack([cuts['met_cut'], cuts['btag_cut']])
         selection_weight = jnp.prod(cut_values, axis=0)
         
         return selection_weight, cuts
@@ -64,8 +64,8 @@ class DifferentiablePhysicsSelections:
         # Example: parameterized observable calculation
         observable = (
             params['muon_weight'] * muon_pt + 
-            params['jet_weight'] * jet_pt_sum + 
-            params['met_weight'] * met_pt
+            0.1 * jet_pt_sum + 
+            1. * met_pt
         )
         
         return observable
@@ -113,18 +113,12 @@ class DifferentiableZprimeAnalysis:
         # Differentiable parameters (including process scales)
         self.params = {
             'met_threshold': 50.0,
-            'met_scale': 25.0,
             'btag_threshold': 0.5,
-            'lep_ht_threshold': 150.0,
             'muon_weight': 1.0,
-            'jet_weight': 0.1,
-            'met_weight': 1.0,
             'kde_bandwidth': 10.0,
             # Process-specific scales (cross-section * luminosity / n_events)
-            'signal_scale': 1.0,
-            'ttbar_scale': 1.0,
-            'wjets_scale': 1.0,
-            'other_scale': 1.0,
+            'signal_scale': evm.Parameter(1.0),
+            'ttbar_scale': evm.Parameter(1.0),  # Example using Evermore's Parameter
             # Systematic uncertainties
             'signal_systematic': 0.05,  # 5% on signal
             'background_systematic': 0.1,  # 10% on background
@@ -145,7 +139,6 @@ class DifferentiableZprimeAnalysis:
         """
         
         histograms = {}
-        total_weights = {}
         
         # Process each sample separately
         for process_name, jax_data in process_data_dict.items():
@@ -163,13 +156,14 @@ class DifferentiableZprimeAnalysis:
             )
             
             # Differentiable binning
-            bins = jnp.linspace(0, 1000, 51)  # Example binning for your observable
+            # bins = jnp.linspace(0, 1000, 51)  # Example binning for your observable
+            bins = jnp.linspace(0, 500, 26)  # Example binning for your observable
             bandwidth = params['kde_bandwidth']
             
             # KDE-style soft binning
             cdf = jax.scipy.stats.norm.cdf(
-                bins.reshape(-1, 1), 
-                loc=observable_vals.reshape(1, -1), 
+                bins.reshape(-1, 1),
+                loc=observable_vals.reshape(1, -1),
                 scale=bandwidth
             )
             
@@ -178,20 +172,21 @@ class DifferentiableZprimeAnalysis:
             bin_weights = weighted_cdf[1:, :] - weighted_cdf[:-1, :]
             histogram = jnp.sum(bin_weights, axis=1)
             
-            # Apply process-specific scaling
-            if process_name != 'data':
-                # For MC: apply cross-section weights, luminosity, etc.
-                process_scale = params.get(f'{process_name}_scale', 1.0)
-                histogram = histogram * process_scale
+            # # Apply process-specific scaling
+            # if process_name != 'data':
+            #     # For MC: apply cross-section weights, luminosity, etc.
+            #     process_scale = params.get(f'{process_name}_scale', 1.0)
+            #     histogram = histogram * process_scale
             
             histograms[process_name] = histogram
-            total_weights[process_name] = jnp.sum(selection_weight)
         
         # Calculate significance from the histograms
-        significance = self._calculate_significance(params, histograms)
+        # significance = self._calculate_significance(params, histograms)
+        significance = self._calculate_significance_evermore(params, histograms)
         
         return significance
     
+
     def _calculate_significance(self, params, histograms):
         """
         Calculate significance from process histograms.
@@ -237,6 +232,55 @@ class DifferentiableZprimeAnalysis:
         significance = signal_yield / denominator
         
         return significance
+
+
+    def _calculate_significance_evermore(self, params, histograms):
+        """
+        Calculate significance using Evermore's statistical tools.
+        
+        Parameters:
+        -----------
+        params : dict
+            Parameters (including signal/background region definitions)
+        histograms : dict
+            Histograms for each process
+        """
+
+        evm_params = {
+            "signal_scale": params['signal_scale'],
+            "ttbar_scale": params['ttbar_scale'],
+        }
+
+        def model(params: PyTree, hists: dict[str, Array]) -> Array:
+            signal_modifier = params["signal_scale"].scale()
+            ttbar_modifier = params["ttbar_scale"].scale()
+            return (
+                signal_modifier(hists['signal']) +
+                ttbar_modifier(hists['ttbar']) +
+                hists['wjets']# Assume wjets is not scaled
+            )
+            # return hists['signal'] + hists['ttbar'] + hists['wjets']
+
+        # @jax.jit
+        def loss(params: PyTree, hists: dict[str, Array], observation: Array) -> Array:
+            expectation = model(params, hists)
+            print(f"Expectation: {expectation}")
+            print(f"Observation: {observation}")
+            print(f"loss = {evm.pdf.Poisson(lamb=expectation).log_prob(observation).sum()}")
+            return evm.pdf.Poisson(lamb=expectation).log_prob(observation).sum()
+            # # Poisson NLL of the expectation and observation
+            # log_likelihood = evm.pdf.Poisson(lamb=expectation).log_prob(observation).sum()
+            # # Add parameter constraints from logpdfs
+            # constraints = evm.loss.get_log_probs(params)
+            # log_likelihood += evm.util.sum_over_leaves(constraints)
+            # return -jnp.sum(log_likelihood)
+
+        # observation = histograms.pop('data')
+        observation = histograms["data"]
+        histograms_ = {k: v for k, v in histograms.items() if k != 'data'}
+
+        return loss(evm_params, histograms_, observation)
+
     
     def process_with_gradients(self, process_data_dict):
         """
@@ -273,9 +317,8 @@ def create_mock_multiprocess_data():
     
     processes = {
         'signal': {'n_events': 500, 'met_mean': 80, 'observable_mean': 500},
-        'ttbar': {'n_events': 5000, 'met_mean': 60, 'observable_mean': 300},
-        'wjets': {'n_events': 8000, 'met_mean': 45, 'observable_mean': 250},
-        'other': {'n_events': 2000, 'met_mean': 50, 'observable_mean': 350},
+        'ttbar': {'n_events': 6000, 'met_mean': 60, 'observable_mean': 300},
+        'wjets': {'n_events': 9000, 'met_mean': 45, 'observable_mean': 250},
         'data': {'n_events': 15000, 'met_mean': 55, 'observable_mean': 280}
     }
     
@@ -337,15 +380,14 @@ def create_mock_multiprocess_data():
     
     return process_data_dict
 
+
 def optimize_analysis_cuts():
     """
     Example of how to optimize analysis cuts using multiple processes to maximize significance.
     """
     
-    print("Creating mock analysis...")
     analysis = DifferentiableZprimeAnalysis(config={})
     
-    print("Loading mock data for multiple processes...")
     process_data_dict = create_mock_multiprocess_data()
     
     print("\nTesting differentiable processing...")
@@ -361,19 +403,29 @@ def optimize_analysis_cuts():
     print("\nRunning optimization to maximize significance...")
     
     # Simple gradient ascent with parameter constraints
-    learning_rate = 0.01
+    learning_rate = 0.001
     params = analysis.params.copy()
     
     print(f"{'Step':>4} {'Significance':>12} {'MET Cut':>8} {'B-tag Cut':>10} {'Lep HT Cut':>11}")
     print("-" * 55)
     
     for i in range(25):
+    # for i in range(1):
         significance = objective(params)
         grads = jax.grad(objective)(params)
         
         # Update parameters with constraints
-        for key in params:
-            if key.endswith('_threshold'):
+        for key, param in params.items():
+            # check if param is an evermore.Parameter
+            print(f"Processing parameter {key} with value {param} and gradient {grads[key]}")
+            if isinstance(param, evm.Parameter):
+                params[key] = evm.Parameter(
+                    value=param.value + learning_rate * grads[key].value,
+                    lower=param.lower,
+                    upper=param.upper
+                )
+
+            elif key.endswith('_threshold'):
                 # For cut thresholds, use smaller learning rate and constrain ranges
                 if key == 'met_threshold':
                     params[key] = jnp.clip(
@@ -384,11 +436,6 @@ def optimize_analysis_cuts():
                     params[key] = jnp.clip(
                         params[key] + learning_rate * grads[key],
                         0.1, 0.9
-                    )
-                elif key == 'lep_ht_threshold':
-                    params[key] = jnp.clip(
-                        params[key] + learning_rate * grads[key],
-                        50.0, 300.0
                     )
             elif key.endswith('_weight'):
                 # For weights, constrain to positive values
@@ -406,9 +453,10 @@ def optimize_analysis_cuts():
                 # Other parameters
                 params[key] = params[key] + learning_rate * grads[key]
         
-        if (i + 1) % 5 == 0 or i == 0:
+        # if (i + 1) % 5 == 0 or i == 0:
+        if True:
             print(f"{i+1:4d} {significance:12.4f} {params['met_threshold']:8.1f} "
-                  f"{params['btag_threshold']:10.3f} {params['lep_ht_threshold']:11.1f}")
+                  f"{params['btag_threshold']:10.3f}")
     
     final_significance = objective(params)
     print(f"\nOptimization complete!")
