@@ -319,7 +319,10 @@ def Zprime_softcuts_jax_workshop(
     # lep_ht = muons.pt + met_pt
     #met_pt = met
     #jets_btag = jets
-    #lep_ht = muons[:,0] + met
+    #lep_ht = muons + met
+    # for event in events:
+    #     for muon in event:
+    #         pass
     # ---------------------
     # Define differentiable sigmoid cuts
     # ---------------------
@@ -327,10 +330,10 @@ def Zprime_softcuts_jax_workshop(
         "met_cut": jax.nn.sigmoid(
             (ak.to_jax(met) - params["met_threshold"]) / params["met_scale"]
         ),
-        # Additional cuts can be added here similarly
-        # 'btag_cut': jax.nn.sigmoid(
+        # # Additional cuts can be added here similarly
+        # 'btag_cut': ak.sum(jax.nn.sigmoid(
         # (jets - params['btag_threshold']) * 10
-        # ),
+        # ), axis=1),
         # 'lep_ht_cut': jax.nn.sigmoid(
         #     (lep_ht - params['lep_ht_threshold']) / 50.0
     }
@@ -340,7 +343,7 @@ def Zprime_softcuts_jax_workshop(
     # ---------------------
     cut_values = jnp.stack([cuts["met_cut"]])
     selection_weight = jnp.prod(cut_values, axis=0)
-
+    print("Selection weights:", selection_weight)
     return selection_weight
 
 from coffea.analysis_tools import PackedSelection

@@ -64,9 +64,9 @@ config = {
         },
     },
     "jax": {
-        "optimize": False,
-        "learning_rate": 0.01,
-        "max_iterations": 1,
+        "optimize": True,
+        "learning_rate": 0.1,
+        "max_iterations": 5,
         "soft_selection": {
             "function": Zprime_softcuts_jax_workshop,
             "use": [
