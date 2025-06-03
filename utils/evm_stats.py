@@ -158,22 +158,20 @@ def calculate_significance(histograms: Dict, channels: List) -> Array:
     result_alt = _fit_hypothesis(
         ParamStruct, model_fn, channel_data, frozen_mu=None
     )
-    #summarize_fit_result(result_alt)
+    summarize_fit_result(result_alt)
 
     # Fit null hypothesis (μ = 0)
     logger.info("Fitting null hypothesis (μ = 0)...")
     result_null = _fit_hypothesis(
         ParamStruct, model_fn, channel_data, frozen_mu=0.0
     )
-    #summarize_fit_result(result_null)
+    summarize_fit_result(result_null)
 
     # Compute test statistic and significance
     q0 = 2 * (result_null.loss - result_alt.loss)
     significance = jnp.sqrt(jnp.clip(q0, 0.0))
 
-    #print_significance_summary(significance, q0)
-
-    return significance
+    return significance, q0
 
 
 # =============================================================================
@@ -203,7 +201,7 @@ def summarize_fit_result(result: FitResult) -> None:
 
     # Prepare fit quality metrics
     quality_table = [
-        ["Negative Log-Likelihood", f"{result.loss:.4f}"],
+        ["Negative Log-Likelihood", f"{jax.device_get(result.loss).item():.4f}"],
         ["Number of Parameters", len(result.param_values)],
         ["Covariance Condition",
          f"{jax.device_get(jnp.linalg.cond(result.covariance)).item():.2e}"]
@@ -243,8 +241,8 @@ def print_significance_summary(significance: float, q0: float) -> None:
     """
     # Results table
     results_table = [
-        ["Test Statistic (q0)", f"{q0:.4f}"],
-        ["Significance (Z)", f"{significance:.4f}σ"],
+        ["Test Statistic (q0)", f"{jax.device_get(q0).item():.4f}"],
+        ["Significance (Z)", f"{jax.device_get(significance).item():.4f}σ"],
     ]
 
     # Format table with newline for proper separation
@@ -490,8 +488,8 @@ def _fit_hypothesis(
     # Optimization loop
     for step in range(steps):
         diffable, opt_state, loss_val = train_step(diffable, static, opt_state)
-        #if step % 10 == 0:
-            #logger.info(f"Step {step}: loss = {jax.device_get(loss_val).item():.4f}")
+        if step % 10 == 0:
+            jax.debug.print("Step loss = {:.4f}", loss_val)
 
     # Post-processing after optimization
     final_params = eqx.combine(diffable, static)

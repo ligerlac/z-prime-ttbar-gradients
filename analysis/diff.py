@@ -27,7 +27,7 @@ from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 
 from analysis.base import Analysis
 from utils.cuts import lumi_mask
-from utils.evm_stats import calculate_significance
+from utils.evm_stats import calculate_significance, print_significance_summary
 
 # -----------------------------------------------------------------------------
 # Backend & Logging Setup
@@ -129,7 +129,9 @@ class DifferentiableAnalysis(Analysis):
         jnp.ndarray
             Asymptotic significance (sqrt(q0)) from a profile likelihood ratio.
         """
-        return calculate_significance(histograms, self.channels)
+        significance, q0 = calculate_significance(histograms, self.channels)
+        print_significance_summary(significance, q0)
+        return significance
 
     # -------------------------------------------------------------------------
     # Histogramming Logic
@@ -677,7 +679,6 @@ class DifferentiableAnalysis(Analysis):
             # Parameter update
             for key in params:
                 delta = learning_rate * gradients[key]
-                print(delta, learning_rate, gradients[key])
                 update_fn = self.config.jax.param_updates.get(key, lambda x, d: x + d)
                 params[key] = update_fn(params[key], delta)
 
