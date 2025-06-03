@@ -158,20 +158,20 @@ def calculate_significance(histograms: Dict, channels: List) -> Array:
     result_alt = _fit_hypothesis(
         ParamStruct, model_fn, channel_data, frozen_mu=None
     )
-    summarize_fit_result(result_alt)
+    #summarize_fit_result(result_alt)
 
     # Fit null hypothesis (μ = 0)
     logger.info("Fitting null hypothesis (μ = 0)...")
     result_null = _fit_hypothesis(
         ParamStruct, model_fn, channel_data, frozen_mu=0.0
     )
-    summarize_fit_result(result_null)
+    #summarize_fit_result(result_null)
 
     # Compute test statistic and significance
     q0 = 2 * (result_null.loss - result_alt.loss)
     significance = jnp.sqrt(jnp.clip(q0, 0.0))
 
-    print_significance_summary(significance, q0)
+    #print_significance_summary(significance, q0)
 
     return significance
 
@@ -490,8 +490,8 @@ def _fit_hypothesis(
     # Optimization loop
     for step in range(steps):
         diffable, opt_state, loss_val = train_step(diffable, static, opt_state)
-        if step % 10 == 0:
-            logger.info(f"Step {step}: loss = {jax.device_get(loss_val).item():.4f}")
+        #if step % 10 == 0:
+            #logger.info(f"Step {step}: loss = {jax.device_get(loss_val).item():.4f}")
 
     # Post-processing after optimization
     final_params = eqx.combine(diffable, static)
@@ -523,7 +523,7 @@ def _fit_hypothesis(
 
     return FitResult(
         params=final_params,
-        loss=float(jax.device_get(loss_val).item()),
+        loss=loss_val, #float(jax.device_get(loss_val).item()),
         uncertainties=uncertainties,
         covariance=cov_matrix,
         param_values=param_values_dict

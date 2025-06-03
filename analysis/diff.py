@@ -119,7 +119,7 @@ class DifferentiableAnalysis(Analysis):
     # -------------------------------------------------------------------------
     # Significance Calculation
     # -------------------------------------------------------------------------
-    def _calculate_significance(self) -> jnp.ndarray:
+    def _calculate_significance(self, histograms) -> jnp.ndarray:
         """
         Generalized significance calculation using evermore with multi-channel,
         multi-process, and systematic-aware modeling.
@@ -129,7 +129,7 @@ class DifferentiableAnalysis(Analysis):
         jnp.ndarray
             Asymptotic significance (sqrt(q0)) from a profile likelihood ratio.
         """
-        return calculate_significance(self.histograms, self.channels)
+        return calculate_significance(histograms, self.channels)
 
     # -------------------------------------------------------------------------
     # Histogramming Logic
@@ -576,7 +576,7 @@ class DifferentiableAnalysis(Analysis):
         # Final aggregation and return
         # -----------------------------
         self.set_histograms(process_histograms)
-        significance = self._calculate_significance()
+        significance = self._calculate_significance(process_histograms)
 
         logger.info("✅ All datasets processed.")
         return significance
@@ -649,6 +649,8 @@ class DifferentiableAnalysis(Analysis):
                                                     cache_dir=cache_dir)
                                                 )
 
+        initial_significance = significance
+
         params = self.config.jax.params.copy()
         if not self.config.jax.optimize:
             return params, significance
@@ -711,8 +713,8 @@ class DifferentiableAnalysis(Analysis):
             logger.info("=" * 60)
 
         # After loop: Final summary
-        final_significance = objective(params)
-        improvement = ((final_significance / significance - 1) * 100)
+        final_significance = significance
+        improvement = ((final_significance / initial_significance - 1) * 100)
 
         # Build colored final param summary
         param_summary = []
@@ -730,7 +732,7 @@ class DifferentiableAnalysis(Analysis):
         # Significance summary
         final_stats = [
             ["Initial Significance", f"{significance:.4f}"],
-            ["Final Significance", f"{final_significance:.4f}"],
+            ["Final Significance", f"{initial_significance:.4f}"],
             ["Improvement (%)", f"{improvement:.2f}%"],
         ]
 

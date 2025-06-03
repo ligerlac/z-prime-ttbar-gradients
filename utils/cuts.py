@@ -343,7 +343,6 @@ def Zprime_softcuts_jax_workshop(
     # ---------------------
     cut_values = jnp.stack([cuts["met_cut"]])
     selection_weight = jnp.prod(cut_values, axis=0)
-    print("Selection weights:", selection_weight)
     return selection_weight
 
 from coffea.analysis_tools import PackedSelection
