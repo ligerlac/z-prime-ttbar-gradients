@@ -9,12 +9,15 @@ from collections.abc import Mapping, Sequence
 import hashlib
 import cloudpickle
 from pprint import pformat
-from typing import Any, Literal, Optional
-
+from typing import Any, Literal, NamedTuple, Optional
 
 import awkward as ak
+import equinox as eqx
+import evermore as evm
+import optax
 import jax
 import jax.numpy as jnp
+from jaxtyping import Array, PyTree
 import numpy as np
 from tabulate import tabulate
 import uproot
@@ -24,7 +27,7 @@ from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 
 from analysis.base import Analysis
 from utils.cuts import lumi_mask
-
+from utils.evm_stats import calculate_significance, print_significance_summary
 
 # -----------------------------------------------------------------------------
 # Backend & Logging Setup
@@ -112,85 +115,23 @@ class DifferentiableAnalysis(Analysis):
         """Set the final histograms after processing."""
         self.histograms = histograms
 
+
     # -------------------------------------------------------------------------
     # Significance Calculation
     # -------------------------------------------------------------------------
-    def _calculate_significance(self) -> jnp.ndarray:
+    def _calculate_significance(self, histograms) -> jnp.ndarray:
         """
-        Calculate signal significance using KDE-smoothed nominal histograms.
+        Generalized significance calculation using evermore with multi-channel,
+        multi-process, and systematic-aware modeling.
 
         Returns
         -------
         jnp.ndarray
-            Significance estimate (S / sqrt(B + δS^2 + δB^2))
+            Asymptotic significance (sqrt(q0)) from a profile likelihood ratio.
         """
-
-        # ------------------------
-        # Accumulate signal & bkg
-        # ------------------------
-        params = self.config.jax.params
-        signal_yield_total = 0.0
-        background_yield_total = 0.0
-        variation = "nominal"
-
-        for channel in self.channels:
-            if not getattr(channel, "use_in_diff", False):
-                continue
-
-            region = channel.name
-            observable = getattr(channel, "fit_observable", None)
-            if observable is None:
-                logger.warning(
-                    f"[Significance] No fit_observable in {region}, skipping."
-                )
-                continue
-
-            bin_vals_signal = bin_vals_bkg = None
-
-            for process, proc_hists in self.histograms.items():
-                if variation not in proc_hists or region not in proc_hists[variation]:
-                    continue
-                if observable not in proc_hists[variation][region]:
-                    continue
-
-                hist = proc_hists[variation][region][observable]
-
-                # -------------
-                # Init storage
-                # -------------
-                if bin_vals_signal is None:
-                    bin_vals_signal = jnp.zeros_like(hist)
-                    bin_vals_bkg = jnp.zeros_like(hist)
-
-                # -------------
-                # Accumulate
-                # -------------
-                if process in {"signal", "zprime"}:
-                    bin_vals_signal += hist
-                elif process != "data":
-                    bin_vals_bkg += hist
-
-            if bin_vals_signal is None:
-                logger.warning(
-                    f"[Significance] No histogram for {region}/{observable}"
-                )
-                continue
-
-            signal_yield_total += jnp.sum(bin_vals_signal)
-            background_yield_total += jnp.sum(bin_vals_bkg)
-
-        # -----------------------------
-        # Compute significance formula
-        # -----------------------------
-        signal_syst = params.get("signal_systematic", 0.05) * signal_yield_total
-        background_syst = (
-            params.get("background_systematic", 0.1) * background_yield_total
-        )
-
-        denom = jnp.sqrt(
-            background_yield_total + signal_syst**2 + background_syst**2 + 1e-6
-        )
-        return signal_yield_total / denom
+        significance, q0 = calculate_significance(histograms, self.channels)
+        print_significance_summary(significance, q0)
+        return significance
 
     # -------------------------------------------------------------------------
     # Histogramming Logic
@@ -202,7 +143,6 @@ class DifferentiableAnalysis(Analysis):
         process: str,
         variation: str,
         xsec_weight: float,
-        analysis: str,
         params: dict[str, Any],
         event_syst: Optional[dict[str, Any]] = None,
         direction: Literal["up", "down", "nominal"] = "nominal",
@@ -408,7 +348,6 @@ class DifferentiableAnalysis(Analysis):
         all_histograms = self.histograms.copy()
         process = metadata["process"]
         variation = metadata.get("variation", "nominal")
-        analysis = self.__class__.__name__
         xsec = metadata["xsec"]
         n_gen = metadata["nevts"]
         lumi = self.config["general"]["lumi"]
@@ -457,7 +396,6 @@ class DifferentiableAnalysis(Analysis):
             process,
             "nominal",
             xsec_weight,
-            analysis,
             params,
         )
         all_histograms["nominal"] = histograms
@@ -494,7 +432,6 @@ class DifferentiableAnalysis(Analysis):
                         process,
                         varname,
                         xsec_weight,
-                        analysis,
                         params,
                         event_syst=syst,
                         direction=direction,
@@ -641,7 +578,7 @@ class DifferentiableAnalysis(Analysis):
         # Final aggregation and return
         # -----------------------------
         self.set_histograms(process_histograms)
-        significance = self._calculate_significance()
+        significance = self._calculate_significance(process_histograms)
 
         logger.info("✅ All datasets processed.")
         return significance
@@ -668,7 +605,6 @@ class DifferentiableAnalysis(Analysis):
         tuple
             (Significance, gradient dictionary)
         """
-
 
         # Compute significance from datasets
         significance, gradients = jax.value_and_grad(
@@ -704,12 +640,18 @@ class DifferentiableAnalysis(Analysis):
         logger.info(f"Processes: {list(fileset.keys())}")
         # Run the initial analysis chain to get starting significance and gradients
         cache_dir = "/tmp/gradients_analysis/"
+        if self.config.general.read_from_cache:
+            read_from_cache = True
+            run_and_cache = False
+
         significance, gradients = (
             self.run_analysis_chain_with_gradients(fileset,
-                                                    read_from_cache=False,
-                                                    run_and_cache=True,
+                                                    read_from_cache=read_from_cache,
+                                                    run_and_cache=run_and_cache,
                                                     cache_dir=cache_dir)
                                                 )
+
+        initial_significance = significance
 
         params = self.config.jax.params.copy()
         if not self.config.jax.optimize:
@@ -730,8 +672,6 @@ class DifferentiableAnalysis(Analysis):
         initial_params = {k: float(v) for k, v in params.items()}
 
         logger.info("Starting optimization...\n")
-        print(self.config.jax.max_iterations)
-
         for i in range(self.config.jax.max_iterations):
             # Compute significance and gradients
             significance, gradients = jax.value_and_grad(objective, argnums=0)(params)
@@ -762,17 +702,20 @@ class DifferentiableAnalysis(Analysis):
                     ])
 
             # Add significance row
-            step_summary.append(["-" * 30, "-" * 10, "-" * 10, "-" * 10])
+            step_summary.append([" " * 30, " " * 10, " " * 10, " " * 10])
             step_summary.append(["Significance", f"{significance:.4f}", "", ""])
 
             logger.info("\n" + "=" * 60)
-            logger.info(f" Step {i + 1}: Optimization Summary")
-            logger.info("\n" + tabulate(step_summary, tablefmt="fancy_grid", colalign=("left", "right", "right", "right")))
+            logger.info(f" Step {i + 1}: Optimization Summary: "
+                        + "\n"
+                        + tabulate(step_summary,
+                                   tablefmt="fancy_grid",
+                                   colalign=("left", "right", "right", "right")))
             logger.info("=" * 60)
 
         # After loop: Final summary
-        final_significance = objective(params)
-        improvement = ((final_significance / significance - 1) * 100)
+        final_significance = significance
+        improvement = ((final_significance / initial_significance - 1) * 100)
 
         # Build colored final param summary
         param_summary = []
@@ -790,20 +733,22 @@ class DifferentiableAnalysis(Analysis):
         # Significance summary
         final_stats = [
             ["Initial Significance", f"{significance:.4f}"],
-            ["Final Significance", f"{final_significance:.4f}"],
+            ["Final Significance", f"{initial_significance:.4f}"],
             ["Improvement (%)", f"{improvement:.2f}%"],
         ]
 
         # Print summaries
-        logger.info("\nFinal Optimized Parameters:")
-        logger.info("\n" + tabulate(param_summary,
-                                    headers=["Parameter", "Value"],
-                                    tablefmt="fancy_grid",
-                                    colalign=("left", "right")))
+        logger.info("Final Optimized Parameters:"
+                    + "\n"
+                    + tabulate(param_summary,
+                                headers=["Parameter", "Value"],
+                                tablefmt="fancy_grid",
+                                colalign=("left", "right")))
 
-        logger.info("Significance Summary:")
-        logger.info("\n" + tabulate(final_stats,
-                                    tablefmt="fancy_grid",
-                                    colalign=("left", "right")))
+        logger.info("Significance Summary:"
+                    + "\n"
+                    + tabulate(final_stats,
+                                tablefmt="fancy_grid",
+                                colalign=("left", "right")))
 
         return params, final_significance
