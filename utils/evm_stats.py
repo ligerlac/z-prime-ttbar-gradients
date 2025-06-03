@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import equinox as eqx
 import evermore as evm
 import optax
-from typing import NamedTuple, Optional, List, Dict, Tuple, Callable
+from typing import Any, NamedTuple, Optional, List, Dict, Tuple, Callable
 from jaxtyping import Array, PyTree
 from tabulate import tabulate
 
@@ -102,7 +102,7 @@ class Parameters(NamedTuple):
 # =============================================================================
 # calculate_significance
 # =============================================================================
-def calculate_significance(histograms: Dict, channels: List) -> Array:
+def calculate_significance(histograms: Dict, channels: List, params: Dict[str, Any]) -> Array:
     """
     Compute asymptotic significance using profile likelihood ratio.
 
@@ -150,25 +150,43 @@ def calculate_significance(histograms: Dict, channels: List) -> Array:
         return jnp.array(0.0)
 
     # Define model structure and fitting function
-    ParamStruct = _create_parameter_structure(all_processes, all_systematics)
+    # ParamStruct = _create_parameter_structure(all_processes, all_systematics)
+
+    # evm_params_dict = ParamStruct._asdict()
+    # for key, value in params.items():
+    #     if isinstance(value, evm.Parameter):
+    #         if "." in key:
+    #             k, kk = key.split(".")
+    #             evm_params_dict[k][kk] = value
+    #         else:
+    #             evm_params_dict[key] = value
+
+    #ParamStruct = Parameters(**evm_params_dict)
     model_fn = _create_model_function()
 
     # Fit alternative hypothesis (μ unconstrained)
     logger.info("Fitting alternative hypothesis (μ free)...")
-    result_alt = _fit_hypothesis(
-        ParamStruct, model_fn, channel_data, frozen_mu=None
-    )
-    summarize_fit_result(result_alt)
+    expectations_alt = model_fn(params, channel_data)
+    nll_alt = _compute_nll(expectations_alt, channel_data, params)
+
+    # result_alt = _fit_hypothesis(
+    #     ParamStruct, model_fn, channel_data, frozen_mu=None
+    # )
+    # summarize_fit_result(result_alt)
 
     # Fit null hypothesis (μ = 0)
     logger.info("Fitting null hypothesis (μ = 0)...")
-    result_null = _fit_hypothesis(
-        ParamStruct, model_fn, channel_data, frozen_mu=0.0
-    )
-    summarize_fit_result(result_null)
+    params_null = params.fit._replace(mu=evm.Parameter(0.0, frozen=True))
+    expectations_null = model_fn(params_null, channel_data)
+    nll_null = _compute_nll(expectations_null, channel_data, params_null)
+
+    # result_null = _fit_hypothesis(
+    #     ParamStruct, model_fn, channel_data, frozen_mu=0.0
+    # )
+    #summarize_fit_result(result_null)
 
     # Compute test statistic and significance
-    q0 = 2 * (result_null.loss - result_alt.loss)
+    q0 = 2.0 * (nll_null - nll_alt)
     significance = jnp.sqrt(jnp.clip(q0, 0.0))
 
     return significance, q0
@@ -387,7 +405,7 @@ def _create_parameter_structure(
         nuis: Nuisance parameters for systematics
     """
     return Parameters(
-        mu=evm.Parameter(1.0, lower=0, upper=1000),
+        mu=evm.Parameter(1.0, lower=0.0, upper=1000.0),
         # Only ttbar_semilep gets free normalization
         norm={p: evm.Parameter(1.0) for p in processes if p == "ttbar_semilep"},
         nuis={s: evm.NormalParameter(0.0) for s in systematics},
@@ -460,6 +478,7 @@ def _fit_hypothesis(
     FitResult
         Object with fit results
     """
+    print(param_struct)
     # Handle frozen μ case for null hypothesis
     if frozen_mu is not None:
         params = param_struct._replace(
@@ -470,27 +489,28 @@ def _fit_hypothesis(
 
     # Split parameters into differentiable and static parts
     diffable, static = evm.parameter.partition(params)
-    optimizer = optax.adam(0.05)
-    opt_state = optimizer.init(diffable)
+    # optimizer = optax.adam(0.05)
+    # opt_state = optimizer.init(diffable)
 
     # =============================================================================
     # train_step
     # =============================================================================
-    @jax.jit
-    def train_step(diffable, static, opt_state):
-        loss_val, grads = eqx.filter_value_and_grad(
-            _make_loss_fn(model_fn, channel_data)
-        )(diffable, static)
-        updates, opt_state = optimizer.update(grads, opt_state)
-        diffable = optax.apply_updates(diffable, updates)
-        return diffable, opt_state, loss_val
+    # @jax.jit
+    # def train_step(diffable, static, opt_state):
+    #     loss_val, grads = eqx.filter_value_and_grad(
+    #         _make_loss_fn(model_fn, channel_data)
+    #     )(diffable, static)
+    #     updates, opt_state = optimizer.update(grads, opt_state)
+    #     diffable = optax.apply_updates(diffable, updates)
+    #     return diffable, opt_state, loss_val
 
-    # Optimization loop
-    for step in range(steps):
-        diffable, opt_state, loss_val = train_step(diffable, static, opt_state)
-        if step % 10 == 0:
-            jax.debug.print("Step loss = {:.4f}", loss_val)
+    # # Optimization loop
+    # for step in range(steps):
+    #     diffable, opt_state, loss_val = train_step(diffable, static, opt_state)
+    #     if step % 10 == 0:
+    #         jax.debug.print("Step loss = {:.4f}", loss_val)
 
+    loss_val = _make_loss_fn(model_fn, channel_data)(diffable, static)
     # Post-processing after optimization
     final_params = eqx.combine(diffable, static)
     clean_diffable = _remove_frozen_parameters(diffable)
@@ -526,6 +546,13 @@ def _fit_hypothesis(
         covariance=cov_matrix,
         param_values=param_values_dict
     )
+
+def _compute_nll(expectations, channel_data, fit_params):
+    total = 0.0
+    for i, ch in enumerate(channel_data):
+        total -= evm.pdf.Poisson(expectations[i]).log_prob(ch.data).sum()
+    total -= evm.util.sum_over_leaves(evm.loss.get_log_probs(fit_params))
+    return jnp.sum(total)
 
 # =============================================================================
 # _make_loss_fn

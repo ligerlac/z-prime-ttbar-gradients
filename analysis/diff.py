@@ -27,7 +27,7 @@ from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 
 from analysis.base import Analysis
 from utils.cuts import lumi_mask
-from utils.evm_stats import calculate_significance, print_significance_summary
+from utils.evm_stats import calculate_significance, _get_valid_channels, _create_parameter_structure, _prepare_channel_data, print_significance_summary
 
 # -----------------------------------------------------------------------------
 # Backend & Logging Setup
@@ -119,7 +119,7 @@ class DifferentiableAnalysis(Analysis):
     # -------------------------------------------------------------------------
     # Significance Calculation
     # -------------------------------------------------------------------------
-    def _calculate_significance(self, histograms) -> jnp.ndarray:
+    def _calculate_significance(self, params) -> jnp.ndarray:
         """
         Generalized significance calculation using evermore with multi-channel,
         multi-process, and systematic-aware modeling.
@@ -129,7 +129,7 @@ class DifferentiableAnalysis(Analysis):
         jnp.ndarray
             Asymptotic significance (sqrt(q0)) from a profile likelihood ratio.
         """
-        significance, q0 = calculate_significance(histograms, self.channels)
+        significance, q0 = calculate_significance(self.histograms, self.channels, params)
         print_significance_summary(significance, q0)
         return significance
 
@@ -578,10 +578,27 @@ class DifferentiableAnalysis(Analysis):
         # Final aggregation and return
         # -----------------------------
         self.set_histograms(process_histograms)
-        significance = self._calculate_significance(process_histograms)
+
+        valid_channels = _get_valid_channels(self.channels)
+        _, all_systematics, all_processes = _prepare_channel_data(
+                self.histograms, valid_channels
+            )
+        evm_params = _create_parameter_structure(all_processes, all_systematics)
+        evm_params_dict = evm_params._asdict()
+        flattened_evm_params_dict = {}
+        for k, v in evm_params_dict.items():
+            if isinstance(v, dict):
+                for kk, vv in v.items():
+                    new_key = f"{k}.{kk}"
+                    flattened_evm_params_dict[new_key] = vv
+            else:
+                flattened_evm_params_dict[k] = v
+        params.update(flattened_evm_params_dict)
+
+        significance = self._calculate_significance(params)
 
         logger.info("✅ All datasets processed.")
-        return significance
+        return significance, params
 
     # -------------------------------------------------------------------------
     # Run Full Chain with JAX Gradients
@@ -605,17 +622,19 @@ class DifferentiableAnalysis(Analysis):
         tuple
             (Significance, gradient dictionary)
         """
+        jax_params = self.config.jax.params.copy()
 
         # Compute significance from datasets
-        significance, gradients = jax.value_and_grad(
-                                    self.run_analysis_chain, argnums=0
-                                )(self.config.jax.params, fileset,
+        (significance, params), gradients = jax.value_and_grad(
+                                    self.run_analysis_chain, argnums=0,
+                                    has_aux=True,
+                                )(jax_params, fileset,
                                   read_from_cache, run_and_cache, cache_dir)
 
         logger.info(f"Signal significance: {significance:.4f}")
         logger.info(f"Gradient dictionary: {pformat(gradients)}")
 
-        return significance, gradients
+        return significance, gradients, params
 
     # -------------------------------------------------------------------------
     # Cut Optimization via Gradient Ascent
@@ -644,7 +663,7 @@ class DifferentiableAnalysis(Analysis):
             read_from_cache = True
             run_and_cache = False
 
-        significance, gradients = (
+        significance, gradients, params = (
             self.run_analysis_chain_with_gradients(fileset,
                                                     read_from_cache=read_from_cache,
                                                     run_and_cache=run_and_cache,
@@ -653,7 +672,7 @@ class DifferentiableAnalysis(Analysis):
 
         initial_significance = significance
 
-        params = self.config.jax.params.copy()
+
         if not self.config.jax.optimize:
             return params, significance
 
@@ -669,37 +688,53 @@ class DifferentiableAnalysis(Analysis):
         learning_rate = self.config.jax.learning_rate
 
         # Save initial values for comparison
-        initial_params = {k: float(v) for k, v in params.items()}
+        initial_params = {}
+        for k, v in params.items():
+            initial_params[k] = float(v) if not isinstance(v, evm.Parameter) else v.value
 
         logger.info("Starting optimization...\n")
         for i in range(self.config.jax.max_iterations):
             # Compute significance and gradients
-            significance, gradients = jax.value_and_grad(objective, argnums=0)(params)
+            (significance, params), gradients = jax.value_and_grad(objective, argnums=0, has_aux=True)(params)
 
             # Parameter update
-            for key in params:
-                delta = learning_rate * gradients[key]
-                update_fn = self.config.jax.param_updates.get(key, lambda x, d: x + d)
-                params[key] = update_fn(params[key], delta)
+            for key, val in params.items():
+                if isinstance(val, evm.Parameter):
+                    params[key] = evm.Parameter(
+                        value=val.value + learning_rate * gradients[key].value,
+                        lower=val.lower,
+                        upper=val.upper
+                    )
+                else:
+                    delta = learning_rate * gradients[key]
+                    update_fn = self.config.jax.param_updates.get(key, lambda x, d: x + d)
+                    params[key] = update_fn(params[key], delta)
 
             # Build table with value, gradient, and % change as columns
             step_summary = [["Parameter", "Value", "Gradient", "% Change"]]
 
             for key in sorted(params.keys()):
-                if isinstance(params[key], (int, float, jnp.ndarray)):
-                    new_val = float(params[key])
-                    grad = float(gradients[key])
-                    old_val = initial_params[key]
-                    percent_change = ((new_val - old_val) / (old_val + 1e-12)) * 100
+                value = params[key]
+                gradient = gradients[key]
+                old_value = initial_params[key]
+                if isinstance(value, evm.Parameter):
+                    value = value.value.astype(float)[0]
+                    gradient = gradient.value.astype(float)[0]
+                    old_value = old_value[0]
+                if isinstance(value, (int, float, jnp.ndarray)):
+                    new_val = float(value)
+                    grad = float(gradient)
 
+                    percent_change = ((new_val - old_value) / (old_value + 1e-12)) * 100
                     colored_val = f"{GREEN}{new_val:.4f}{RESET}" \
-                        if abs(new_val - old_val) > 1e-5 else f"{new_val:.4f}"
+                        if abs(new_val - old_value) > 1e-5 else f"{new_val:.4f}"
                     step_summary.append([
                         f"{key:<30}",
                         colored_val,
                         f"{grad:+.4f}",
                         f"{percent_change:+.2f}%"
                     ])
+
 
             # Add significance row
             step_summary.append([" " * 30, " " * 10, " " * 10, " " * 10])
@@ -720,9 +755,17 @@ class DifferentiableAnalysis(Analysis):
         # Build colored final param summary
         param_summary = []
         for key in sorted(params.keys()):
-            new_val = float(params[key])
-            old_val = initial_params[key]
-            delta = abs(new_val - old_val)
+            value = params[key]
+            gradient = gradients[key]
+            old_value = initial_params[key]
+            if isinstance(value, evm.Parameter):
+                value = value.value.astype(float)[0]
+                gradient = gradient.value.astype(float)[0]
+                old_value = old_value[0]
+            if isinstance(value, (int, float, jnp.ndarray)):
+                new_val = float(value)
+
+            delta = abs(new_val - old_value)
             formatted_val = f"{new_val:.4f}"
             formatted_key = f"{key:<30}"
             if delta > 1e-5:
