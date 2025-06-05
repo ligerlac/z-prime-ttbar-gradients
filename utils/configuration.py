@@ -17,7 +17,7 @@ from utils.systematics import (
 LIST_OF_VARS = [
                 {
                     "name": "workshop_mtt",
-                    "binning": "0,3000,50",
+                    "binning": "200,3000,20",
                     "label": r"M(t\bar{t}) [GeV]",
                     "function": get_mtt,
                     "use": [

@@ -2,13 +2,14 @@ import logging
 
 import jax
 import jax.numpy as jnp
+import jax.scipy as jsp
 import equinox as eqx
 import evermore as evm
 import optax
 from typing import Any, NamedTuple, Optional, List, Dict, Tuple, Callable
 from jaxtyping import Array, PyTree
 from tabulate import tabulate
-
+from relaxed.infer import hypotest
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s: %(name)s] %(message)s")
 logger = logging.getLogger("evermore")
 logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
@@ -19,6 +20,12 @@ jax.config.update("jax_enable_x64", True)
 # =============================================================================
 # Data Structures
 # =============================================================================
+import equinox as eqx
+import relaxed
+
+from typing import Callable, List, Any
+
+
 
 # =============================================================================
 # FitResult
@@ -95,6 +102,63 @@ class Parameters(NamedTuple):
     norm: Dict[str, evm.Parameter]
     nuis: Dict[str, evm.NormalParameter]
 
+@jax.tree_util.register_pytree_node_class
+class EvermoreDictModel:
+    def __init__(self, template, model_fn, channel_data, frozen_mu=0.0):
+        self.template = template
+        self.model_fn = model_fn
+        self.channel_data = channel_data
+
+    def _dict_to_struct(self, flat: dict[str, jnp.ndarray]) -> Parameters:
+        # If 'mu' was frozen and removed by Relaxed, insert it manually
+       # mu_val = flat.get("mu", self.frozen_mu)
+
+        norm_keys = self.template.norm.keys()
+        nuis_keys = self.template.nuis.keys()
+
+        norm = {k: evm.Parameter(flat[f"norm_{k}"]) for k in norm_keys}
+        nuis = {k: evm.NormalParameter(flat[f"nuis_{k}"]) for k in nuis_keys}
+
+        return type(self.template)(
+            mu=evm.Parameter(flat["mu"]),
+            norm=norm,
+            nuis=nuis
+        )
+
+    def expected_data(self, pars: dict[str, jnp.ndarray]) -> jnp.ndarray:
+        struct = self._dict_to_struct(pars)
+        expectations = self.model_fn(struct, self.channel_data)
+        return jnp.concatenate([jnp.ravel(e) for e in expectations])
+
+    def logpdf(self, *, data: jnp.ndarray, pars: dict[str, jnp.ndarray]) -> jnp.ndarray:
+        struct = self._dict_to_struct(pars)
+        expectations = self.model_fn(struct, self.channel_data)
+        log_probs = [
+            evm.pdf.Poisson(lam).log_prob(obs).sum()
+            for lam, obs in zip(expectations, [ch.data for ch in self.channel_data])
+        ]
+        constraint = evm.util.sum_over_leaves(evm.loss.get_log_probs(struct))
+        return (jnp.sum(jnp.array(log_probs)) + constraint).reshape(())
+
+    def constrain(self, pars: dict[str, jnp.ndarray]) -> jnp.ndarray:
+        struct = self._dict_to_struct(pars)
+        return evm.util.sum_over_leaves(evm.loss.get_log_probs(struct)).reshape(())
+
+    def suggested_init(self) -> dict[str, jnp.ndarray]:
+        init = {"mu": jnp.array(self.template.mu.value)}
+        init.update({f"norm_{k}": jnp.array(v.value) for k, v in self.template.norm.items()})
+        init.update({f"nuis_{k}": jnp.array(v.value) for k, v in self.template.nuis.items()})
+        return init
+
+    # --- JAX PyTree registration ---
+    def tree_flatten(self):
+        return (), (self.template, self.model_fn, self.channel_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        template, model_fn, channel_data = aux_data
+        return cls(template, model_fn, channel_data)
+
 # =============================================================================
 # Core Significance Calculation
 # =============================================================================
@@ -102,7 +166,70 @@ class Parameters(NamedTuple):
 # =============================================================================
 # calculate_significance
 # =============================================================================
-def calculate_significance(histograms: Dict, channels: List, params: Dict[str, Any]) -> Array:
+def calculate_significance_relaxed(
+    histograms: Dict,
+    channels: List,
+    params_template: Any,
+    test_mu: float = 20.0,
+    learning_rate: float = 1e-2,
+    maxiter: int = 300,
+    return_fit: bool = False
+) -> float:
+    """
+    Compute asymptotic significance using relaxed.infer.hypotest.
+
+    Parameters
+    ----------
+    histograms : Dict
+        Nested histogram structure
+    channels : List
+        List of channel config objects
+    params_template : PyTree
+        Template parameter structure (Evermore Parameters)
+    test_mu : float
+        Signal strength under H0 (0 for discovery)
+    learning_rate : float
+        Optimizer learning rate
+    maxiter : int
+        Number of optimization steps
+    return_fit : bool
+        Whether to return additional outputs
+
+    Returns
+    -------
+    float or Tuple
+        Significance value, and optionally full result
+    """
+    valid_channels = _get_valid_channels(channels)
+    if not valid_channels:
+        logger.warning("No valid channels found.")
+        return jnp.array(0.0)
+
+    channel_data, _, _ = _prepare_channel_data(histograms, valid_channels)
+    if not channel_data:
+        logger.warning("No usable channel data.")
+        return jnp.array(0.0)
+
+    model_fn = _create_model_function()
+    relaxed_model = EvermoreDictModel(params_template, model_fn, channel_data)
+    data = relaxed_model.expected_data(relaxed_model.suggested_init())
+
+    p0 = relaxed.infer.hypotest(
+        test_mu,
+        data,
+        relaxed_model,
+        init_pars=relaxed_model.suggested_init(),
+        test_stat="q0",  # or "q" for exclusion
+    )
+
+    logger.info("Relaxed p-value (p0): %.4f", float(p0.item()))
+    return p0
+
+def calculate_significance(histograms: Dict,
+                           channels: List,
+                           params: Dict[str, Any],
+                           recreate_fit_params=False,
+                        ) -> Array:
     """
     Compute asymptotic significance using profile likelihood ratio.
 
@@ -149,47 +276,34 @@ def calculate_significance(histograms: Dict, channels: List, params: Dict[str, A
         logger.warning("No channel data available after preparation")
         return jnp.array(0.0)
 
-    # Define model structure and fitting function
-    ParamStruct = _create_parameter_structure(all_processes, all_systematics)
+    # if recreate_fit_params:
+    #     fit_params = _create_parameter_structure(all_processes, all_systematics)
+    # else:
 
-    evm_params_dict = ParamStruct._asdict()
-    for key, value in params.items():
-        if isinstance(value, evm.Parameter):
-            if "." in key:
-                k, kk = key.split(".")
-                evm_params_dict[k][kk] = value
-            else:
-                evm_params_dict[key] = value
-
-    ParamStruct = Parameters(**evm_params_dict)
     model_fn = _create_model_function()
 
     # Fit alternative hypothesis (μ unconstrained)
     logger.info("Fitting alternative hypothesis (μ free)...")
-    # expectations_alt = model_fn(params, channel_data)
-    # nll_alt = _compute_nll(expectations_alt, channel_data, params)
-
-    result_alt = _fit_hypothesis(
-        ParamStruct, model_fn, channel_data, frozen_mu=None
-    )
-    summarize_fit_result(result_alt)
+    result_alt = _compute_nll(model_fn(params, channel_data),
+                              channel_data,
+                              params)
+    #_fit_hypothesis(
+    #     fit_params, model_fn, channel_data, frozen_mu=None
+    # )
+    #summarize_fit_result(result_alt)
 
     # Fit null hypothesis (μ = 0)
     logger.info("Fitting null hypothesis (μ = 0)...")
-    # params_null = params.fit._replace(mu=evm.Parameter(0.0, frozen=True))
-    # expectations_null = model_fn(params_null, channel_data)
-    # nll_null = _compute_nll(expectations_null, channel_data, params_null)
-
-    result_null = _fit_hypothesis(
-        ParamStruct, model_fn, channel_data, frozen_mu=0.0
-    )
-    summarize_fit_result(result_null)
+    params_null = eqx.tree_at(lambda p: p.mu.value, params, jnp.array(0.0))
+    result_null = _compute_nll(model_fn(params_null, channel_data),
+                              channel_data,
+                              params_null)
 
     # Compute test statistic and significance
-    q0 = 2.0 * (result_null.loss - result_alt.loss)
+    q0 = 2.0 * (result_null - result_alt)
     significance = jnp.sqrt(jnp.clip(q0, 0.0))
-
-    return significance, q0
+    p0 = 1 - jsp.stats.norm.cdf( jnp.sqrt(jnp.clip(q0, 0.0)))
+    return p0, significance
 
 
 # =============================================================================
@@ -320,7 +434,7 @@ def _prepare_channel_data(
     -------
     Tuple[List[ChannelData], List[str], List[str]]
         channel_data: List of ChannelData objects
-        all_systematics: Sorted list of systematic names
+        all_systematics: Sorted list of systematic *base* names (e.g. "jec")
         all_processes: Sorted list of process names
     """
     channel_objects = []
@@ -328,7 +442,7 @@ def _prepare_channel_data(
     processes = set()
 
     for region, obs in channels:
-        # Extract data histogram using nested dict lookups
+        # Extract data histogram
         data_hist = (histograms.get("data", {})
                      .get("nominal", {})
                      .get(region, {})
@@ -341,22 +455,29 @@ def _prepare_channel_data(
             if pname == "data":
                 continue
 
-            # Get nominal histogram for this process/region/observable
             nominal_hist = (variations.get("nominal", {})
                             .get(region, {})
                             .get(obs))
             if nominal_hist is None:
                 continue
 
-            # Collect systematic variations
+            # Collect systematic variations by base name
             syst_vars = {}
-            for syst_name, syst_data in variations.items():
-                if syst_name == "nominal":
-                    continue
-                hist = syst_data.get(region, {}).get(obs)
-                if hist is not None:
-                    syst_vars[syst_name] = hist
-                    systematics.add(syst_name)
+            # for syst_name in variations:
+            #     if syst_name == "nominal":  # Skip nominal
+            #         continue
+            #     print(syst_name, syst_name.rsplit("_", 1))
+            #     base_name, direction = syst_name.rsplit("_", 1)
+            #     if direction not in {"up", "down"}:
+            #         logger.error(
+            #             f"Invalid systematic direction '{direction}' in '{syst_name}'"
+            #         )
+            #         raise ValueError
+
+            #     hist = variations[syst_name].get(region, {}).get(obs)
+            #     if hist is not None:
+            #         syst_vars.setdefault(base_name, {})[direction] = hist
+            #         systematics.add(base_name)
 
             process_info[pname] = {
                 "nominal": nominal_hist,
@@ -407,7 +528,7 @@ def _create_parameter_structure(
         mu=evm.Parameter(1.0, lower=0.0, upper=1000.0),
         # Only ttbar_semilep gets free normalization
         norm={p: evm.Parameter(1.0) for p in processes if p == "ttbar_semilep"},
-        nuis={s: evm.NormalParameter(0.0) for s in systematics},
+        nuis={},#s: evm.NormalParameter(0.0) for s in systematics},
     )
 
 # =============================================================================
@@ -426,6 +547,7 @@ def _create_model_function() -> Callable:
     # model
     # =============================================================================
     def model(params: NamedTuple, channel_data: List[ChannelData]) -> List[Array]:
+        fit_params = params
         expectations = []
         for ch in channel_data:
             total = jnp.zeros_like(ch.data)
@@ -436,9 +558,9 @@ def _create_model_function() -> Callable:
                 # - ttbar_semilep has free normalization
                 # - Other backgrounds fixed to nominal
                 if pname == "signal":
-                    scaled = params.mu.scale()(base)
+                    scaled = fit_params.mu.scale()(base)
                 elif pname == "ttbar_semilep":
-                    scaled = params.norm[pname].scale()(base)
+                    scaled = fit_params.norm[pname].scale()(base)
                 else:
                     scaled = base
                 total += scaled
@@ -477,7 +599,6 @@ def _fit_hypothesis(
     FitResult
         Object with fit results
     """
-    print(param_struct)
     # Handle frozen μ case for null hypothesis
     if frozen_mu is not None:
         params = param_struct._replace(
@@ -540,7 +661,7 @@ def _fit_hypothesis(
 
     return FitResult(
         params=final_params,
-        loss=loss_val, #float(jax.device_get(loss_val).item()),
+        loss=loss_val,
         uncertainties=uncertainties,
         covariance=cov_matrix,
         param_values=param_values_dict

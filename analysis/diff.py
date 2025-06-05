@@ -9,15 +9,13 @@ from collections.abc import Mapping, Sequence
 import hashlib
 import cloudpickle
 from pprint import pformat
-from typing import Any, Literal, NamedTuple, Optional
+from typing import Any, Callable, Dict, Literal, List, Tuple, Optional
 
 import awkward as ak
 import equinox as eqx
 import evermore as evm
-import optax
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
 import numpy as np
 from tabulate import tabulate
 import uproot
@@ -27,7 +25,7 @@ from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 
 from analysis.base import Analysis
 from utils.cuts import lumi_mask
-from utils.evm_stats import calculate_significance, _get_valid_channels, _create_parameter_structure, _prepare_channel_data, print_significance_summary
+from utils.evm_stats import calculate_significance, calculate_significance_relaxed, _get_valid_channels, _create_parameter_structure, _prepare_channel_data, print_significance_summary
 
 # -----------------------------------------------------------------------------
 # Backend & Logging Setup
@@ -97,6 +95,209 @@ def recursive_to_backend(data: Any, backend: str = "jax") -> Any:
     else:
         return data
 
+def infer_processes_and_systematics(
+    fileset: Dict[str, Dict[str, Any]],
+    systematics: List[Dict[str, Any]],
+    corrections: List[Dict[str, Any]]
+) -> Tuple[List[str], List[str]]:
+    """
+    Infer all process names and base systematic names (without up/down) from fileset and config.
+
+    Parameters
+    ----------
+    fileset : dict
+        Fileset with metadata containing process names
+    systematics : list
+        List from config["systematics"]
+    corrections : list
+        List from config["corrections"]
+
+    Returns
+    -------
+    Tuple[List[str], List[str]]
+        Sorted list of unique processes and systematic base names (e.g. "jec")
+    """
+    process_set = set()
+    systematics_set = set()
+
+    for dataset_info in fileset.values():
+        metadata = dataset_info.get("metadata", {})
+        process = metadata.get("process")
+        if process is not None:
+            process_set.add(process)
+
+    for syst in systematics + corrections:
+        systematics_set.add(syst["name"])
+
+    return sorted(process_set), sorted(systematics_set)
+
+def extract_scalar(x):
+    """
+    Extract scalar float from a parameter or gradient.
+    Handles evm.Parameter, jnp.ndarray, or raw float.
+    """
+    if isinstance(x, evm.Parameter):
+        return float(x.value.astype(float)[0])
+    if isinstance(x, jnp.ndarray):
+        return float(x)
+    return float(x)
+
+def update_params(
+    params: dict[str, Any],
+    gradients: dict[str, Any],
+    learning_rate: float,
+    param_updates: dict[str, Callable[[Any, float], Any]],
+) -> dict[str, Any]:
+    """
+    Update 'aux' and 'fit' parameters given gradients and learning rate.
+
+    Parameters
+    ----------
+    params : dict
+        Dictionary with keys 'aux' and 'fit'. 'fit' is a NamedTuple with nested dicts.
+    gradients : dict
+        Gradient dictionary with same structure.
+    learning_rate : float
+        Step size.
+    param_updates : dict
+        Update function mapping for aux parameters.
+    """
+    # --------------------
+    # Update aux parameters
+    # --------------------
+    for key, val in params["aux"].items():
+        grad = gradients["aux"][key]
+        delta = learning_rate * extract_scalar(grad)
+        update_fn = param_updates.get(key, lambda x, d: x + d)
+        params["aux"][key] = update_fn(val, delta)
+
+    def _update_evm(p, g, lr):
+        return evm.Parameter(
+                        value=p.value + lr * g.value,
+                        lower=p.lower,
+                        upper=p.upper,
+                    )
+    # --------------------
+    # Update fit parameters
+    # --------------------
+    fit_updated = {}
+    for key, val in params["fit"]._asdict().items():
+        grad = gradients["fit"]._asdict()[key]
+
+        if isinstance(val, dict):
+            sub_updated = {}
+            for subkey, p in val.items():
+                g = grad[subkey]
+                sub_updated[subkey] = _update_evm(p, g, learning_rate)
+            fit_updated[key] = sub_updated
+        else:
+            fit_updated[key] = _update_evm(val, grad, learning_rate)
+
+    # Replace fit NamedTuple with updated values
+    params["fit"] = type(params["fit"])(**fit_updated)
+    return params
+
+def flatten_params(params: dict[str, Any]) -> dict[str, float]:
+    """
+    Flatten a nested parameter dictionary where 'fit' is a NamedTuple with possible
+    nested dicts like 'norm' and 'nuis'.
+
+    Produces keys like:
+      'aux.cut_threshold'
+      'fit.mu'
+      'fit.norm.ttbar_semilep'
+      'fit.nuis.JES'
+
+    Returns
+    -------
+    dict[str, float]
+        Fully flattened parameter dictionary with scalar values.
+    """
+    flat = {}
+
+    for k, v in params["aux"].items():
+        flat[f"aux.{k}"] = extract_scalar(v)
+
+    for k, v in params["fit"]._asdict().items():
+        if isinstance(v, dict):
+            for kk, vv in v.items():
+                flat[f"fit.{k}.{kk}"] = extract_scalar(vv)
+        else:
+            flat[f"fit.{k}"] = extract_scalar(v)
+
+    return flat
+
+def build_param_summary(
+    params: dict[str, Any],
+    gradients: dict[str, Any],
+    initial_values: dict[str, float],
+) -> list[list[str]]:
+    """
+    Build a summary table showing parameter values, gradients, and percent changes.
+
+    Handles nested structures in 'fit', including subdicts like 'norm' and 'nuis'.
+    """
+    summary = [["Parameter", "Value", "Gradient", "% Change"]]
+
+    def iter_group(group_name: str, value_dict: dict, grad_dict: dict):
+        for k, v in value_dict.items():
+            g = grad_dict.get(k)
+            if isinstance(v, dict):
+                for kk, vv in v.items():
+                    gg = g[kk]
+                    key = f"{group_name}.{k}.{kk}"
+                    val = extract_scalar(vv)
+                    grad = extract_scalar(gg)
+                    old = initial_values.get(key, 0.0)
+                    percent = ((val - old) / (old + 1e-12)) * 100
+                    colored = f"{GREEN}{val:.4f}{RESET}" if abs(val - old) > 1e-5 else f"{val:.4f}"
+                    yield [f"{key:<30}", colored, f"{grad:+.4f}", f"{percent:+.2f}%"]
+            else:
+                key = f"{group_name}.{k}"
+                val = extract_scalar(v)
+                grad = extract_scalar(g)
+                old = initial_values.get(key, 0.0)
+                percent = ((val - old) / (old + 1e-12)) * 100
+                colored = f"{GREEN}{val:.4f}{RESET}" if abs(val - old) > 1e-5 else f"{val:.4f}"
+                yield [f"{key:<30}", colored, f"{grad:+.4f}", f"{percent:+.2f}%"]
+
+    summary += list(iter_group("aux", params["aux"], gradients["aux"]))
+    summary += list(iter_group("fit", params["fit"]._asdict(), gradients["fit"]._asdict()))
+    return summary
+
+def format_param_summary_flat(params: dict, initial_flat: dict) -> list[list[str]]:
+    """
+    Compare current nested parameters to initial flat ones and format summary.
+
+    Parameters
+    ----------
+    params : dict
+        Nested parameter dict with 'aux' and 'fit' (NamedTuple).
+    initial_flat : dict
+        Flat dict of initial parameter values (e.g. from flatten_params).
+
+    Returns
+    -------
+    list of [str, str]
+        Table rows: [Parameter Name, Formatted Value]
+    """
+    rows = []
+
+    flat_current = flatten_params(params)
+    for key in sorted(flat_current.keys()):
+        new_val = extract_scalar(flat_current[key])
+        old_val = extract_scalar(initial_flat[key])
+        delta = abs(new_val - old_val)
+
+        formatted_val = f"{new_val:.4f}"
+        formatted_key = f"{key:<30}"
+        if delta > 1e-5:
+            formatted_val = f"{GREEN}{formatted_val}{RESET}"
+            formatted_key = f"{GREEN}{formatted_key}{RESET}"
+
+        rows.append([formatted_key, formatted_val])
+
+    return rows
 
 # -----------------------------------------------------------------------------
 # DifferentiableAnalysis Class Definition
@@ -119,7 +320,7 @@ class DifferentiableAnalysis(Analysis):
     # -------------------------------------------------------------------------
     # Significance Calculation
     # -------------------------------------------------------------------------
-    def _calculate_significance(self, params) -> jnp.ndarray:
+    def _calculate_significance(self, params, recreate_fit_params: bool = False) -> jnp.ndarray:
         """
         Generalized significance calculation using evermore with multi-channel,
         multi-process, and systematic-aware modeling.
@@ -129,9 +330,18 @@ class DifferentiableAnalysis(Analysis):
         jnp.ndarray
             Asymptotic significance (sqrt(q0)) from a profile likelihood ratio.
         """
-        significance, q0 = calculate_significance(self.histograms, self.channels, params)
-        print_significance_summary(significance, q0)
-        return significance
+        p0 = (
+            calculate_significance_relaxed(self.histograms,
+                                   self.channels,
+                                   params,
+                                   #recreate_fit_params=recreate_fit_params
+                                )
+            )
+
+        print("ccc", p0)
+        #print_significance_summary(p0, -1.0)
+
+        return p0
 
     # -------------------------------------------------------------------------
     # Histogramming Logic
@@ -345,7 +555,9 @@ class DifferentiableAnalysis(Analysis):
         # ------
         # Metadata unpacking
         # ------
-        all_histograms = self.histograms.copy()
+        all_histograms = defaultdict(
+            lambda: defaultdict(dict)
+        )
         process = metadata["process"]
         variation = metadata.get("variation", "nominal")
         xsec = metadata["xsec"]
@@ -450,6 +662,7 @@ class DifferentiableAnalysis(Analysis):
         read_from_cache: bool = False,
         run_and_cache: bool = True,
         cache_dir: Optional[str] = "/tmp/gradients_analysis/",
+        recreate_fit_params: bool = False,
     ) -> jnp.ndarray:
         """
         Run the full analysis on all datasets in the fileset.
@@ -567,7 +780,7 @@ class DifferentiableAnalysis(Analysis):
                                 skimmed, schemaclass=NanoAODSchema, delayed=False
                             ).events()
 
-                    histograms = self.process(events, metadata, params)
+                    histograms = self.process(events, metadata, params["aux"])
                     process_histograms[process_name] = merge_histograms(
                         process_histograms[process_name], dict(histograms)
                     )
@@ -578,27 +791,11 @@ class DifferentiableAnalysis(Analysis):
         # Final aggregation and return
         # -----------------------------
         self.set_histograms(process_histograms)
-
-        valid_channels = _get_valid_channels(self.channels)
-        _, all_systematics, all_processes = _prepare_channel_data(
-                self.histograms, valid_channels
-            )
-        evm_params = _create_parameter_structure(all_processes, all_systematics)
-        evm_params_dict = evm_params._asdict()
-        flattened_evm_params_dict = {}
-        for k, v in evm_params_dict.items():
-            if isinstance(v, dict):
-                for kk, vv in v.items():
-                    new_key = f"{k}.{kk}"
-                    flattened_evm_params_dict[new_key] = vv
-            else:
-                flattened_evm_params_dict[k] = v
-        params.update(flattened_evm_params_dict)
-
-        significance = self._calculate_significance(params)
+        significance = self._calculate_significance(params["fit"], recreate_fit_params=recreate_fit_params)
 
         logger.info("✅ All datasets processed.")
-        return significance, params
+
+        return significance
 
     # -------------------------------------------------------------------------
     # Run Full Chain with JAX Gradients
@@ -607,7 +804,9 @@ class DifferentiableAnalysis(Analysis):
         self, fileset: dict[str, dict[str, Any]],
         read_from_cache: bool = False,
         run_and_cache: bool = True,
-        cache_dir: Optional[str] = "/tmp/gradients_analysis/"
+        cache_dir: Optional[str] = "/tmp/gradients_analysis/",
+        params = None,
+        recreate_fit_params: bool = False
     ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
         """
         Run the full analysis chain and compute gradients w.r.t. parameters.
@@ -622,17 +821,29 @@ class DifferentiableAnalysis(Analysis):
         tuple
             (Significance, gradient dictionary)
         """
-        jax_params = self.config.jax.params.copy()
 
         # Compute significance from datasets
-        (significance, params), gradients = jax.value_and_grad(
+        significance, gradients = jax.value_and_grad(
                                     self.run_analysis_chain, argnums=0,
-                                    has_aux=True,
-                                )(jax_params, fileset,
-                                  read_from_cache, run_and_cache, cache_dir)
+                                )(params,
+                                  fileset,
+                                  read_from_cache,
+                                  run_and_cache,
+                                  cache_dir,
+                                  recreate_fit_params=recreate_fit_params,
+                                )
+
 
         logger.info(f"Signal significance: {significance:.4f}")
         logger.info(f"Gradient dictionary: {pformat(gradients)}")
+
+        # Make sure we have no redundant parameters in fit
+        valid_channels = _get_valid_channels(self.channels)
+        _, systematics, processes = _prepare_channel_data(
+            self.histograms, valid_channels
+        )
+        evm_params = _create_parameter_structure(processes, systematics)
+        params["fit"] = evm_params
 
         return significance, gradients, params
 
@@ -655,29 +866,74 @@ class DifferentiableAnalysis(Analysis):
         tuple
             Optimized parameters and final significance.
         """
+        from functools import partial
+        import optax
+        from jaxopt import OptaxSolver
+
         logger.info("Running analysis chain with init values for all datasets...")
         logger.info(f"Processes: {list(fileset.keys())}")
+
+        # Some book keeping
+        processes, systematics = infer_processes_and_systematics(
+            fileset,
+            self.config.systematics,
+            self.config.corrections
+        )
+        aux_params = self.config.jax.params.copy()
+        evm_params = _create_parameter_structure(processes, systematics)
+        all_params = {
+            "aux": aux_params,
+            "fit": evm_params,
+        }
+
+
         # Run the initial analysis chain to get starting significance and gradients
         cache_dir = "/tmp/gradients_analysis/"
         if self.config.general.read_from_cache:
             read_from_cache = True
             run_and_cache = False
+        else:
+            read_from_cache = False
+            run_and_cache = True
 
-        significance, gradients, params = (
-            self.run_analysis_chain_with_gradients(fileset,
-                                                    read_from_cache=read_from_cache,
-                                                    run_and_cache=run_and_cache,
-                                                    cache_dir=cache_dir)
-                                                )
+        # in theory once we build histograms we may
+        # drop some parameters
+        # significance, gradients, params = (
+        #     self.run_analysis_chain_with_gradients(fileset,
+        #                                             read_from_cache=read_from_cache,
+        #                                             run_and_cache=run_and_cache,
+        #                                             cache_dir=cache_dir,
+        #                                             params = all_params,
+        #                                             recreate_fit_params=True)
+        #                                         )
 
-        initial_significance = significance
+        pvals = self.run_analysis_chain(all_params, fileset,
+                                        read_from_cache,
+                                        run_and_cache,
+                                        cache_dir)  # map over phi grid
+        # # Wrap your analysis chain into a differentiable scalar function
+        # def objective(params: dict) -> jnp.ndarray:
+        #     # Returns a scalar (p0 value or negative Z)
+        #     p0 = self.run_analysis_chain(params, fileset,
+        #                                 read_from_cache,
+        #                                 run_and_cache,
+        #                                 cache_dir)
+        #     return p0  # minimize p-value
 
+        # initial_params = all_params
+        # solver = OptaxSolver(objective, opt=optax.adam(1e-3), tol=1e-8, maxiter=10000)
+        # result = solver.run(all_params).params
+        # print(
+        #     f"our solution: phi={result:.5f}"
+        # )
 
+        return pvals
         if not self.config.jax.optimize:
             return params, significance
 
+        initial_significance = significance
         logger.info("Starting parameter optimization...")
-        logger.info(f"Initial significance: {significance:.4f}")
+        logger.info(f"Initial significance: {initial_significance:.4f}")
 
         def objective(params):
             return self.run_analysis_chain(params, fileset,
@@ -685,113 +941,42 @@ class DifferentiableAnalysis(Analysis):
                                             run_and_cache=False,
                                             cache_dir=cache_dir)
 
+
         learning_rate = self.config.jax.learning_rate
-
         # Save initial values for comparison
-        initial_params = {}
-        for k, v in params.items():
-            initial_params[k] = float(v) if not isinstance(v, evm.Parameter) else v.value
-
+        initial_params = flatten_params(params)
         logger.info("Starting optimization...\n")
+
         for i in range(self.config.jax.max_iterations):
-            # Compute significance and gradients
-            (significance, params), gradients = jax.value_and_grad(objective, argnums=0, has_aux=True)(params)
+            significance, gradients = jax.value_and_grad(objective, argnums=0)(params)
 
-            # Parameter update
-            for key, val in params.items():
-                if isinstance(val, evm.Parameter):
-                    params[key] = evm.Parameter(
-                        value=val.value + learning_rate * gradients[key].value,
-                        lower=val.lower,
-                        upper=val.upper
-                    )
-                else:
-                    delta = learning_rate * gradients[key]
-                    update_fn = self.config.jax.param_updates.get(key, lambda x, d: x + d)
-                    params[key] = update_fn(params[key], delta)
+            # Update parameters
+            params = update_params(params, gradients, learning_rate, self.config.jax.param_updates)
 
-            # Build table with value, gradient, and % change as columns
-            step_summary = [["Parameter", "Value", "Gradient", "% Change"]]
-
-            for key in sorted(params.keys()):
-                value = params[key]
-                gradient = gradients[key]
-                old_value = initial_params[key]
-                if isinstance(value, evm.Parameter):
-                    value = value.value.astype(float)[0]
-                    gradient = gradient.value.astype(float)[0]
-                    old_value = old_value[0]
-                if isinstance(value, (int, float, jnp.ndarray)):
-                    new_val = float(value)
-                    grad = float(gradient)
-
-                    percent_change = ((new_val - old_value) / (old_value + 1e-12)) * 100
-                    colored_val = f"{GREEN}{new_val:.4f}{RESET}" \
-                        if abs(new_val - old_value) > 1e-5 else f"{new_val:.4f}"
-                    step_summary.append([
-                        f"{key:<30}",
-                        colored_val,
-                        f"{grad:+.4f}",
-                        f"{percent_change:+.2f}%"
-                    ])
-
-
-            # Add significance row
+            # Summary table
+            step_summary = build_param_summary(params, gradients, initial_params)
             step_summary.append([" " * 30, " " * 10, " " * 10, " " * 10])
             step_summary.append(["Significance", f"{significance:.4f}", "", ""])
 
             logger.info("\n" + "=" * 60)
-            logger.info(f" Step {i + 1}: Optimization Summary: "
-                        + "\n"
-                        + tabulate(step_summary,
-                                   tablefmt="fancy_grid",
-                                   colalign=("left", "right", "right", "right")))
+            logger.info(f" Step {i + 1}: Optimization Summary:\n" +
+                        tabulate(step_summary, tablefmt="fancy_grid", colalign=("left", "right", "right", "right")))
             logger.info("=" * 60)
 
         # After loop: Final summary
         final_significance = significance
-        improvement = ((final_significance / initial_significance - 1) * 100)
+        param_summary = format_param_summary_flat(params, initial_params)
 
-        # Build colored final param summary
-        param_summary = []
-        for key in sorted(params.keys()):
-            value = params[key]
-            gradient = gradients[key]
-            old_value = initial_params[key]
-            if isinstance(value, evm.Parameter):
-                value = value.value.astype(float)[0]
-                gradient = gradient.value.astype(float)[0]
-                old_value = old_value[0]
-            if isinstance(value, (int, float, jnp.ndarray)):
-                new_val = float(value)
-
-            delta = abs(new_val - old_value)
-            formatted_val = f"{new_val:.4f}"
-            formatted_key = f"{key:<30}"
-            if delta > 1e-5:
-                formatted_val = f"{GREEN}{formatted_val}{RESET}"
-                formatted_key = f"{GREEN}{formatted_key}{RESET}"
-            param_summary.append([formatted_key, formatted_val])
-
-        # Significance summary
         final_stats = [
-            ["Initial Significance", f"{significance:.4f}"],
-            ["Final Significance", f"{initial_significance:.4f}"],
-            ["Improvement (%)", f"{improvement:.2f}%"],
+            ["Initial Significance", f"{initial_significance:.4f}"],
+            ["Final Significance", f"{final_significance:.4f}"],
+            ["Improvement (%)", f"{((final_significance / initial_significance - 1) * 100):.2f}%"],
         ]
 
-        # Print summaries
-        logger.info("Final Optimized Parameters:"
-                    + "\n"
-                    + tabulate(param_summary,
-                                headers=["Parameter", "Value"],
-                                tablefmt="fancy_grid",
-                                colalign=("left", "right")))
+        logger.info("Final Optimized Parameters:\n" +
+            tabulate(param_summary, headers=["Parameter", "Value"], tablefmt="fancy_grid", colalign=("left", "right")))
 
-        logger.info("Significance Summary:"
-                    + "\n"
-                    + tabulate(final_stats,
-                                tablefmt="fancy_grid",
-                                colalign=("left", "right")))
+        logger.info("Significance Summary:\n" +
+            tabulate(final_stats, tablefmt="fancy_grid", colalign=("left", "right")))
 
         return params, final_significance
