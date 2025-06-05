@@ -138,16 +138,19 @@ class EvermoreDictModel:
             for lam, obs in zip(expectations, [ch.data for ch in self.channel_data])
         ]
         constraint = evm.util.sum_over_leaves(evm.loss.get_log_probs(struct))
-        return (jnp.sum(jnp.array(log_probs)) + constraint).reshape(())
+        return jnp.sum(jnp.array(log_probs)) #+ constraint).reshape(())
 
     def constrain(self, pars: dict[str, jnp.ndarray]) -> jnp.ndarray:
         struct = self._dict_to_struct(pars)
         return evm.util.sum_over_leaves(evm.loss.get_log_probs(struct)).reshape(())
 
     def suggested_init(self) -> dict[str, jnp.ndarray]:
+        print("a")
         init = {"mu": jnp.array(self.template.mu.value)}
         init.update({f"norm_{k}": jnp.array(v.value) for k, v in self.template.norm.items()})
+        print("b")
         init.update({f"nuis_{k}": jnp.array(v.value) for k, v in self.template.nuis.items()})
+        print("c")
         return init
 
     # --- JAX PyTree registration ---
@@ -170,7 +173,7 @@ def calculate_significance_relaxed(
     histograms: Dict,
     channels: List,
     params_template: Any,
-    test_mu: float = 20.0,
+    test_mu: float = 0.0,
     learning_rate: float = 1e-2,
     maxiter: int = 300,
     return_fit: bool = False
@@ -200,20 +203,28 @@ def calculate_significance_relaxed(
     float or Tuple
         Significance value, and optionally full result
     """
+    print("-2")
+
     valid_channels = _get_valid_channels(channels)
     if not valid_channels:
         logger.warning("No valid channels found.")
         return jnp.array(0.0)
+    print("-1")
 
     channel_data, _, _ = _prepare_channel_data(histograms, valid_channels)
     if not channel_data:
         logger.warning("No usable channel data.")
         return jnp.array(0.0)
 
+    print("0")
     model_fn = _create_model_function()
+    print("1")
     relaxed_model = EvermoreDictModel(params_template, model_fn, channel_data)
+    print("2")
     data = relaxed_model.expected_data(relaxed_model.suggested_init())
-
+    print("3")
+    print("x", relaxed_model.suggested_init(),)
+    print("z", data, relaxed_model)
     p0 = relaxed.infer.hypotest(
         test_mu,
         data,
@@ -558,6 +569,7 @@ def _create_model_function() -> Callable:
                 # - ttbar_semilep has free normalization
                 # - Other backgrounds fixed to nominal
                 if pname == "signal":
+                    print("AA", base, fit_params.mu)
                     scaled = fit_params.mu.scale()(base)
                 elif pname == "ttbar_semilep":
                     scaled = fit_params.norm[pname].scale()(base)

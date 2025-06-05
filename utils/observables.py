@@ -44,26 +44,28 @@ def get_mtt(
     #jets = jets[(jets.btagDeepB > 0.5) & (jets.jetId > 4)]
     jets = jets[:, 0]  # only the first jet per event
     fatjets = fatjets[:, 0]
-    p4mu,p4fj,p4j,p4met = ak.unzip(ak.cartesian([muons, fatjets, jets, met]))
+    muons = muons[:, 0]  # only the first muon per event
+    #p4mu,p4fj,p4j,p4met = ak.unzip(ak.cartesian([muons, fatjets, jets, met]))
     # Convert to 4-vectors
     p4mu, p4fj, p4j = [
         ak.zip(
             {"pt": o.pt, "eta": o.eta, "phi": o.phi, "mass": o.mass},
             with_name="Momentum4D",
         )
-        for o in [p4mu, p4fj, p4j]
+        for o in [muons, fatjets, jets]
     ]
     p4met = ak.zip(
         {
-            "pt": p4met.pt,
-            "eta": 0 * p4met.pt,
-            "phi": p4met.phi,
+            "pt": met.pt,
+            "eta": 0 * met.pt,
+            "phi": met.phi,
             "mass": 0,
         },
         with_name="Momentum4D",
     )
     p4tot = p4mu + p4fj + p4j + p4met
-    return ak.flatten(p4tot.mass)
+    #print(p4tot.mass)
+    return p4tot.mass
 
 
 def solve_neutrino_pz(lepton, met, mW=80.4):
