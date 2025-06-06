@@ -729,25 +729,27 @@ class DifferentiableAnalysis(Analysis):
             cache_dir=cache_dir,
         )
 
-        pvals = self.run_histogram_and_significance(all_params, proced_events
+        # pvals = self.run_histogram_and_significance(all_params, proced_events
 
-                                                    )
-        print(f"Initial p-value: {pvals}")
+        #                                             )
+        # print(f"Initial p-value: {pvals}")
 
-        pvals, gradients = jax.value_and_grad(
-            self.run_histogram_and_significance, argnums=0
-        )(all_params, proced_events)
+        # pvals, gradients = jax.value_and_grad(
+        #     self.run_histogram_and_significance, argnums=0
+        # )(all_params, proced_events)
 
         initial_params = all_params
-        objective = lambda params: self.run_histogram_and_significance(
-            params, proced_events
-        )
-        def optimize_and_log(n_steps: int = 100):
+        def objective(params):
+            return self.run_histogram_and_significance(
+                                params, proced_events
+                    )
+
+        def optimize_and_log(n_steps: int = 2):
             # all_params is your initial pytree: {"aux": {...}, "fit": {...}}
             pars = initial_params
             opt = optax.adam(learning_rate=0.01)
             # value_and_grad=True makes solver.state contain .value (scalar) and .grad (pytree)
-            solver = OptaxSolver(objective, opt)
+            solver = OptaxSolver(objective, opt, jit=False, has_aux=False, value_and_grad=False)
             state = solver.init_state(pars)
 
             logger.info("Starting gradient ascent optimization...")
