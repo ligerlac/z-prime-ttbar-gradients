@@ -78,48 +78,23 @@ config = {
         },
         "params": {
             'met_threshold': 50.0,
-            'met_scale': 25.0,
             'btag_threshold': 0.5,
             'lep_ht_threshold': 150.0,
-            'muon_weight': 1.0,
-            'jet_weight': 0.1,
-            'met_weight': 1.0,
             'kde_bandwidth': 10.0,
-            # Process-specific scales (cross-section * luminosity / n_events)
-            'signal_scale': 1.0,
-            'ttbar_scale': 1.0,
-            'wjets_scale': 1.0,
-            'other_scale': 1.0,
-            # Systematic uncertainties
-            'signal_systematic': 0.05,  # 5% on signal
-            'background_systematic': 0.1,  # 10% on background
         },
         "param_updates": {
             # Thresholds: clip within physics-motivated bounds
             "met_threshold": lambda x, d: jnp.clip(x + d, 20.0, 150.0),
-            "btag_threshold": lambda x, d: jnp.clip(x + d, 0.1, 0.9),
+            "btag_threshold": lambda x, d: jnp.clip(x + d, 0.0, 0.9),
             "lep_ht_threshold": lambda x, d: jnp.clip(x + d, 50.0, 300.0),
-
-            # Sigmoid scaling factors: constrain to non-degenerate reasonable positive values
-            "met_scale": lambda x, d: jnp.clip(x + d, 1.0, 100.0),
-
-            # Feature weights: allow any positive value, enforce minimum
-            "muon_weight": lambda x, d: jnp.maximum(x + d, 0.01),
-            "jet_weight": lambda x, d: jnp.maximum(x + d, 0.01),
-            "met_weight": lambda x, d: jnp.maximum(x + d, 0.01),
-
             # KDE smoothing: keep bandwidth strictly positive and reasonably sized
             "kde_bandwidth": lambda x, d: jnp.clip(x + d, 1.0, 50.0),
-
-            # Process normalizations: float freely, but constrain to positive domain
-            "signal_scale": lambda x, d: jnp.maximum(x + d, 0.01),
-            "ttbar_scale": lambda x, d: jnp.maximum(x + d, 0.01),
-            "wjets_scale": lambda x, d: jnp.maximum(x + d, 0.01),
-            "other_scale": lambda x, d: jnp.maximum(x + d, 0.01),
-
-            # Systematic uncertainties: must remain in [0, 1]
-            "signal_systematic": lambda x, d: jnp.clip(x + d, 0.0, 1.0),
-            "background_systematic": lambda x, d: jnp.clip(x + d, 0.0, 1.0),
+        },
+        'learning_rates':{
+            'met_threshold': 0.1,
+            'btag_threshold': 0.01,
+            'lep_ht_threshold': 0.1,
+            'kde_bandwidth': 0.1,
         }
     },
     "baseline_selection": {

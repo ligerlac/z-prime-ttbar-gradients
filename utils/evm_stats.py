@@ -79,11 +79,7 @@ class AllBkgRelaxedModelScalar(eqx.Module):
                 else:
                     # all other backgrounds are fixed at nominal
                     total = total + nominal_hist
-            #     if pname == "signal":
-            #         jax.debug.print(
-            #                         "[DEBUG] Channel {i}: process '{p}': shape = {shape}, sum = {s:.4f}",
-            #                         p=pname, shape=nominal_hist.shape, s=jnp.sum(nominal_hist), i=idx
-            #                     )
+
             main_list.append(total)
             aux_list.append(jnp.zeros((0,)))  # empty, since no aux constraints
 
@@ -230,25 +226,36 @@ def calculate_significance_relaxed(
 
     # (d) Create initial parameters dictionary:
     #     mu = params["mu"], norm_ttbar_semilep = params["norm_ttbar_semilep"]
-    init_pars: Dict[str, jnp.ndarray] = {
-        par: jnp.array(value) for par, value in params.items()
-    }
+    # init_pars: Dict[str, jnp.ndarray] = {
+    #     par: jnp.array(value) for par, value in params.items()
+    # }
 
     # === DEBUG: Print initial parameters summary ===
     # (We assume “mu” and “norm_ttbar_semilep” are present in params.)
     jax.debug.print(
         "[DEBUG] init_pars: mu = {m:.4f}, norm_ttbar_semilep = {n:.4f}",
-        m=init_pars["mu"], n=init_pars["norm_ttbar_semilep"]
+        m=params["mu"], n=params["norm_ttbar_semilep"]
     )
 
     # (e) Call relaxed.infer.hypotest entirely in JAX:
-    p0 = relaxed.infer.hypotest(
+    vals = relaxed.infer.hypotest(
         test_mu,
         data_for_hypotest,
         model,
-        init_pars = init_pars,
+        init_pars = params,
+        return_mle_pars = True,
+        # bounds = {
+        #     "mu": (0.0, jnp.inf),  # mu >= 0
+        #     "norm_ttbar_semilep": (0.0, jnp.inf),  # ttbar normalization >= 0
+        # },
         test_stat = "q0",   # discovery test
     )
+
+    if isinstance(vals, tuple):
+        p0, mle_pars = vals
+        jax.debug.print("MLE parameters: {mle_pars}", mle_pars=mle_pars)
+    else:
+        p0 = vals
 
     jax.debug.print("XY:: {:.2f}", p0)
 

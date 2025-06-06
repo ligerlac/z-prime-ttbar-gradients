@@ -13,6 +13,7 @@ from typing import Any, Dict, Literal, List, Tuple, Optional
 
 import awkward as ak
 import evermore as evm
+import optax
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -713,6 +714,13 @@ class DifferentiableAnalysis(Analysis):
                                                 }
         }
 
+        all_params["aux"] = {
+            k: jnp.array(v) for k, v in all_params["aux"].items()
+        }
+        all_params["fit"] = {
+            k: jnp.array(v) for k, v in all_params["fit"].items()
+        }
+
         cache_dir = "/tmp/gradients_analysis/"
         if self.config.general.read_from_cache:
             read_from_cache = True
@@ -740,21 +748,32 @@ class DifferentiableAnalysis(Analysis):
 
         initial_params = all_params
         def objective(params):
-            return self.run_histogram_and_significance(
+            return -1*self.run_histogram_and_significance(
                                 params, proced_events
                     )
 
-        def optimize_and_log(n_steps: int = 2):
+        # 2) Make the “clamp” function from the config:
+        clamp_fn = make_apply_param_updates(self.config.jax.param_updates)
+        if (config_lr := self.config.jax.learning_rates) is not None:
+            make_builder = make_lr_transform(config_lr, default_lr=1e-2, fit_lr=1e-3)
+            # 2) Call the builder on your initial `all_params` to get (tx, label_pytree):
+            tx, _ = make_builder(all_params)
+
+        else:
+            tx = optax.adam(learning_rate=1e-1)
+
+        def optimize_and_log(n_steps: int = 100):
             # all_params is your initial pytree: {"aux": {...}, "fit": {...}}
             pars = initial_params
-            opt = optax.adam(learning_rate=0.01)
+            opt = optax.adam(learning_rate=0.1)
             # value_and_grad=True makes solver.state contain .value (scalar) and .grad (pytree)
-            solver = OptaxSolver(objective, opt, jit=False, has_aux=False, value_and_grad=False)
+            solver = OptaxSolver(fun=objective, opt=tx, jit=False, has_aux=False, value_and_grad=False)
             state = solver.init_state(pars)
 
             logger.info("Starting gradient ascent optimization...")
             for step in range(n_steps):
-                pars, state = solver.update(pars, state)
+                temp_pars, state = solver.update(pars, state)
+                pars = clamp_fn(pars, temp_pars)
 
                 # Extract current p-value and gradient pytree out of state:
                 pval = state.value              # JAX array scalar
@@ -774,6 +793,111 @@ class DifferentiableAnalysis(Analysis):
             # At the end, return final gradients and final p-value
             return 1.0, state.value
         # Set up optimizer
-        gradients, final_pval = optimize_and_log(n_steps=100)
+        gradients, final_pval = optimize_and_log(n_steps=30)
 
         return gradients, final_pval
+
+def make_apply_param_updates(param_update_rules):
+    """
+    Given a dict param_update_rules:
+      { param_name: (lambda old_x, delta: new_x), … }
+    we return a function that “projects” all_params as follows:
+        new_params["aux"][name] = param_update_rules[name](
+                                 old_params["aux"][name],
+                                 new_params["aux"][name] - old_params["aux"][name]
+                               )
+    and leaves everything else unchanged.
+    """
+    def apply_rules(old_params, tentative_new_params):
+        # old_params and tentative_new_params are assumed to share the same pytree structure:
+        #   {
+        #     "aux": { key1: float, key2: float, … },
+        #     "fit": { … },
+        #   }
+        #
+        # We only rewrite the leaves under "aux" that appear in param_update_rules.
+        aux_old = old_params["aux"]
+        aux_new_temp = tentative_new_params["aux"]
+
+        # Create a new “aux” dict by applying each rule in turn.
+        new_aux = {}
+        for key, x_temp in aux_new_temp.items():
+            if key in param_update_rules:
+                # old value:
+                x_old = aux_old[key]
+                # “proposed delta” = (x_temp − x_old)
+                delta = x_temp - x_old
+                # run the user’s clamp function:
+                new_aux[key] = param_update_rules[key](x_old, delta)
+            else:
+                # If no special rule, just accept x_temp
+                new_aux[key] = x_temp
+
+        # Everything under “fit” is untouched here. We simply pass it through.
+        return {"aux": new_aux, "fit": tentative_new_params["fit"]}
+
+    return apply_rules
+
+# ========================
+# 2) Build make_lr_transform(...) correctly
+# ========================
+
+def make_lr_transform(lr_map, default_lr=1e-2, fit_lr=1e-3):
+    """
+    Build an Optax `GradientTransformation` that applies:
+      - Adam(lr_map[key]) whenever path = ("aux", key) and key is in lr_map
+      - Adam(default_lr) whenever path = ("aux", key) and key not in lr_map
+      - Adam(fit_lr)      whenever path = ("fit", <anything>)
+    """'''
+    # 1) Create each sub‐optimizer and give it a name.
+    #    We'll later have these three “buckets”:
+    #      - "aux__<key>"    for every aux‐key in lr_map
+    #      - "aux__default"  for all other “aux” leaves
+    #      - "fit__default"  for all “fit” leaves
+    sub_transforms = {}
+
+    # For each aux‐key in lr_map, build an Adam with that lr.
+    for key, lr in lr_map.items():
+        sub_transforms[f"aux__{key}"] = optax.adam(learning_rate=lr)
+
+    # A fallback Adam(default_lr) for any other “aux” parameter not in lr_map
+    sub_transforms["aux__default"] = optax.adam(learning_rate=default_lr)
+
+    # A single transform for all “fit” leaves
+    sub_transforms["fit__default"] = optax.adam(learning_rate=fit_lr)
+
+    # 2) Now build a “label tree” whose structure mirrors the structure of `all_params`.
+    #    Recall: `all_params = {"aux": {...}, "fit": {...}}`
+    def make_label_pytree(params):
+        """
+        Walk over `params` (a dict with keys "aux" and "fit"), and return a pytree of the
+        same shape whose leaves are strings naming which sub‐transform should apply.
+        """
+        labels = {"aux": {}, "fit": {}}
+
+        # Fill in the “aux” branch:
+        for aux_key, aux_val in params["aux"].items():
+            if aux_key in lr_map:
+                labels["aux"][aux_key] = f"aux__{aux_key}"
+            else:
+                labels["aux"][aux_key] = "aux__default"
+
+        # Fill in the “fit” branch (all fit‐leaves use "fit__default"):
+        for fit_key, fit_val in params["fit"].items():
+            labels["fit"][fit_key] = "fit__default"
+
+        return labels
+
+    # 3) Return a function that will create (transform, labels) when given a param‐tree:
+    def builder(params):
+        """
+        Given a parameters pytree `params = {"aux": {...}, "fit": {...}}`,
+        returns (tx, label_pytree), where:
+          - tx = optax.multi_transform(sub_transforms, label_pytree)
+          - label_pytree has the same structure as params but with leaves = strings
+        """
+        label_pytree = make_label_pytree(params)
+        tx = optax.multi_transform(sub_transforms, label_pytree)
+        return tx, label_pytree
+
+    return builder

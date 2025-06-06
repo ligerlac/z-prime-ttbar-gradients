@@ -205,6 +205,15 @@ class JaxConfig(SubscriptableModel):
                 ),
             ),
         ]
+
+    learning_rates: Annotated[
+        Optional[dict[str, float]],
+        Field(
+            default=None,
+            description="Optional per-parameter learning rates for JAX optimisation. "
+            "If None, uses `learning_rate` for all parameters.",
+        ),
+    ]
 # ------------------------
 # Preprocessing configuration
 # ------------------------
