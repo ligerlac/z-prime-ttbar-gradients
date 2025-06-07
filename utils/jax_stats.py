@@ -205,39 +205,10 @@ def calculate_significance_relaxed(
     #     We have no auxiliary constraints → pass empty list for second
     data_for_hypotest = (obs_main_list, [])
 
-    # === DEBUG: Print a small summary of the observed data ===
-    # We’ll print the shape and sum of each “obs_main” array, joined with commas.
-    # This runs at trace‐time so the exact same JAXTracers appear whether we call
-    # this function from “standalone” or from inside the optimizer.
-    # for i, arr in enumerate(obs_main_list):
-    #     jax.debug.print(
-    #         "[DEBUG] Channel {i}: obs_main_list[{i}].shape = {shape}, sum = {s:.4f}",
-    #         shape=arr.shape, s=jnp.sum(arr), i=i
-    #     )
-    # for i, arr in enumerate(channel_data_list):
-    #     for process in arr.processes:
-    #         jax.debug.print(
-    #             "[DEBUG] Channel {i}: process '{p}': shape = {shape}, sum = {s:.4f}",
-    #             p=process, shape=arr.processes[process].shape, s=jnp.sum(arr.processes[process]), i=i
-    #         )
-
     # (c) Build our model
     model = AllBkgRelaxedModelScalar(channels=channel_data_list)
 
-    # (d) Create initial parameters dictionary:
-    #     mu = params["mu"], norm_ttbar_semilep = params["norm_ttbar_semilep"]
-    # init_pars: Dict[str, jnp.ndarray] = {
-    #     par: jnp.array(value) for par, value in params.items()
-    # }
-
-    # === DEBUG: Print initial parameters summary ===
-    # (We assume “mu” and “norm_ttbar_semilep” are present in params.)
-    # jax.debug.print(
-    #     "[DEBUG] init_pars: mu = {m:.4f}, norm_ttbar_semilep = {n:.4f}",
-    #     m=params["mu"], n=params["norm_ttbar_semilep"]
-    # )
-
-    # (e) Call relaxed.infer.hypotest entirely in JAX:
+    # (d) Call relaxed.infer.hypotest entirely in JAX:
     vals = relaxed.infer.hypotest(
         test_mu,
         data_for_hypotest,
@@ -258,23 +229,3 @@ def calculate_significance_relaxed(
         p0 = vals
 
     return p0
-
-
-# ----------------------------------------------------------------------
-# 6) Integrate into your DifferentiableAnalysis
-# ----------------------------------------------------------------------
-
-# In your DifferentiableAnalysis._calculate_significance, replace the old call:
-#
-#   old:
-#     p0 = calculate_significance_relaxed(histograms, self.channels)
-#
-#   new:
-#     p0 = calculate_significance_relaxed_allbkg_scalar(histograms, self.channels, test_mu=0.0)
-#
-# Ensure that `histograms[...]` has jnp.ndarray leaves (e.g. by calling jnp.asarray(...)
-# when you first build them). Then in optimize or wherever you do:
-#
-#    pvals, grads = jax.value_and_grad(self.run_histogram_and_significance, argnums=0)(...)
-#
-# JAX will happily trace through the entire “L-BFGS inside relaxed” without any tracer leaks.
