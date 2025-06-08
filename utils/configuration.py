@@ -93,9 +93,11 @@ config = {
             "kde_bandwidth": lambda x, d: jnp.clip(x + d, 1.0, 50.0),
         },
         'learning_rates':{
-            'met_threshold': 0.1,
+            # 'met_threshold': 0.1,
+            'met_threshold': 1.0,
             'btag_threshold': 0.01,
-            'lep_ht_threshold': 0.1,
+            # 'lep_ht_threshold': 0.1,
+            'lep_ht_threshold': 1.0,
             'kde_bandwidth': 0.1,
         }
     },

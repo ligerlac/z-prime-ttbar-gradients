@@ -342,6 +342,9 @@ def Zprime_softcuts_jax_workshop(
     soft_counts = jnp.sum(soft_flags, axis=1)      # shape (n_events,)
     btag_cut   = jax.nn.sigmoid(soft_counts * 10)       # shape (n_events,)
 
+    # this works because there's always exactly 1 muon in the event
+    lep_ht = ak.to_jax(muons + met).flatten()
+
     # ---------------------
     # Define differentiable sigmoid cuts
     # ---------------------
@@ -351,14 +354,18 @@ def Zprime_softcuts_jax_workshop(
         ),
         'btag_cut': btag_cut,
         # inner sigmoid ~ 1 for btag > threshold ~0 for < threshold (step) sum is then # of jets and then we relax
-        # 'lep_ht_cut': jax.nn.sigmoid(
-        #     (lep_ht - params['lep_ht_threshold']) / 50.0
+        'lep_ht_cut': jax.nn.sigmoid(
+            (lep_ht - params['lep_ht_threshold']) / 5.0
+        ),
     }
 
     # ---------------------
     # Combine cut weights multiplicatively (AND logic)
     # ---------------------
-    cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"]])
+    print(f"{cuts['met_cut'].shape=}")
+    print(f"{cuts['btag_cut'].shape=}")
+    print(f"{cuts['lep_ht_cut'].shape=}")
+    cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"], cuts["lep_ht_cut"]])
     selection_weight = jnp.prod(cut_values, axis=0)
     return selection_weight
 
