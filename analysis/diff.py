@@ -25,12 +25,11 @@ from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 from analysis.base import Analysis
 from utils.cuts import lumi_mask
 from utils.preproc import pre_process_dak, pre_process_uproot
-from utils.evm_stats import (
+from utils.jax_stats import (
     calculate_significance_relaxed,
-    #_get_valid_channels,
-    #_create_parameter_structure,
-    #_prepare_channel_data,
+    build_allbkg_channel_data_scalar
 )
+from utils.plot import plot_cms_histogram, plot_pval_history
 
 # -----------------------------------------------------------------------------
 # Backend & Logging Setup
@@ -251,9 +250,9 @@ class DifferentiableAnalysis(Analysis):
         """
         logger.info("📊 Calculating significance from histograms...")
         histograms = nested_defaultdict_to_dict(process_histograms).copy()
-        significance = calculate_significance_relaxed(histograms, self.channels, params)
+        significance, mle_pars= calculate_significance_relaxed(histograms, self.channels, params)
         logger.info(f"✅ Significance calculation complete")
-        return significance
+        return significance, mle_pars
 
     # -------------------------------------------------------------------------
     # Histogramming Logic
@@ -313,7 +312,7 @@ class DifferentiableAnalysis(Analysis):
                 logger.debug(f"Skipping channel {chname} (not in requested channels)")
                 continue
 
-            logger.info(f"Processing channel: {chname}")
+            logger.debug(f"Processing channel: {chname}")
 
             # Prepare channel data
             obj_copies_ch = proced[chname]["objects"]
@@ -365,17 +364,17 @@ class DifferentiableAnalysis(Analysis):
                 # Compute observable values
                 obs_args = self._get_function_arguments(observable["use"], obj_copies_ch)
                 values = jnp.asarray(ak.to_jax(observable["function"](*obs_args)))
-                binning = observable["binning"]
                 logger.debug(f"Computed {obs_name} values")
-
-                # Prepare binning
-                bandwidth = jax_config.params["kde_bandwidth"]
+                # Binning
+                binning = observable["binning"]
                 if isinstance(binning, str):
                     low, high, nbins = map(float, binning.split(","))
                     binning = jnp.linspace(low, high, int(nbins))
                 else:
                     binning = jnp.array(binning)
 
+                # Prepare binning
+                bandwidth = jax_config.params["kde_bandwidth"]
                 # Compute KDE-based histogram
                 cdf = jax.scipy.stats.norm.cdf(
                     binning.reshape(-1, 1),
@@ -386,7 +385,7 @@ class DifferentiableAnalysis(Analysis):
                 bin_weights = weighted_cdf[1:, :] - weighted_cdf[:-1, :]
                 histogram = jnp.sum(bin_weights, axis=1)
 
-                histograms[chname][obs_name] = jnp.asarray(histogram)
+                histograms[chname][obs_name] = (jnp.asarray(histogram), binning)
                 logger.info(f"Filled histogram for {obs_name} in {chname}")
 
         return histograms
@@ -622,13 +621,13 @@ class DifferentiableAnalysis(Analysis):
 
         # Calculate cross-section weight for MC
         xsec_weight = (xsec * lumi / n_gen) if process != "data" else 1.0
-        logger.info(
+        logger.debug(
             f"Process: {process}, xsec: {xsec}, n_gen: {n_gen}, "
             f"lumi: {lumi}, weight: {xsec_weight:.6f}"
         )
 
         # Process nominal variation
-        logger.info(f"Processing nominal variation for {process}")
+        logger.debug(f"Processing nominal variation for {process}")
         histograms = self.histogramming(
             proced["nominal"],
             process,
@@ -831,7 +830,7 @@ class DifferentiableAnalysis(Analysis):
             # Process each file
             for file_key, skim in files.items():
                 for proced, metadata in skim.values():
-                    logger.info(
+                    logger.debug(
                         f"Processing histograms from {file_key} in {dataset}"
                     )
                     # Collect histograms for this file
@@ -843,9 +842,9 @@ class DifferentiableAnalysis(Analysis):
 
         # Calculate final significance
         logger.info(f"✅ Histogramming complete")
-        significance = self._calculate_significance(process_histograms, params["fit"])
-
-        return significance
+        significance, mle_pars = self._calculate_significance(process_histograms, params["fit"])
+        jax.lax.stop_gradient(self.set_histograms(process_histograms))
+        return significance, mle_pars
 
     # -------------------------------------------------------------------------
     # Cut Optimization via Gradient Ascent
@@ -869,95 +868,206 @@ class DifferentiableAnalysis(Analysis):
         from functools import partial
         from jaxopt import OptaxSolver
 
-        logger.info("Starting cut optimization...")
-
-        # Infer processes and systematics
-        processes, systematics = infer_processes_and_systematics(
-            fileset, self.config.systematics, self.config.corrections
-        )
-        logger.info(f"Processes: {processes}")
-        logger.info(f"Systematics: {systematics}")
-
-        # Initialize parameters
-        aux_params = self.config.jax.params.copy()
-        all_params = {
-            "aux": aux_params,
-            "fit": {"mu": 1.0, "norm_ttbar_semilep": 1.0}
-        }
-        all_params["aux"] = {k: jnp.array(v) for k, v in all_params["aux"].items()}
-        all_params["fit"] = {k: jnp.array(v) for k, v in all_params["fit"].items()}
-        logger.info(f"Initial parameters: {pformat(all_params)}")
-
         # Configure caching
         cache_dir = "/tmp/gradients_analysis/"
         read_from_cache = self.config.general.read_from_cache
         run_and_cache = not read_from_cache
 
-        # Preprocess events
-        proced_events = self.run_analysis_processing(
-            all_params,
-            fileset,
-            read_from_cache=read_from_cache,
-            run_and_cache=run_and_cache,
-            cache_dir=cache_dir,
+        if not self.config.general.run_plots_only:
+            logger.info("Starting cut optimization...")
+
+            # Infer processes and systematics
+            processes, systematics = infer_processes_and_systematics(
+                fileset, self.config.systematics, self.config.corrections
+            )
+            logger.info(f"Processes: {processes}")
+            logger.info(f"Systematics: {systematics}")
+
+            # Initialize parameters
+            aux_params = self.config.jax.params.copy()
+            all_params = {
+                "aux": aux_params,
+                "fit": {"mu": 1.0, "norm_ttbar_semilep": 1.0}
+            }
+            all_params["aux"] = {k: jnp.array(v) for k, v in all_params["aux"].items()}
+            all_params["fit"] = {k: jnp.array(v) for k, v in all_params["fit"].items()}
+            logger.info(f"Initial parameters: {pformat(all_params)}")
+
+            # Preprocess events
+            proced_events = self.run_analysis_processing(
+                all_params,
+                fileset,
+                read_from_cache=read_from_cache,
+                run_and_cache=run_and_cache,
+                cache_dir=cache_dir,
+            )
+            logger.info("✅ Event preprocessing complete")
+
+            (init_pval, init_mle_pars), gradients = jax.value_and_grad(
+                self.run_histogram_and_significance,
+                has_aux=True,
+                argnums=0,
+            )(all_params, proced_events)
+
+            # Define objective function (negative significance)
+            def objective(params):
+                p0, mle_pars = self.run_histogram_and_significance(params, proced_events)
+                return -p0, mle_pars
+
+            # Create parameter clamping function
+            clamp_fn = make_apply_param_updates(self.config.jax.param_updates)
+
+            # Configure learning rates
+            if (config_lr := self.config.jax.learning_rates) is not None:
+                make_builder = make_lr_and_clamp_transform(config_lr, default_lr=1e-2, fit_lr=1e-3, clamp_fn=clamp_fn)
+                tx, _ = make_builder(all_params)
+            else:
+                tx = optax.adam(learning_rate=self.config.jax.learning_rate)
+
+            logger.info(f"Starting gradient-based optimisation")
+
+            initial_params = all_params.copy()
+            # Optimization loop
+            pvals_history = []
+            aux_history = {k: [] for k in all_params["aux"]}
+            mle_history = {k: [] for k in init_mle_pars}
+            def optimize_and_log(n_steps: int = 100):
+                # all_params is your initial pytree: {"aux": {...}, "fit": {...}}
+                pars = initial_params
+                # value_and_grad=True makes solver.state contain .value (scalar) and .grad (pytree)
+                solver = OptaxSolver(fun=objective, opt=tx,
+                                    jit=False, has_aux=True,
+                                    value_and_grad=False,
+                                    maxiter=self.config.jax.max_iterations,
+                                    tol=0.0,)
+
+                state = solver.init_state(pars)
+                logger.info("Starting gradient-based optimization...")
+
+                if self.config.jax.explicit_optimization:
+                    logger.info("Using explicit optimization loop")
+                    for step in range(n_steps):
+                        temp_pars, state = solver.update(pars, state)
+                        #pars = clamp_fn(pars, temp_pars)
+                        pars = temp_pars
+
+                        # Extract current p-value out of sate
+                        pval = state.value              # JAX array scalar
+                        mle_pars = state.aux            # MLE parameters from aux
+
+                        if step % 10 == 0:
+                            jax.debug.print('\n\nStep {:3d}: p-value = {:.4f}', step, pval)
+                            logger.info(f"    parameters  = {pars['aux']}")
+                            logger.info(f"    MLE parameters    = {mle_pars}")
+
+                        pvals_history.append(float(state.value))
+                        for k, v in pars["aux"].items():
+                            aux_history[k].append(float(v))
+                        for k, v in state.aux.items():
+                            mle_history[k].append(float(v))
+
+                else:
+                    pars, state = solver.run(pars)
+                    mle_pars = state.aux
+
+                # At the end, return final gradients and final p-value
+                return -state.value, mle_pars, pars
+
+            # Set up optimizer
+            final_pval, mle_pars, pars = optimize_and_log(n_steps=self.config.jax.max_iterations)
+            logger.info(f"Initial p-value before optimization: {init_pval:.4f}")
+            logger.info(f"Final p-value after optimization: {final_pval:.4f}")
+            logger.info(f"Improvement in p-value: {(final_pval-init_pval)*100/init_pval:.4f}%")
+            logger.info(f"Initial parameters: {initial_params}")
+            logger.info(f"Final parameters: {pars}")
+            logger.info(f"Gradients: {gradients}")
+
+
+            _ = self.run_histogram_and_significance(
+                all_params, proced_events
+            )
+            with open(f"{cache_dir}/cached_result.pkl", "wb") as f:
+                cloudpickle.dump({
+                    "params": pars,
+                    "mle_pars": mle_pars,
+                    "significance": final_pval,
+                    "histograms": self.histograms,
+                    "pvals_history": pvals_history,
+                    "aux_history": aux_history,
+                    "mle_history": mle_history,
+                    "gradients": gradients,
+                }, f)
+
+
+        with open(f"{cache_dir}/cached_result.pkl", "rb") as f:
+            cached_result = cloudpickle.load(f)
+            pars = cached_result["params"]
+            mle_pars = cached_result["mle_pars"]
+            final_pval = cached_result["significance"]
+            pvals_history = cached_result["pvals_history"]
+            aux_history = cached_result["aux_history"]
+            mle_history = cached_result["mle_history"]
+            gradients = cached_result["gradients"]
+            histograms = cached_result["histograms"]
+
+        if self.config.jax.explicit_optimization:
+            if (self.config.jax.learning_rates) is  None:
+                lrs = {p: self.config.jax.learning_rate for p in pars["aux"]}
+            else:
+                lrs = self.config.jax.learning_rates
+
+            plot_pval_history(pvals_history, aux_history, mle_history, gradients, lrs)
+
+        # ————————————————————————————————————————————————————————————————
+        # 1) Prepare your inputs
+        #    • `histograms` is your nested dict of KDE-based jnp.ndarrays
+        #    • `channels` is your list of config objects with `.name`, `.fit_observable`,
+        #       `.use_in_diff`, and now `.binning`
+        # ————————————————————————————————————————————————————————————————
+
+        # Build the ChannelData objects
+        channel_data_list, _ = build_allbkg_channel_data_scalar(
+            histograms,
+            self.config.channels,
         )
-        logger.info("✅ Event preprocessing complete")
 
-        init_pval, gradients = jax.value_and_grad(
-            self.run_histogram_and_significance,
-            has_aux=False,
-            argnums=0,
-        )(all_params, proced_events)
+        # Optional: define CMS‐style colors
+        process_colors = {
+            "ttbar_semilep": "#907AD6",
+            "signal":       "#DABFFF",
+            "ttbar_lep":  "#7FDEFF",
+            "ttbar_had":  "#2C2A4A",
+            "wjets":     "#72A1E5",
+        }
 
-        # Define objective function (negative significance)
-        def objective(params):
-            return -1 * self.run_histogram_and_significance(params, proced_events)
+        # ————————————————————————————————————————————————————————————————
+        # 2) Loop over channels and make pre-fit plots
+        # ————————————————————————————————————————————————————————————————
+        for ch_device in channel_data_list:
+            ch = jax.device_get(ch_device)
+            fig_prefit = plot_cms_histogram(
+                bin_edges    = ch.binning,
+                data         = ch.data_counts,
+                templates    = ch.processes,
+                process_colors = process_colors,
+                #title        = f"Pre-Fit: {ch.binning.shape[0]-1} bins in {ch}",
+            )
+            fig_prefit.savefig(f"prefit_{ch.name}.png", dpi=150)
 
-        # Create parameter clamping function
-        clamp_fn = make_apply_param_updates(self.config.jax.param_updates)
 
-        # Configure learning rates
-        if (config_lr := self.config.jax.learning_rates) is not None:
-            make_builder = make_lr_transform(config_lr, default_lr=1e-2, fit_lr=1e-3)
-            tx, _ = make_builder(all_params)
-        else:
-            tx = optax.adam(learning_rate=1e-1)
-
-        logger.info(f"Starting gradient-based optimisation")
-
-        initial_params = all_params.copy()
-        # Optimization loop
-        def optimize_and_log(n_steps: int = 100):
-            # all_params is your initial pytree: {"aux": {...}, "fit": {...}}
-            pars = initial_params
-            # value_and_grad=True makes solver.state contain .value (scalar) and .grad (pytree)
-            solver = OptaxSolver(fun=objective, opt=tx,
-                                 jit=False, has_aux=False, value_and_grad=False)
-            state = solver.init_state(pars)
-
-            logger.info("Starting gradient-based optimization...")
-            for step in range(n_steps):
-                temp_pars, state = solver.update(pars, state)
-                pars = clamp_fn(pars, temp_pars)
-
-                # Extract current p-value out of sate
-                pval = state.value              # JAX array scalar
-
-                if step % 10 == 0:
-                    jax.debug.print('Step {:3d}: p-value = {:.4f}', step, pval)
-                    logger.info(f"    parameters  = {pars}")
-
-            # At the end, return final gradients and final p-value
-            return -state.value
-
-        # Set up optimizer
-        final_pval = optimize_and_log(n_steps=30)
-        logger.info(f"Initial p-value before optimization: {init_pval:.4f}")
-        logger.info(f"Final p-value after optimization: {final_pval:.4f}")
-        logger.info(f"Improvement in p-value: {(final_pval-init_pval)*100/init_pval:.4f}%")
-        logger.info(f"Initial parameters: {initial_params}")
-        logger.info(f"Final parameters: {all_params}")
-        logger.info(f"Gradients: {gradients}")
+        # ————————————————————————————————————————————————————————————————
+        # 3) Post-fit plots with the MLE parameters
+        # ————————————————————————————————————————————————————————————————
+        for ch in channel_data_list:
+            fig_postfit = plot_cms_histogram(
+                bin_edges     = ch.binning,
+                data          = ch.data_counts,
+                templates     = ch.processes,
+                fitted_pars   = mle_pars,
+                process_colors = process_colors,
+                #title         = f"Post-Fit: {ch}",
+            )
+            fig_postfit.savefig(f"postfit_{ch.name}.png", dpi=150)
 
 
 def make_apply_param_updates(param_update_rules: dict) -> callable:
@@ -994,52 +1104,55 @@ def make_apply_param_updates(param_update_rules: dict) -> callable:
     return apply_rules
 
 
-def make_lr_transform(lr_map: dict, default_lr: float, fit_lr: float) -> callable:
+def make_clamp_transform(clamp_fn):
+    """An Optax transform that projects parameters after every update."""
+    def init_fn(params):
+        return None  # no extra state
+
+    def update_fn(updates, state, params=None):
+        # 1) apply the raw updates to get tentative new params
+        new_params = optax.apply_updates(params, updates)
+        # 2) clamp into your allowed region
+        new_params = clamp_fn(params, new_params)
+        # 3) compute “effective” updates = new − old
+        new_updates = jax.tree_util.tree_map(lambda n, o: n - o, new_params, params)
+        return new_updates, state
+
+    return optax.GradientTransformation(init_fn, update_fn)
+
+
+def make_lr_and_clamp_transform(
+    lr_map: dict, default_lr: float, fit_lr: float, clamp_fn: callable
+) -> callable:
     """
-    Create learning rate transformation with per-parameter rates.
-
-    Parameters
-    ----------
-    lr_map : dict
-        Mapping of parameter names to custom learning rates
-    default_lr : float
-        Default learning rate for auxiliary parameters
-    fit_lr : float
-        Learning rate for fit parameters
-
-    Returns
-    -------
-    callable
-        Function that creates optimizer and label tree
+    Combines your per-parameter LR multi-transform with a clamp-after-step transform.
+    Returns a builder(params) -> (tx, labels) just like before.
     """
-    sub_transforms = {}
-
-    # Create optimizers for auxiliary parameters
-    for key, lr in lr_map.items():
-        sub_transforms[f"aux__{key}"] = optax.adam(learning_rate=lr)
-    sub_transforms["aux__default"] = optax.adam(learning_rate=default_lr)
-
-    # Create optimizer for fit parameters
-    sub_transforms["fit__default"] = optax.adam(learning_rate=fit_lr)
+    # first, your existing sub_transforms and label builder:
+    sub_transforms = {
+        **{f"aux__{k}": optax.adam(lr) for k, lr in lr_map.items()},
+        "aux__default":    optax.adam(default_lr),
+        "fit__default":    optax.adam(fit_lr),
+    }
 
     def make_label_pytree(params):
         labels = {"aux": {}, "fit": {}}
-
-        # Label auxiliary parameters
         for aux_key in params["aux"]:
             labels["aux"][aux_key] = (
                 f"aux__{aux_key}" if aux_key in lr_map else "aux__default"
             )
-
-        # Label fit parameters
         for fit_key in params["fit"]:
             labels["fit"][fit_key] = "fit__default"
-
         return labels
+
+    # clamp‐after‐update transform
+    clamp_tx = make_clamp_transform(clamp_fn)
 
     def builder(params):
         label_pytree = make_label_pytree(params)
-        tx = optax.multi_transform(sub_transforms, label_pytree)
+        lr_tx = optax.multi_transform(sub_transforms, label_pytree)
+        # chain them: first do lr updates, then project
+        tx = optax.chain(lr_tx, clamp_tx)
         return tx, label_pytree
 
     return builder

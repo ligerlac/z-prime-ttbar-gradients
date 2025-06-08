@@ -3,6 +3,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
+import numpy as np
 import equinox as eqx
 import relaxed
 from typing import Any, Dict, List, Tuple
@@ -27,11 +28,18 @@ def poisson_logpdf(counts: jnp.ndarray, lam: jnp.ndarray) -> jnp.ndarray:
 class ChannelData(eqx.Module):
     data_counts: jnp.ndarray
     processes: Dict[str, jnp.ndarray]
+    binning: jnp.ndarray
+    name: str = eqx.static_field()
 
-    def __init__(self, data_counts: jnp.ndarray, processes: Dict[str, jnp.ndarray]):
+    def __init__(self, data_counts: jnp.ndarray,
+                 processes: Dict[str, jnp.ndarray],
+                 binning: jnp.ndarray,
+                 name: str):
         # Both `data_counts` and each `processes[...]` are assumed to be jnp.ndarray already.
         self.data_counts = data_counts
         self.processes = processes
+        self.binning = binning
+        self.name = name
 
 
 # ----------------------------------------------------------------------
@@ -144,7 +152,7 @@ def build_allbkg_channel_data_scalar(
         obsname = ch.fit_observable
 
         # 1) Observed data histogram for this channel
-        main_obs = histograms.get("data", {}) \
+        main_obs, binning = histograms.get("data", {}) \
                               .get("nominal", {}) \
                               .get(chname, {}) \
                               .get(obsname, None)
@@ -154,9 +162,11 @@ def build_allbkg_channel_data_scalar(
         # 2) Collect **all** nominal templates for this channel
         proc_dict: Dict[str, jnp.ndarray] = {}
         for pname, variations in histograms.items():
+            if pname == "data":
+                continue
             nom = variations.get("nominal", {}) \
                             .get(chname, {}) \
-                            .get(obsname, None)
+                            .get(obsname, None)[0]
             if nom is not None:
                 proc_dict[pname] = nom
 
@@ -170,8 +180,10 @@ def build_allbkg_channel_data_scalar(
 
         # Now create ChannelData
         channel_data_list.append(ChannelData(
+            name = chname,
             data_counts = main_obs,
-            processes  = proc_dict
+            processes  = proc_dict,
+            binning = binning,
         ))
         obs_main_list.append(main_obs)
 
@@ -209,7 +221,7 @@ def calculate_significance_relaxed(
     model = AllBkgRelaxedModelScalar(channels=channel_data_list)
 
     # (d) Call relaxed.infer.hypotest entirely in JAX:
-    vals = relaxed.infer.hypotest(
+    p0, mle_pars = relaxed.infer.hypotest(
         test_mu,
         data_for_hypotest,
         model,
@@ -222,10 +234,4 @@ def calculate_significance_relaxed(
         test_stat = "q0",   # discovery test
     )
 
-    if isinstance(vals, tuple):
-        p0, mle_pars = vals
-        jax.debug.print("MLE parameters: {mle_pars}", mle_pars=mle_pars)
-    else:
-        p0 = vals
-
-    return p0
+    return p0, mle_pars

@@ -40,6 +40,7 @@ config = {
         "run_histogramming": False,
         "run_statistics": True,
         "run_systematics": False,
+        "run_plots_only": True,
         "read_from_cache": True,
         "output_dir": "output/",
         "preprocessed_dir": "./preproc_uproot/z-prime-ttbar-data/",
@@ -67,6 +68,7 @@ config = {
         "optimize": True,
         "learning_rate": 0.01,
         "max_iterations": 5,
+        'explicit_optimization': True,
         "soft_selection": {
             "function": Zprime_softcuts_jax_workshop,
             "use": [
@@ -85,7 +87,7 @@ config = {
         "param_updates": {
             # Thresholds: clip within physics-motivated bounds
             "met_threshold": lambda x, d: jnp.clip(x + d, 20.0, 150.0),
-            "btag_threshold": lambda x, d: jnp.clip(x + d, 0.0, 0.9),
+            "btag_threshold": lambda x, d: jnp.clip(x + d, 0.0, 3.0),
             "lep_ht_threshold": lambda x, d: jnp.clip(x + d, 50.0, 300.0),
             # KDE smoothing: keep bandwidth strictly positive and reasonably sized
             "kde_bandwidth": lambda x, d: jnp.clip(x + d, 1.0, 50.0),

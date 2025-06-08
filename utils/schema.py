@@ -111,6 +111,13 @@ class GeneralConfig(SubscriptableModel):
             description="Whether to run systematic variations step",
         ),
     ]
+    run_plots_only: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Whether to skip all steps except plotting",
+        ),
+    ]
     read_from_cache: Annotated[
         bool,
         Field(
@@ -212,6 +219,14 @@ class JaxConfig(SubscriptableModel):
             default=None,
             description="Optional per-parameter learning rates for JAX optimisation. "
             "If None, uses `learning_rate` for all parameters.",
+        ),
+    ]
+
+    explicit_optimization: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Whether to run explicit optimization loop for JAX parameters",
         ),
     ]
 # ------------------------
