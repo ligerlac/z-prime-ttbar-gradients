@@ -67,7 +67,7 @@ config = {
     "jax": {
         "optimize": True,
         "learning_rate": 0.01,
-        "max_iterations": 5,
+        "max_iterations": 100,
         'explicit_optimization': True,
         "soft_selection": {
             "function": Zprime_softcuts_jax_workshop,
@@ -214,10 +214,10 @@ config = {
             "wjets":     "#72A1E5",
         },
         "process_labels": {
-            "ttbar_semilep": r"$t\bar{t}\,(lepton+jets)$",
+            "ttbar_semilep": r"$t\bar{t}\,\textrm{(lepton+jets)}$",
             "signal":       r"$Z^{\prime} \rightarrow t\bar{t}$",
-            "ttbar_lep":  r"$t\bar{t}\,(leptonic)$",
-            "ttbar_had":  r"$t\bar{t}\,(hadronic)$",
+            "ttbar_lep":  r"$t\bar{t}\,\textrm{(leptonic)}$",
+            "ttbar_had":  r"$t\bar{t}\,\textrm{(hadronic)}$",
             "wjets":     r"$W+\textrm{jets}$",
         },
         "process_order": [

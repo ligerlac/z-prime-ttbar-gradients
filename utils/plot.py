@@ -1,9 +1,10 @@
 import math
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.ticker import ScalarFormatter
 from matplotlib import rcParams
 from matplotlib.gridspec import GridSpec
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 import mplhep as hep
 import jax
 
@@ -34,134 +35,123 @@ def to_numpy(x):
     x = jax.device_get(x)
     return np.asarray(x)
 
+
 def plot_cms_histogram(
-    bin_edges: ArrayLike,
-    data: ArrayLike,
-    templates: Dict[str, ArrayLike],
-    fitted_pars: Optional[Dict[str, float]] = None,
-    plot_settings: Optional[Dict[str, str]] = None,
-    show_signal: bool = True,
-    figsize: Tuple[float, float] = (12, 12),
-    ratio_ylim: Tuple[float, float] = (0.5, 1.5),
-    xlabel: str = "",
-    ylabel: str = "Events",
-    title: str = "",
+    bin_edges, data, templates,
+    fitted_pars=None, plot_settings=None,
+    show_signal=True, figsize=(12,12), ratio_ylim=(0.5,1.5),
+    xlabel="", ylabel="Events", title="",
 ) -> plt.Figure:
     """
-    Draw a CMS‐style pre‐/post‐fit plot using mplhep styling.
-
-    Applies the CMS style via `hep.style.use("CMS")`, stacked backgrounds,
-    data points with errors, and a ratio pad. Post‐fit scaling follows
-    the same logic as your JAX model: "signal" scaled by "mu",
-    "ttbar_semilep" by "norm_ttbar_semilep", others fixed.
+    CMS‐style pre/post‐fit plot with an overlay of fit parameters.
     """
-    # Apply CMS style
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 1: Apply CMS style and convert inputs to numpy
+    # ──────────────────────────────────────────────────────────────────────────
     hep.style.use("CMS")
+    data = np.asarray(data)
+    edges = np.asarray(bin_edges)
+    centers = 0.5 * (edges[:-1] + edges[1:])
 
-    # Convert arrays
-    data = to_numpy(data)
-    bin_edges = to_numpy(bin_edges)
-    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-
-    # Determine process order
-    keys = list(templates.keys())
-    process_order = plot_settings.get("process_order", None) if plot_settings else None
-    if process_order is None:
-        bg = sorted([k for k in keys if k.lower() != "signal"] )
-        if "signal" in keys and show_signal:
-            process_order = bg + ["signal"]
-        else:
-            process_order = bg
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 2: Determine process draw order
+    # ──────────────────────────────────────────────────────────────────────────
+    cfg = plot_settings or {}
+    keys = list(templates)
+    order = cfg.get("process_order")
+    if order:
+        order = [
+            k for k in order
+            if k in templates and (show_signal or k.lower() != "signal")
+        ]
     else:
-        process_order = [k for k in process_order
-                         if k in templates and (k.lower() != "signal" or show_signal)]
+        bg = sorted(k for k in keys if k.lower() != "signal")
+        order = bg + (["signal"] if "signal" in keys and show_signal else [])
 
-    # Scale templates if post‐fit
-    scaled: Dict[str, np.ndarray] = {}
-    # extract mu and norm_ttbar from fitted_pars if provided
-    mu = fitted_pars.get("mu", 1.0) if fitted_pars else 1.0
-    norm_ttbar = fitted_pars.get("norm_ttbar_semilep", 1.0) if fitted_pars else 1.0
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 3: Scale templates according to fitted parameters
+    # ──────────────────────────────────────────────────────────────────────────
+    mu  = fitted_pars.get("mu", 1.0)                 if fitted_pars else 1.0
+    ntt = fitted_pars.get("norm_ttbar_semilep", 1.0) if fitted_pars else 1.0
+    scaled = {
+        p: np.asarray(arr) * (
+            mu if p.lower() == "signal"
+            else ntt if p == "ttbar_semilep"
+            else 1.0
+        )
+        for p, arr in templates.items()
+    }
 
-    for proc, arr in templates.items():
-        arr_np = to_numpy(arr)
-        # apply the same logic as AllBkgRelaxedModelScalar.expected_data
-        if fitted_pars is not None:
-            if proc.lower() == "signal":
-                scale = mu
-            elif proc == "ttbar_semilep":
-                scale = norm_ttbar
-            else:
-                scale = 1.0
-        else:
-            scale = 1.0
-
-        scaled[proc] = arr_np * scale
-
-    # Build stack arrays
-    stack_vals = [scaled[p] for p in process_order]
-
-    # Create figure and axes
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 4: Create figure and two panels (main + ratio)
+    # ──────────────────────────────────────────────────────────────────────────
     fig = plt.figure(figsize=figsize)
-    gs = GridSpec(2, 1, height_ratios=(3, 1), hspace=0.05, figure=fig)
-    ax_main = fig.add_subplot(gs[0])
+    gs  = GridSpec(2, 1, height_ratios=(3,1), hspace=0.1, figure=fig)
+    ax_main  = fig.add_subplot(gs[0])
     ax_ratio = fig.add_subplot(gs[1], sharex=ax_main)
 
-    process_colors = plot_settings.get("process_colors", None) if plot_settings else None
-    process_labels = plot_settings.get("process_labels", None) if plot_settings else None
-    # Main plot: stacked histograms
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 5: Draw stacked backgrounds and data points
+    # ──────────────────────────────────────────────────────────────────────────
+    colors = cfg.get("process_colors", {})
+    labels = cfg.get("process_labels", {})
     hep.histplot(
-        [scaled[p] for p in process_order],
-        bin_edges,
-        stack=True,
-        ax=ax_main,
-        label=[process_labels.get(p) if process_labels else p for p in process_order],
-        color=[process_colors.get(p) if process_colors else None for p in process_order],
-        edgecolor="black",
-        histtype="fill",
-        linewidth=0.5,
+        [scaled[p] for p in order], edges,
+        stack=True, ax=ax_main,
+        label=[labels.get(p, p) for p in order],
+        color=[colors.get(p) for p in order],
+        edgecolor="k", histtype="fill", linewidth=0.5,
     )
-    # Data points
     hep.histplot(
-        data,
-        bin_edges,
-        yerr=np.sqrt(data),
-        ax=ax_main,
-        marker='o',
-        color='black',
-        label='Data',
-        markersize=5,
-        capsize=2,
-        histtype='errorbar',
+        data, edges, yerr=np.sqrt(data),
+        ax=ax_main, marker='o', color='k',
+        label="Data", markersize=5, capsize=2, histtype="errorbar",
     )
-
     ax_main.set_ylabel(ylabel, fontsize=20)
-    ax_main.set_title(title)
-    ax_main.legend(frameon=False, fontsize=16, ncol=2, loc='upper right')
-
-    # Ratio
-    total = np.sum(stack_vals, axis=0)
-    ratio = np.divide(data, total, out=np.ones_like(data), where=total>0)
-    ratio_err = np.divide(np.sqrt(data), total, out=np.zeros_like(data), where=total>0)
-
-    ax_ratio.errorbar(
-        bin_centers,
-        ratio,
-        yerr=ratio_err,
-        fmt='o',
-        color='black',
-        markersize=4,
-        capsize=2,
-    )
-    ax_ratio.axhline(1.0, color='red', linestyle='--')
-    ax_ratio.set_ylim(ratio_ylim)
-    ax_ratio.set_xlabel(xlabel, fontsize=20)
-    ax_ratio.set_ylabel('Data / Pred.', fontsize=20, ha='center', va='center', labelpad=20)
-
-    # Clean up ticks
+    ax_main.set_title(title, fontsize=18)
+    ax_main.legend(frameon=False, fontsize=16, ncol=2, loc="upper right")
     plt.setp(ax_main.get_xticklabels(), visible=False)
 
-    return fig
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 6: Overlay fit‐parameter tile with LaTeX labels
+    # ──────────────────────────────────────────────────────────────────────────
+    if fitted_pars:
+        fit_lbls = cfg.get("jax", {}).get("fit_param_labels", {})
+        lines = []
+        for key, val in fitted_pars.items():
+            tex = fit_lbls.get(key, key)
+            if not (tex.startswith("$") and tex.endswith("$")):
+                tex = f"${tex}$"
+            lines.append(f"{tex} = {val:.3f}")
+        ax_main.text(
+            0.05, 0.94, "\n".join(lines),
+            transform=ax_main.transAxes,
+            va="top", ha="left",
+            fontsize=18,
+            bbox=dict(
+                facecolor="white",
+                edgecolor="black",
+                boxstyle="round,pad=0.5",
+                alpha=0.8
+            )
+        )
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 7: Compute and draw ratio panel
+    # ──────────────────────────────────────────────────────────────────────────
+    total = np.sum([scaled[p] for p in order], axis=0)
+    ratio = np.divide(data, total, out=np.ones_like(data), where=total>0)
+    err   = np.divide(np.sqrt(data), total, out=np.zeros_like(data), where=total>0)
+    ax_ratio.errorbar(
+        centers, ratio, yerr=err,
+        fmt='o', color='k', capsize=2
+    )
+    ax_ratio.axhline(1, color='r', linestyle='--')
+    ax_ratio.set_ylim(ratio_ylim)
+    ax_ratio.set_xlabel(xlabel, fontsize=14)
+    ax_ratio.set_ylabel("Data/Pred.", fontsize=14, ha="center", labelpad=15)
+
+    return fig
 
 def plot_pval_history(pval_history,
                       aux_history,
@@ -249,7 +239,117 @@ def plot_pval_history(pval_history,
             ax.set_ylabel("")
             ax.tick_params(labelleft=True)
 
-        plt.ticklabel_format(axis="y", style='sci', scilimits=(-3, 10))
+        formatter = ScalarFormatter(useMathText=True)
+        formatter.set_scientific(True)
+        formatter.set_powerlimits((0, 0))
+
+        for ax in axes_flat[:n_params]:
+            ax.yaxis.set_major_formatter(formatter)
+
+        ax.grid(True, alpha=0.3)
+
+    # Turn off any unused axes
+    for ax in axes_flat[n_params:]:
+        ax.set_visible(False)
+
+    plt.tight_layout()
+    fig.savefig(fname, dpi=300)
+    plt.close(fig)
+
+def plot_params_per_iter(pval_history,
+                      aux_history,
+                      mle_history,
+                      gradients,
+                      learning_rates,
+                      fname="params_iters.png",
+                      plot_settings=None,
+
+                      ):
+    """
+    Plots p-value/ parameter histories VS # iterations ⌈√N⌉×⌈√N⌉ grid, where N is the total number
+    of parameters (aux + mle) + 1 (pval). Unused subplots are turned off.
+
+    Args:
+        pval_history (Sequence[float]): Sequence of p-values.
+        aux_history (Dict[str, Sequence[float]]): Histories for auxiliary parameters.
+        mle_history (Dict[str, Sequence[float]]): Histories for MLE parameters.
+        fname (str): File name to save the figure to.
+    """
+    # Combine into one mapping
+    param_history = {
+        **{f"aux__{k}": hist for k, hist in aux_history.items()},
+        **{f"mle__{k}": hist for k, hist in mle_history.items()},
+    }
+
+    # filter out any whose history is constant
+    filtered = {}
+    for name, hist in param_history.items():
+        arr = np.asarray(hist)
+        if not np.allclose(arr, arr[0]):
+            filtered[name] = hist
+
+    filtered["pval"] = -1*np.asarray(pval_history)  # add pval history
+    if not filtered:
+        print("No parameters changed; nothing to plot.")
+        return
+
+    n_params = len(filtered.keys())
+    n_iterations = len(pval_history)
+    steps = np.arange(n_iterations)
+    grid_size = math.ceil(math.sqrt(n_params))
+
+    # Create grid of subplots
+    fig, axes = plt.subplots(grid_size, grid_size,
+                             figsize=(4 * grid_size, 3 * grid_size),
+                             sharex=True, squeeze=False)
+
+    # Flatten axes for easy iteration
+    axes_flat = axes.flatten()
+
+    # Plot each parameter history
+    for idx, ((name, history), ax) in enumerate(zip(filtered.items(), axes_flat)):
+
+        # Get label
+        label = ""
+        gradient = gradients["aux"].get(name.strip("aux__"), None)
+        learning_rate = learning_rates.get(name.strip("aux__"), None)
+        label_parts = []
+        if gradient is not None:
+            label_parts.append(
+                rf"$\Delta_{{\theta}}(p_s) = {to_tex_scientific(gradient)}$"
+            )
+        if learning_rate is not None:
+            label_parts.append(
+                rf"$\eta = {to_tex_scientific(learning_rate)}$"
+            )
+
+        label = ", ".join(label_parts) if label_parts else None
+        ax.plot(steps, history, marker='o', linestyle='-', markersize=3, label=label)
+
+        ax.set_title(label)
+
+        aux_param_labels = plot_settings.jax.get("aux_param_labels", {}) if plot_settings else {}
+        fit_param_labels = plot_settings.jax.get("fit_param_labels", {}) if plot_settings else {}
+        param_labels = {**aux_param_labels, **fit_param_labels}
+        if "aux__" in name:
+            param = name.removeprefix("aux__")
+        if "mle__" in name:
+            param = name.removeprefix("mle__")
+        param_label = param_labels.get(param) if param_labels else name
+        if name == "pval":
+            param_label = r"$p$-value"
+
+        ax.set_ylabel(f"{param_label}", labelpad=10)
+        ax.set_xlabel("Number of iterations")
+        ax.tick_params(labelbottom=True)
+
+        formatter = ScalarFormatter(useMathText=True)
+        formatter.set_scientific(True)
+        formatter.set_powerlimits((0, 0))
+
+        for ax in axes_flat[:n_params]:
+            ax.yaxis.set_major_formatter(formatter)
+
         ax.grid(True, alpha=0.3)
 
     # Turn off any unused axes
