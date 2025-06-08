@@ -340,7 +340,7 @@ def Zprime_softcuts_jax_workshop(
     inner = (jets_jax - btag_thr) * 10.0   # still a (n_events × max_jets) JAX array
     soft_flags = jax.nn.sigmoid(inner)    # same shape (n_events × max_jets)
     soft_counts = jnp.sum(soft_flags, axis=1)      # shape (n_events,)
-    btag_cut   = jax.nn.sigmoid(soft_counts)       # shape (n_events,)
+    btag_cut   = jax.nn.sigmoid(soft_counts * 10)       # shape (n_events,)
 
     # ---------------------
     # Define differentiable sigmoid cuts
