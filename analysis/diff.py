@@ -998,7 +998,9 @@ class DifferentiableAnalysis(Analysis):
                     "gradients": gradients,
                 }, f)
 
-
+        # ——————————————————————————————————————————————————————————————
+        # Plotting of results
+        # ——————————————————————————————————————————————————————————————
         with open(f"{cache_dir}/cached_result.pkl", "rb") as f:
             cached_result = cloudpickle.load(f)
             pars = cached_result["params"]
@@ -1010,13 +1012,14 @@ class DifferentiableAnalysis(Analysis):
             gradients = cached_result["gradients"]
             histograms = cached_result["histograms"]
 
+        plot_settings = self.config.plotting
         if self.config.jax.explicit_optimization:
             if (self.config.jax.learning_rates) is  None:
                 lrs = {p: self.config.jax.learning_rate for p in pars["aux"]}
             else:
                 lrs = self.config.jax.learning_rates
 
-            plot_pval_history(pvals_history, aux_history, mle_history, gradients, lrs)
+            plot_pval_history(pvals_history, aux_history, mle_history, gradients, lrs, plot_settings=plot_settings)
 
         # ————————————————————————————————————————————————————————————————
         # 1) Prepare your inputs
@@ -1031,25 +1034,21 @@ class DifferentiableAnalysis(Analysis):
             self.config.channels,
         )
 
-        # Optional: define CMS‐style colors
-        process_colors = {
-            "ttbar_semilep": "#907AD6",
-            "signal":       "#DABFFF",
-            "ttbar_lep":  "#7FDEFF",
-            "ttbar_had":  "#2C2A4A",
-            "wjets":     "#72A1E5",
-        }
-
         # ————————————————————————————————————————————————————————————————
         # 2) Loop over channels and make pre-fit plots
         # ————————————————————————————————————————————————————————————————
         for ch_device in channel_data_list:
             ch = jax.device_get(ch_device)
+            channel_settings = [cfg_ch for cfg_ch in self.config.channels if cfg_ch.name == ch.name][0]
+            fit_obs = channel_settings.fit_observable
+            obs_label = [obss["label"] for obss in channel_settings["observables"] if obss["name"] == fit_obs][0]
+
             fig_prefit = plot_cms_histogram(
                 bin_edges    = ch.binning,
                 data         = ch.data_counts,
                 templates    = ch.processes,
-                process_colors = process_colors,
+                plot_settings = plot_settings,
+                xlabel        = obs_label,
                 #title        = f"Pre-Fit: {ch.binning.shape[0]-1} bins in {ch}",
             )
             fig_prefit.savefig(f"prefit_{ch.name}.png", dpi=150)
@@ -1059,12 +1058,17 @@ class DifferentiableAnalysis(Analysis):
         # 3) Post-fit plots with the MLE parameters
         # ————————————————————————————————————————————————————————————————
         for ch in channel_data_list:
+            channel_settings = [cfg_ch for cfg_ch in self.config.channels if cfg_ch.name == ch.name][0]
+            fit_obs = channel_settings.fit_observable
+            obs_label = [obss["label"] for obss in channel_settings["observables"] if obss["name"] == fit_obs][0]
+
             fig_postfit = plot_cms_histogram(
                 bin_edges     = ch.binning,
                 data          = ch.data_counts,
                 templates     = ch.processes,
                 fitted_pars   = mle_pars,
-                process_colors = process_colors,
+                plot_settings = plot_settings,
+                xlabel        = obs_label,
                 #title         = f"Post-Fit: {ch}",
             )
             fig_postfit.savefig(f"postfit_{ch.name}.png", dpi=150)

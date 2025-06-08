@@ -53,7 +53,7 @@ NormFactors:
     Nominal: 1.0
     Bounds: [0, 10]
 
-  # - Name: "ttbar_norm"
-  #   Samples: ["ttbar_semilep","ttbar_had","ttbar_lep"]
-  #   Nominal: 1.0
-  #   Bounds: [0, 10]
+  - Name: "ttbar_norm"
+    Samples: ["ttbar_semilep"]
+    Nominal: 1.0
+    Bounds: [0, 10]

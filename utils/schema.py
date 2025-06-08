@@ -578,6 +578,59 @@ class SystematicConfig(SubscriptableModel):
 
         return self
 
+class PlottingJaxConfig(SubscriptableModel):
+    aux_param_labels: Annotated[
+        Optional[dict[str, str]],
+        Field(
+            default=None,
+            description="LaTeX labels for auxiliary parameters in JAX‐scan plots"
+        )
+    ]
+    fit_param_labels: Annotated[
+        Optional[dict[str, str]],
+        Field(
+            default=None,
+            description="LaTeX labels for fit parameters in JAX‐scan plots"
+        )
+    ]
+
+
+class PlottingConfig(SubscriptableModel):
+    output_dir: Annotated[
+        Optional[str],
+        Field(
+            default=None,
+            description="Directory where plots will be written"
+        )
+    ]
+    process_colors: Annotated[
+        Optional[dict[str, str]],
+        Field(
+            default=None,
+            description="Hex colors for each process key"
+        )
+    ]
+    process_labels: Annotated[
+        Optional[dict[str, str]],
+        Field(
+            default=None,
+            description="LaTeX‐style legend labels for each process"
+        )
+    ]
+    process_order: Annotated[
+        Optional[List[str]],
+        Field(
+            default=None,
+            description="Draw/order sequence for processes"
+        )
+    ]
+    jax: Annotated[
+        Optional[PlottingJaxConfig],
+        Field(
+            default=None,
+            description="JAX‐specific label overrides"
+        )
+    ]
 
 # ------------------------
 # Top-level configuration
@@ -633,6 +686,14 @@ class Config(SubscriptableModel):
     statistics: Annotated[
         Optional[StatisticalConfig],
         Field(default=None, description="Statistical analysis settings"),
+    ]
+
+    plotting: Annotated[
+        Optional[PlottingConfig],
+        Field(
+            default=None,
+            description="Global plotting configuration (all keys are optional)"
+        )
     ]
 
     @model_validator(mode="after")

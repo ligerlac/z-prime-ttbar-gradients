@@ -18,7 +18,7 @@ LIST_OF_VARS = [
                 {
                     "name": "workshop_mtt",
                     "binning": "200,3000,20",
-                    "label": r"M(t\bar{t}) [GeV]",
+                    "label": r"$M(t\bar{t})$ [GeV]",
                     "function": get_mtt,
                     "use": [
                         ("Muon", None),
@@ -204,4 +204,43 @@ config = {
     "statistics": {
         "cabinetry_config": "cabinetry/cabinetry_config.yaml"
     },
+    "plotting": {
+        "output_dir": "plots/",
+        "process_colors": {
+            "ttbar_semilep": "#907AD6",
+            "signal":       "#DABFFF",
+            "ttbar_lep":  "#7FDEFF",
+            "ttbar_had":  "#2C2A4A",
+            "wjets":     "#72A1E5",
+        },
+        "process_labels": {
+            "ttbar_semilep": r"$t\bar{t}\,(lepton+jets)$",
+            "signal":       r"$Z^{\prime} \rightarrow t\bar{t}$",
+            "ttbar_lep":  r"$t\bar{t}\,(leptonic)$",
+            "ttbar_had":  r"$t\bar{t}\,(hadronic)$",
+            "wjets":     r"$W+\textrm{jets}$",
+        },
+        "process_order": [
+            "ttbar_had",
+            "ttbar_lep",
+            "ttbar_semilep",
+            "wjets",
+            "signal",
+        ],
+        "jax":{
+            "aux_param_labels": {
+                "met_threshold": r"$E_{T}^{miss}$ threshold",
+                "btag_threshold": r"$b$-tagging threshold",
+                "lep_ht_threshold": r"$H_{T}^{lep}$ threshold",
+                "kde_bandwidth": r"KDE bandwidth",
+            },
+            "fit_param_labels": {
+                "mu": r"$\mu$",
+                "norm_ttbar_semilep": r"$\kappa_{t\bar{t}}$",
+            }
+
+        }
+
+
+    }
 }

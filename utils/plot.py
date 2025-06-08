@@ -12,7 +12,7 @@ rcParams.update({
     "axes.formatter.use_mathtext": True,
     "text.usetex": True,
     "font.family":  "serif",
-    "font.serif":   ["Computer Modern Roman"],
+    #"font.serif":   ["Computer Modern Roman"],
 })
 
 def to_tex_scientific(x: float, sig: int = 2) -> str:
@@ -39,8 +39,7 @@ def plot_cms_histogram(
     data: ArrayLike,
     templates: Dict[str, ArrayLike],
     fitted_pars: Optional[Dict[str, float]] = None,
-    process_order: Optional[List[str]] = None,
-    process_colors: Optional[Dict[str, str]] = None,
+    plot_settings: Optional[Dict[str, str]] = None,
     show_signal: bool = True,
     figsize: Tuple[float, float] = (12, 12),
     ratio_ylim: Tuple[float, float] = (0.5, 1.5),
@@ -66,6 +65,7 @@ def plot_cms_histogram(
 
     # Determine process order
     keys = list(templates.keys())
+    process_order = plot_settings.get("process_order", None) if plot_settings else None
     if process_order is None:
         bg = sorted([k for k in keys if k.lower() != "signal"] )
         if "signal" in keys and show_signal:
@@ -106,13 +106,15 @@ def plot_cms_histogram(
     ax_main = fig.add_subplot(gs[0])
     ax_ratio = fig.add_subplot(gs[1], sharex=ax_main)
 
+    process_colors = plot_settings.get("process_colors", None) if plot_settings else None
+    process_labels = plot_settings.get("process_labels", None) if plot_settings else None
     # Main plot: stacked histograms
     hep.histplot(
         [scaled[p] for p in process_order],
         bin_edges,
         stack=True,
         ax=ax_main,
-        label=process_order,
+        label=[process_labels.get(p) if process_labels else p for p in process_order],
         color=[process_colors.get(p) if process_colors else None for p in process_order],
         edgecolor="black",
         histtype="fill",
@@ -132,7 +134,7 @@ def plot_cms_histogram(
         histtype='errorbar',
     )
 
-    ax_main.set_ylabel(ylabel)
+    ax_main.set_ylabel(ylabel, fontsize=20)
     ax_main.set_title(title)
     ax_main.legend(frameon=False, fontsize=16, ncol=2, loc='upper right')
 
@@ -152,8 +154,8 @@ def plot_cms_histogram(
     )
     ax_ratio.axhline(1.0, color='red', linestyle='--')
     ax_ratio.set_ylim(ratio_ylim)
-    ax_ratio.set_xlabel(xlabel)
-    ax_ratio.set_ylabel('Data / Pred.')
+    ax_ratio.set_xlabel(xlabel, fontsize=20)
+    ax_ratio.set_ylabel('Data / Pred.', fontsize=20, ha='center', va='center', labelpad=20)
 
     # Clean up ticks
     plt.setp(ax_main.get_xticklabels(), visible=False)
@@ -166,7 +168,9 @@ def plot_pval_history(pval_history,
                       mle_history,
                       gradients,
                       learning_rates,
-                      fname="pval_history.png"
+                      fname="pval_history.png",
+                      plot_settings=None,
+
                       ):
     """
     Plots p-value vs parameter histories in an ⌈√N⌉×⌈√N⌉ grid, where N is the total number
@@ -226,15 +230,20 @@ def plot_pval_history(pval_history,
         label = ", ".join(label_parts) if label_parts else None
         ax.plot(history, pval_history, marker='o', linestyle='-', markersize=5, label=label)
 
-        # if label is not None:
-        #     ax.legend(loc='best', fontsize=10, frameon=False)
         ax.set_title(label)
-
-        ax.set_xlabel(f"{name} value")
+        aux_param_labels = plot_settings.jax.get("aux_param_labels", {}) if plot_settings else {}
+        fit_param_labels = plot_settings.jax.get("fit_param_labels", {}) if plot_settings else {}
+        param_labels = {**aux_param_labels, **fit_param_labels}
+        if "aux__" in name:
+            param = name.removeprefix("aux__")
+        if "mle__" in name:
+            param = name.removeprefix("mle__")
+        param_label = param_labels.get(param) if param_labels else name
+        ax.set_xlabel(f"{param_label} value")
 
         # if this is in the first column (col index = 0), show ylabel
         if idx % grid_size == 0:
-            ax.set_ylabel("p-value")
+            ax.set_ylabel(r"$p$-value")
         else:
             # hide y-label text and tick labels
             ax.set_ylabel("")
