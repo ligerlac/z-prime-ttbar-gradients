@@ -29,7 +29,7 @@ from utils.jax_stats import (
     calculate_significance_relaxed,
     build_allbkg_channel_data_scalar
 )
-from utils.plot import plot_cms_histogram, plot_pval_history
+from utils.plot import plot_cms_histogram, plot_params_per_iter, plot_pval_history
 
 # -----------------------------------------------------------------------------
 # Backend & Logging Setup
@@ -251,7 +251,7 @@ class DifferentiableAnalysis(Analysis):
         logger.info("📊 Calculating significance from histograms...")
         histograms = nested_defaultdict_to_dict(process_histograms).copy()
         significance, mle_pars= calculate_significance_relaxed(histograms, self.channels, params)
-        logger.info(f"✅ Significance calculation complete")
+        logger.info(f"✅ Significance calculation complete\n")
         return significance, mle_pars
 
     # -------------------------------------------------------------------------
@@ -873,6 +873,32 @@ class DifferentiableAnalysis(Analysis):
         read_from_cache = self.config.general.read_from_cache
         run_and_cache = not read_from_cache
 
+        # Initialize parameters
+        aux_params = self.config.jax.params.copy()
+        all_params = {
+            "aux": aux_params,
+            "fit": {"mu": 1.0, "norm_ttbar_semilep": 1.0}
+        }
+        all_params["aux"] = {k: jnp.array(v) for k, v in all_params["aux"].items()}
+        all_params["fit"] = {k: jnp.array(v) for k, v in all_params["fit"].items()}
+        logger.info(f"Initial parameters: {pformat(all_params)}")
+
+        # Preprocess events
+        proced_events = self.run_analysis_processing(
+            all_params,
+            fileset,
+            read_from_cache=read_from_cache,
+            run_and_cache=run_and_cache,
+            cache_dir=cache_dir,
+        )
+        logger.info("✅ Event preprocessing complete\n")
+
+        logger.info(" === Running untraced siginificance calculation to get initial histograms.. ===")
+        init_pval, init_mle_pars = self.run_histogram_and_significance(
+            all_params, proced_events
+        )
+        init_histograms = self.histograms
+
         if not self.config.general.run_plots_only:
             logger.info("Starting cut optimization...")
 
@@ -883,27 +909,8 @@ class DifferentiableAnalysis(Analysis):
             logger.info(f"Processes: {processes}")
             logger.info(f"Systematics: {systematics}")
 
-            # Initialize parameters
-            aux_params = self.config.jax.params.copy()
-            all_params = {
-                "aux": aux_params,
-                "fit": {"mu": 1.0, "norm_ttbar_semilep": 1.0}
-            }
-            all_params["aux"] = {k: jnp.array(v) for k, v in all_params["aux"].items()}
-            all_params["fit"] = {k: jnp.array(v) for k, v in all_params["fit"].items()}
-            logger.info(f"Initial parameters: {pformat(all_params)}")
-
-            # Preprocess events
-            proced_events = self.run_analysis_processing(
-                all_params,
-                fileset,
-                read_from_cache=read_from_cache,
-                run_and_cache=run_and_cache,
-                cache_dir=cache_dir,
-            )
-            logger.info("✅ Event preprocessing complete")
-
-            (init_pval, init_mle_pars), gradients = jax.value_and_grad(
+            logger.info(" === Running initial siginificance calculation to get gradients.. ===")
+            (_, _), gradients = jax.value_and_grad(
                 self.run_histogram_and_significance,
                 has_aux=True,
                 argnums=0,
@@ -924,7 +931,7 @@ class DifferentiableAnalysis(Analysis):
             else:
                 tx = optax.adam(learning_rate=self.config.jax.learning_rate)
 
-            logger.info(f"Starting gradient-based optimisation")
+            logger.info(f"== Starting gradient-based optimisation ===")
 
             initial_params = all_params.copy()
             # Optimization loop
@@ -1020,6 +1027,7 @@ class DifferentiableAnalysis(Analysis):
                 lrs = self.config.jax.learning_rates
 
             plot_pval_history(pvals_history, aux_history, mle_history, gradients, lrs, plot_settings=plot_settings)
+            plot_params_per_iter(pvals_history, aux_history, mle_history,  gradients, lrs, plot_settings=plot_settings)
 
         # ————————————————————————————————————————————————————————————————
         # 1) Prepare your inputs
@@ -1031,6 +1039,12 @@ class DifferentiableAnalysis(Analysis):
         # Build the ChannelData objects
         channel_data_list, _ = build_allbkg_channel_data_scalar(
             histograms,
+            self.config.channels,
+        )
+
+        # Build the ChannelData objects
+        init_channel_data_list, _ = build_allbkg_channel_data_scalar(
+            init_histograms,
             self.config.channels,
         )
 
@@ -1066,13 +1080,31 @@ class DifferentiableAnalysis(Analysis):
                 bin_edges     = ch.binning,
                 data          = ch.data_counts,
                 templates     = ch.processes,
-                fitted_pars   = mle_pars,
+                fitted_pars   = init_mle_pars,
                 plot_settings = plot_settings,
                 xlabel        = obs_label,
                 #title         = f"Post-Fit: {ch}",
             )
             fig_postfit.savefig(f"postfit_{ch.name}.png", dpi=150)
 
+        # ————————————————————————————————————————————————————————————————
+        # 4) Post-fit plots with the initial MLE parameters and histograms
+        # ————————————————————————————————————————————————————————————————
+        for ch in init_channel_data_list:
+            channel_settings = [cfg_ch for cfg_ch in self.config.channels if cfg_ch.name == ch.name][0]
+            fit_obs = channel_settings.fit_observable
+            obs_label = [obss["label"] for obss in channel_settings["observables"] if obss["name"] == fit_obs][0]
+
+            fig_postfit = plot_cms_histogram(
+                bin_edges     = ch.binning,
+                data          = ch.data_counts,
+                templates     = ch.processes,
+                fitted_pars   = init_mle_pars,
+                plot_settings = plot_settings,
+                xlabel        = obs_label,
+                #title         = f"Post-Fit: {ch}",
+            )
+            fig_postfit.savefig(f"init_postfit_{ch.name}.png", dpi=150)
 
 def make_apply_param_updates(param_update_rules: dict) -> callable:
     """
