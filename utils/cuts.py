@@ -185,9 +185,9 @@ def Zprime_hardcuts(
     # ---------------------
     # Object count requirements
     # ---------------------
-    selections.add("exactly_1mu", ak.num(muons, axis=1) == 1)
-    selections.add("atleast_1jet", ak.num(jets, axis=1) > 0)
-    selections.add("atleast_1fj", ak.num(fatjets, axis=1) > 0)
+    selections.add("exactly_1mu", ak.count(muons.pt, axis=1) == 1)
+    selections.add("atleast_1jet", ak.count(jets.pt, axis=1) > 0)
+    selections.add("atleast_1fj", ak.count(fatjets.pt, axis=1) > 0)
 
     # ---------------------
     # Composite region selection
@@ -323,17 +323,34 @@ def Zprime_softcuts_jax_workshop(
     # for event in events:
     #     for muon in event:
     #         pass
+    #    (Here `pad_to` could be the maximum number of jets across all events.)
+    max_jets = 8   # for example
+    padded = ak.pad_none(jets, target=max_jets, axis=1, clip=True)
+    # Convert “None” slots to zero‐score
+    padded = ak.fill_none(padded, -1.0)
+    # Now we have an array of shape (n_events, max_jets) as Awkward; convert to JAX:
+    jets_jax = jnp.asarray(ak.to_jax(padded))  # dtype=float32 or float64
+
+    # 2) Compute “soft count of b‐tagged jets”:
+    btag_thr = params["btag_threshold"]  # e.g. 0.5 or whatever; make sure it is a JAX scalar
+
+    # We do “(score − thr)*10” inside a sigmoid, so that any score ≳ thr becomes ~1,
+    # and any score ≲ thr becomes ~0. Then we sum across the jet dimension
+    # to get an approximate “number of jets above threshold.”
+    inner = (jets_jax - btag_thr) * 10.0   # still a (n_events × max_jets) JAX array
+    soft_flags = jax.nn.sigmoid(inner)    # same shape (n_events × max_jets)
+    soft_counts = jnp.sum(soft_flags, axis=1)      # shape (n_events,)
+    btag_cut   = jax.nn.sigmoid(soft_counts)       # shape (n_events,)
+
     # ---------------------
     # Define differentiable sigmoid cuts
     # ---------------------
     cuts = {
         "met_cut": jax.nn.sigmoid(
-            (ak.to_jax(met) - params["met_threshold"]) / params["met_scale"]
+            (ak.to_jax(met) - params["met_threshold"]) / 25.0
         ),
-        # # Additional cuts can be added here similarly
-        # 'btag_cut': ak.sum(jax.nn.sigmoid(
-        # (jets - params['btag_threshold']) * 10
-        # ), axis=1),
+        'btag_cut': btag_cut,
+        # inner sigmoid ~ 1 for btag > threshold ~0 for < threshold (step) sum is then # of jets and then we relax
         # 'lep_ht_cut': jax.nn.sigmoid(
         #     (lep_ht - params['lep_ht_threshold']) / 50.0
     }
@@ -341,7 +358,7 @@ def Zprime_softcuts_jax_workshop(
     # ---------------------
     # Combine cut weights multiplicatively (AND logic)
     # ---------------------
-    cut_values = jnp.stack([cuts["met_cut"]])
+    cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"]])
     selection_weight = jnp.prod(cut_values, axis=0)
     return selection_weight
 

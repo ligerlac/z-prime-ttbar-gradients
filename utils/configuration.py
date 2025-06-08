@@ -17,8 +17,8 @@ from utils.systematics import (
 LIST_OF_VARS = [
                 {
                     "name": "workshop_mtt",
-                    "binning": "0,3000,50",
-                    "label": r"M(t\bar{t}) [GeV]",
+                    "binning": "200,3000,20",
+                    "label": r"$M(t\bar{t})$ [GeV]",
                     "function": get_mtt,
                     "use": [
                         ("Muon", None),
@@ -40,6 +40,7 @@ config = {
         "run_histogramming": False,
         "run_statistics": True,
         "run_systematics": False,
+        "run_plots_only": True,
         "read_from_cache": True,
         "output_dir": "output/",
         "preprocessed_dir": "./preproc_uproot/z-prime-ttbar-data/",
@@ -67,6 +68,7 @@ config = {
         "optimize": True,
         "learning_rate": 0.01,
         "max_iterations": 5,
+        'explicit_optimization': True,
         "soft_selection": {
             "function": Zprime_softcuts_jax_workshop,
             "use": [
@@ -78,48 +80,23 @@ config = {
         },
         "params": {
             'met_threshold': 50.0,
-            'met_scale': 25.0,
             'btag_threshold': 0.5,
             'lep_ht_threshold': 150.0,
-            'muon_weight': 1.0,
-            'jet_weight': 0.1,
-            'met_weight': 1.0,
             'kde_bandwidth': 10.0,
-            # Process-specific scales (cross-section * luminosity / n_events)
-            'signal_scale': 1.0,
-            'ttbar_scale': 1.0,
-            'wjets_scale': 1.0,
-            'other_scale': 1.0,
-            # Systematic uncertainties
-            'signal_systematic': 0.05,  # 5% on signal
-            'background_systematic': 0.1,  # 10% on background
         },
         "param_updates": {
             # Thresholds: clip within physics-motivated bounds
             "met_threshold": lambda x, d: jnp.clip(x + d, 20.0, 150.0),
-            "btag_threshold": lambda x, d: jnp.clip(x + d, 0.1, 0.9),
+            "btag_threshold": lambda x, d: jnp.clip(x + d, 0.0, 3.0),
             "lep_ht_threshold": lambda x, d: jnp.clip(x + d, 50.0, 300.0),
-
-            # Sigmoid scaling factors: constrain to non-degenerate reasonable positive values
-            "met_scale": lambda x, d: jnp.clip(x + d, 1.0, 100.0),
-
-            # Feature weights: allow any positive value, enforce minimum
-            "muon_weight": lambda x, d: jnp.maximum(x + d, 0.01),
-            "jet_weight": lambda x, d: jnp.maximum(x + d, 0.01),
-            "met_weight": lambda x, d: jnp.maximum(x + d, 0.01),
-
             # KDE smoothing: keep bandwidth strictly positive and reasonably sized
             "kde_bandwidth": lambda x, d: jnp.clip(x + d, 1.0, 50.0),
-
-            # Process normalizations: float freely, but constrain to positive domain
-            "signal_scale": lambda x, d: jnp.maximum(x + d, 0.01),
-            "ttbar_scale": lambda x, d: jnp.maximum(x + d, 0.01),
-            "wjets_scale": lambda x, d: jnp.maximum(x + d, 0.01),
-            "other_scale": lambda x, d: jnp.maximum(x + d, 0.01),
-
-            # Systematic uncertainties: must remain in [0, 1]
-            "signal_systematic": lambda x, d: jnp.clip(x + d, 0.0, 1.0),
-            "background_systematic": lambda x, d: jnp.clip(x + d, 0.0, 1.0),
+        },
+        'learning_rates':{
+            'met_threshold': 0.1,
+            'btag_threshold': 0.01,
+            'lep_ht_threshold': 0.1,
+            'kde_bandwidth': 0.1,
         }
     },
     "baseline_selection": {
@@ -227,4 +204,43 @@ config = {
     "statistics": {
         "cabinetry_config": "cabinetry/cabinetry_config.yaml"
     },
+    "plotting": {
+        "output_dir": "plots/",
+        "process_colors": {
+            "ttbar_semilep": "#907AD6",
+            "signal":       "#DABFFF",
+            "ttbar_lep":  "#7FDEFF",
+            "ttbar_had":  "#2C2A4A",
+            "wjets":     "#72A1E5",
+        },
+        "process_labels": {
+            "ttbar_semilep": r"$t\bar{t}\,(lepton+jets)$",
+            "signal":       r"$Z^{\prime} \rightarrow t\bar{t}$",
+            "ttbar_lep":  r"$t\bar{t}\,(leptonic)$",
+            "ttbar_had":  r"$t\bar{t}\,(hadronic)$",
+            "wjets":     r"$W+\textrm{jets}$",
+        },
+        "process_order": [
+            "ttbar_had",
+            "ttbar_lep",
+            "ttbar_semilep",
+            "wjets",
+            "signal",
+        ],
+        "jax":{
+            "aux_param_labels": {
+                "met_threshold": r"$E_{T}^{miss}$ threshold",
+                "btag_threshold": r"$b$-tagging threshold",
+                "lep_ht_threshold": r"$H_{T}^{lep}$ threshold",
+                "kde_bandwidth": r"KDE bandwidth",
+            },
+            "fit_param_labels": {
+                "mu": r"$\mu$",
+                "norm_ttbar_semilep": r"$\kappa_{t\bar{t}}$",
+            }
+
+        }
+
+
+    }
 }
