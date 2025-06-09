@@ -76,6 +76,7 @@ config = {
                 ("Jet", "btagDeepB"),
                 ("FatJet", "pt"),
                 ("PuppiMET", "pt"),
+                ("Jet", "mass"),
             ],
         },
         "params": {
@@ -99,6 +100,7 @@ config = {
             # 'lep_ht_threshold': 0.1,
             'lep_ht_threshold': 1.0,
             'kde_bandwidth': 0.1,
+            'nn': 0.0005,
         }
     },
     "baseline_selection": {

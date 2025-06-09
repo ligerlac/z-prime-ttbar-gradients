@@ -7,6 +7,7 @@ import warnings
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 import hashlib
+import pickle
 import cloudpickle
 from pprint import pformat
 from typing import Any, Dict, Literal, List, Tuple, Optional
@@ -747,7 +748,6 @@ class DifferentiableAnalysis(Analysis):
                             is_mc=(dataset != "data"),
                         )
 
-
                 # Find skimmed files
                 skimmed_files = glob.glob(f"{output_dir}/part*.root")
                 skimmed_files = [f"{f}:{tree}" for f in skimmed_files]
@@ -873,13 +873,24 @@ class DifferentiableAnalysis(Analysis):
         read_from_cache = self.config.general.read_from_cache
         run_and_cache = not read_from_cache
 
+        with open("model.pkl", 'rb') as f:
+            initial_nn_params = pickle.load(f)
+        initial_nn_params = jax.tree.map(jnp.array, initial_nn_params)
+
         # Initialize parameters
         aux_params = self.config.jax.params.copy()
+        aux_params["nn"] = initial_nn_params
+
         all_params = {
             "aux": aux_params,
-            "fit": {"mu": 1.0, "norm_ttbar_semilep": 1.0}
+            "fit": {"mu": 1.0, "norm_ttbar_semilep": 1.0},
+            # "nn": initial_nn_params
         }
-        all_params["aux"] = {k: jnp.array(v) for k, v in all_params["aux"].items()}
+
+        for k, v in all_params["aux"].items():
+            if k=="nn":
+                continue  # nn is already jax arrays
+            all_params["aux"][k] = jnp.array(v)
         all_params["fit"] = {k: jnp.array(v) for k, v in all_params["fit"].items()}
         logger.info(f"Initial parameters: {pformat(all_params)}")
 
@@ -969,8 +980,12 @@ class DifferentiableAnalysis(Analysis):
 
                         pvals_history.append(float(state.value))
                         for k, v in pars["aux"].items():
+                            if k == "nn":
+                                continue
                             aux_history[k].append(float(v))
                         for k, v in state.aux.items():
+                            if k == "nn":
+                                continue
                             mle_history[k].append(float(v))
 
                 else:
@@ -981,14 +996,15 @@ class DifferentiableAnalysis(Analysis):
                 return -state.value, mle_pars, pars
 
             # Set up optimizer
-            final_pval, mle_pars, pars = optimize_and_log(n_steps=self.config.jax.max_iterations)
+            # final_pval, mle_pars, pars = optimize_and_log(n_steps=self.config.jax.max_iterations)
+            final_pval, mle_pars, pars = optimize_and_log(n_steps=50)
+            # final_pval, mle_pars, pars = optimize_and_log(n_steps=2)
             logger.info(f"Initial p-value before optimization: {init_pval:.4f}")
             logger.info(f"Final p-value after optimization: {final_pval:.4f}")
             logger.info(f"Improvement in p-value: {(final_pval-init_pval)*100/init_pval:.4f}%")
             logger.info(f"Initial parameters: {initial_params}")
             logger.info(f"Final parameters: {pars}")
             logger.info(f"Gradients: {gradients}")
-
 
             _ = self.run_histogram_and_significance(
                 all_params, proced_events
@@ -1004,6 +1020,10 @@ class DifferentiableAnalysis(Analysis):
                     "mle_history": mle_history,
                     "gradients": gradients,
                 }, f)
+            numpy_params = jax.tree.map(np.array, pars["aux"]["nn"])
+            with open("model-after-optimization.pkl", 'wb') as f:
+                pickle.dump(numpy_params, f)
+
 
         # ——————————————————————————————————————————————————————————————
         # Plotting of results
