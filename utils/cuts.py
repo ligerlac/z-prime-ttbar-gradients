@@ -288,6 +288,7 @@ def Zprime_softcuts_jax_workshop(
     jets: ak.Array,
     fatjets: ak.Array,
     met: ak.Array,
+    jet_mass: ak.Array,
     params: dict
 ) -> jnp.ndarray:
     """
@@ -314,15 +315,42 @@ def Zprime_softcuts_jax_workshop(
     jnp.ndarray
         Per-event array of selection weights (range [0, 1]) for gradient flow.
     """
-    # met_pt = met.pt
-    # jets_btag = jets.btagDeepB
-    # lep_ht = muons.pt + met_pt
-    #met_pt = met
-    #jets_btag = jets
-    #lep_ht = muons + met
-    # for event in events:
-    #     for muon in event:
-    #         pass
+    # print(f"{list(params.keys())=}")
+
+    def forward(params, x):
+        """Forward pass through the network"""
+        # Layer 1
+        h1 = jnp.tanh(jnp.dot(x, params['W1']) + params['b1'])
+        
+        # Layer 2  
+        h2 = jnp.tanh(jnp.dot(h1, params['W2']) + params['b2'])
+        
+        # Layer 3 (output)
+        logits = jnp.dot(h2, params['W3']) + params['b3']
+        
+        return logits.squeeze()
+
+    var_scale_dict = {
+        "n_jet": 1./10.,
+        "leading_jet_mass": 1./20.,
+        "subleading_jet_mass": 1./10.,
+    }
+
+    padded_jet_mass = ak.pad_none(jet_mass, target=2, axis=1, clip=True)
+    padded_jet_mass = ak.fill_none(padded_jet_mass, 0.0)  # fill None with 0.0
+
+    n_jet = ak.to_jax(ak.num(jets, axis=1)) * var_scale_dict["n_jet"]
+    leading_jet_mass = ak.to_jax(jet_mass[:, 0]) * var_scale_dict["leading_jet_mass"]
+    subleading_jet_mass = ak.to_jax(padded_jet_mass[:, 1]) * var_scale_dict["subleading_jet_mass"]
+     
+    X = jnp.column_stack([
+        n_jet,
+        leading_jet_mass,
+        subleading_jet_mass
+    ])  # shape (n_events, 3)
+
+    mva_score = forward(params["nn"], X)
+
     #    (Here `pad_to` could be the maximum number of jets across all events.)
     max_jets = 8   # for example
     padded = ak.pad_none(jets, target=max_jets, axis=1, clip=True)
@@ -357,17 +385,18 @@ def Zprime_softcuts_jax_workshop(
         'lep_ht_cut': jax.nn.sigmoid(
             (lep_ht - params['lep_ht_threshold']) / 5.0
         ),
+        'mva_cut': jax.nn.sigmoid(
+            (mva_score - 0.05) * 10.0
+        ),
     }
-
     # ---------------------
     # Combine cut weights multiplicatively (AND logic)
     # ---------------------
-    print(f"{cuts['met_cut'].shape=}")
-    print(f"{cuts['btag_cut'].shape=}")
-    print(f"{cuts['lep_ht_cut'].shape=}")
-    cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"], cuts["lep_ht_cut"]])
+    cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"], cuts["lep_ht_cut"], cuts["mva_cut"]])
+    # cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"], cuts["lep_ht_cut"]])
     selection_weight = jnp.prod(cut_values, axis=0)
     return selection_weight
+
 
 from coffea.analysis_tools import PackedSelection
 import awkward as ak
@@ -464,6 +493,9 @@ def Zprime_softcuts_SR_tag(
     -------
     PackedSelection
     """
+    print("##############################################################")
+    print("#############   Zprime_softcuts_SR_tag called   ##############")
+    print("##############################################################")
     selections = PackedSelection(dtype="uint64")
     lep_ht = muons.pt + met.pt
 
@@ -504,6 +536,10 @@ def Zprime_softcuts_SR_notag(
     -------
     PackedSelection
     """
+    print("##############################################################")
+    print("#############   Zprime_softcuts_SR_notag called   ##############")
+    print("##############################################################")
+
     selections = PackedSelection(dtype="uint64")
     lep_ht = muons.pt + met.pt
 

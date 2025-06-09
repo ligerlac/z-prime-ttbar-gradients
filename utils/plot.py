@@ -174,13 +174,14 @@ def plot_pval_history(pval_history,
     """
     # Combine into one mapping
     param_history = {
-        **{f"aux__{k}": hist for k, hist in aux_history.items()},
+        **{f"aux__{k}": hist for k, hist in aux_history.items() if k != "nn"},
         **{f"mle__{k}": hist for k, hist in mle_history.items()},
     }
 
     # filter out any whose history is constant
     filtered = {}
     for name, hist in param_history.items():
+        print(f"Checking parameter {name} with history length {len(hist)}")
         arr = np.asarray(hist)
         if not np.allclose(arr, arr[0]):
             filtered[name] = hist
@@ -277,7 +278,7 @@ def plot_params_per_iter(pval_history,
     """
     # Combine into one mapping
     param_history = {
-        **{f"aux__{k}": hist for k, hist in aux_history.items()},
+        **{f"aux__{k}": hist for k, hist in aux_history.items() if k != "nn"},
         **{f"mle__{k}": hist for k, hist in mle_history.items()},
     }
 
