@@ -288,7 +288,7 @@ def plot_params_per_iter(pval_history,
         if not np.allclose(arr, arr[0]):
             filtered[name] = hist
 
-    filtered["pval"] = -1*np.asarray(pval_history)  # add pval history
+    filtered["pval"] = np.asarray(pval_history)  # add pval history
     if not filtered:
         print("No parameters changed; nothing to plot.")
         return

@@ -14,7 +14,6 @@ def lumi_mask(
     lumifile: str,
     run: ak.Array,
     lumiBlock: ak.Array,
-    verbose: bool = False,
     jax: bool = False
 ) -> ak.Array:
     """
@@ -314,16 +313,7 @@ def Zprime_softcuts_jax_workshop(
     jnp.ndarray
         Per-event array of selection weights (range [0, 1]) for gradient flow.
     """
-    # met_pt = met.pt
-    # jets_btag = jets.btagDeepB
-    # lep_ht = muons.pt + met_pt
-    #met_pt = met
-    #jets_btag = jets
-    #lep_ht = muons + met
-    # for event in events:
-    #     for muon in event:
-    #         pass
-    #    (Here `pad_to` could be the maximum number of jets across all events.)
+    # Choose a fixed numebr of jets
     max_jets = 8   # for example
     padded = ak.pad_none(jets, target=max_jets, axis=1, clip=True)
     # Convert “None” slots to zero‐score
@@ -353,7 +343,6 @@ def Zprime_softcuts_jax_workshop(
             (ak.to_jax(met) - params["met_threshold"]) / 25.0
         ),
         'btag_cut': btag_cut,
-        # inner sigmoid ~ 1 for btag > threshold ~0 for < threshold (step) sum is then # of jets and then we relax
         'lep_ht_cut': jax.nn.sigmoid(
             (lep_ht - params['lep_ht_threshold']) / 5.0
         ),
@@ -362,15 +351,10 @@ def Zprime_softcuts_jax_workshop(
     # ---------------------
     # Combine cut weights multiplicatively (AND logic)
     # ---------------------
-    print(f"{cuts['met_cut'].shape=}")
-    print(f"{cuts['btag_cut'].shape=}")
-    print(f"{cuts['lep_ht_cut'].shape=}")
     cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"], cuts["lep_ht_cut"]])
     selection_weight = jnp.prod(cut_values, axis=0)
     return selection_weight
 
-from coffea.analysis_tools import PackedSelection
-import awkward as ak
 
 # ===========================================================
 # Zprime Selection Regions Based on Physics Paper Definitions

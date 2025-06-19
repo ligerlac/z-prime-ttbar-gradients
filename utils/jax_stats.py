@@ -227,10 +227,6 @@ def calculate_significance_relaxed(
         model,
         init_pars = params,
         return_mle_pars = True,
-        # bounds = {
-        #     "mu": (0.0, jnp.inf),  # mu >= 0
-        #     "norm_ttbar_semilep": (0.0, jnp.inf),  # ttbar normalization >= 0
-        # },
         test_stat = "q0",   # discovery test
     )
 
