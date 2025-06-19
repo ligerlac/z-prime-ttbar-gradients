@@ -930,7 +930,7 @@ class DifferentiableAnalysis(Analysis):
             # Define objective function (negative significance)
             def objective(params):
                 p0, mle_pars = self.run_histogram_and_significance(params, proced_events)
-                return -p0, mle_pars
+                return p0, mle_pars
 
             # Create parameter clamping function
             clamp_fn = make_apply_param_updates(self.config.jax.param_updates)

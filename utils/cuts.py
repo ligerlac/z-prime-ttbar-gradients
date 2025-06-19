@@ -14,7 +14,6 @@ def lumi_mask(
     lumifile: str,
     run: ak.Array,
     lumiBlock: ak.Array,
-    verbose: bool = False,
     jax: bool = False
 ) -> ak.Array:
     """
@@ -315,19 +314,18 @@ def Zprime_softcuts_jax_workshop(
     jnp.ndarray
         Per-event array of selection weights (range [0, 1]) for gradient flow.
     """
-    # print(f"{list(params.keys())=}")
 
     def forward(params, x):
         """Forward pass through the network"""
         # Layer 1
         h1 = jnp.tanh(jnp.dot(x, params['W1']) + params['b1'])
-        
-        # Layer 2  
+
+        # Layer 2
         h2 = jnp.tanh(jnp.dot(h1, params['W2']) + params['b2'])
-        
+
         # Layer 3 (output)
         logits = jnp.dot(h2, params['W3']) + params['b3']
-        
+
         return logits.squeeze()
 
     var_scale_dict = {
@@ -342,7 +340,6 @@ def Zprime_softcuts_jax_workshop(
     n_jet = ak.to_jax(ak.num(jets, axis=1)) * var_scale_dict["n_jet"]
     leading_jet_mass = ak.to_jax(jet_mass[:, 0]) * var_scale_dict["leading_jet_mass"]
     subleading_jet_mass = ak.to_jax(padded_jet_mass[:, 1]) * var_scale_dict["subleading_jet_mass"]
-     
     X = jnp.column_stack([
         n_jet,
         leading_jet_mass,
@@ -351,7 +348,7 @@ def Zprime_softcuts_jax_workshop(
 
     mva_score = forward(params["nn"], X)
 
-    #    (Here `pad_to` could be the maximum number of jets across all events.)
+    # Choose a fixed numebr of jets
     max_jets = 8   # for example
     padded = ak.pad_none(jets, target=max_jets, axis=1, clip=True)
     # Convert “None” slots to zero‐score
@@ -381,7 +378,6 @@ def Zprime_softcuts_jax_workshop(
             (ak.to_jax(met) - params["met_threshold"]) / 25.0
         ),
         'btag_cut': btag_cut,
-        # inner sigmoid ~ 1 for btag > threshold ~0 for < threshold (step) sum is then # of jets and then we relax
         'lep_ht_cut': jax.nn.sigmoid(
             (lep_ht - params['lep_ht_threshold']) / 5.0
         ),
@@ -393,13 +389,9 @@ def Zprime_softcuts_jax_workshop(
     # Combine cut weights multiplicatively (AND logic)
     # ---------------------
     cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"], cuts["lep_ht_cut"], cuts["mva_cut"]])
-    # cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"], cuts["lep_ht_cut"]])
     selection_weight = jnp.prod(cut_values, axis=0)
     return selection_weight
 
-
-from coffea.analysis_tools import PackedSelection
-import awkward as ak
 
 # ===========================================================
 # Zprime Selection Regions Based on Physics Paper Definitions
@@ -493,9 +485,9 @@ def Zprime_softcuts_SR_tag(
     -------
     PackedSelection
     """
-    print("##############################################################")
-    print("#############   Zprime_softcuts_SR_tag called   ##############")
-    print("##############################################################")
+    print("================================================================")
+    print("==============   Zprime_softcuts_SR_tag called   ==============")
+    print("================================================================")
     selections = PackedSelection(dtype="uint64")
     lep_ht = muons.pt + met.pt
 
@@ -536,9 +528,9 @@ def Zprime_softcuts_SR_notag(
     -------
     PackedSelection
     """
-    print("##############################################################")
-    print("#############   Zprime_softcuts_SR_notag called   ##############")
-    print("##############################################################")
+    print("================================================================")
+    print("=============   Zprime_softcuts_SR_notag called   ==============")
+    print("================================================================")
 
     selections = PackedSelection(dtype="uint64")
     lep_ht = muons.pt + met.pt
