@@ -930,7 +930,7 @@ class DifferentiableAnalysis(Analysis):
             # Define objective function (negative significance)
             def objective(params):
                 p0, mle_pars = self.run_histogram_and_significance(params, proced_events)
-                return p0, mle_pars
+                return -p0, mle_pars
 
             # Create parameter clamping function
             clamp_fn = make_apply_param_updates(self.config.jax.param_updates)
@@ -950,9 +950,8 @@ class DifferentiableAnalysis(Analysis):
             aux_history = {k: [] for k in all_params["aux"]}
             mle_history = {k: [] for k in init_mle_pars}
             def optimize_and_log(n_steps: int = 100):
-                # all_params is your initial pytree: {"aux": {...}, "fit": {...}}
+                # all_params is the initial pytree: {"aux": {...}, "fit": {...}}
                 pars = initial_params
-                # value_and_grad=True makes solver.state contain .value (scalar) and .grad (pytree)
                 solver = OptaxSolver(fun=objective, opt=tx,
                                     jit=False, has_aux=True,
                                     value_and_grad=False,
@@ -996,9 +995,7 @@ class DifferentiableAnalysis(Analysis):
                 return -state.value, mle_pars, pars
 
             # Set up optimizer
-            # final_pval, mle_pars, pars = optimize_and_log(n_steps=self.config.jax.max_iterations)
-            final_pval, mle_pars, pars = optimize_and_log(n_steps=50)
-            # final_pval, mle_pars, pars = optimize_and_log(n_steps=2)
+            final_pval, mle_pars, pars = optimize_and_log(n_steps=self.config.jax.max_iterations)
             logger.info(f"Initial p-value before optimization: {init_pval:.4f}")
             logger.info(f"Final p-value after optimization: {final_pval:.4f}")
             logger.info(f"Improvement in p-value: {(final_pval-init_pval)*100/init_pval:.4f}%")

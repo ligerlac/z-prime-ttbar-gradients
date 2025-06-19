@@ -67,7 +67,7 @@ config = {
     "jax": {
         "optimize": True,
         "learning_rate": 0.01,
-        "max_iterations": 100,
+        "max_iterations": 50,
         'explicit_optimization': True,
         "soft_selection": {
             "function": Zprime_softcuts_jax_workshop,
@@ -94,10 +94,8 @@ config = {
             "kde_bandwidth": lambda x, d: jnp.clip(x + d, 1.0, 50.0),
         },
         'learning_rates':{
-            # 'met_threshold': 0.1,
             'met_threshold': 1.0,
             'btag_threshold': 0.01,
-            # 'lep_ht_threshold': 0.1,
             'lep_ht_threshold': 1.0,
             'kde_bandwidth': 0.1,
             'nn': 0.0005,
