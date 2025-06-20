@@ -1,4 +1,5 @@
 import copy
+from enum import Enum
 from typing import Annotated, Callable, List, Literal, Optional, Tuple, Union
 
 from omegaconf import OmegaConf
@@ -116,6 +117,13 @@ class GeneralConfig(SubscriptableModel):
         Field(
             default=False,
             description="Whether to skip all steps except plotting",
+        ),
+    ]
+    run_mva_training: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Whether to run MVA training step",
         ),
     ]
     read_from_cache: Annotated[
@@ -632,6 +640,233 @@ class PlottingConfig(SubscriptableModel):
         )
     ]
 
+# =================================
+# MVA configuration
+# =================================
+
+# ========
+# Activation functions
+# ========
+class ActivationKey(str, Enum):
+    relu    = "relu"
+    tanh    = "tanh"
+    sigmoid = "sigmoid"
+
+# ========
+# Gradient optimisation configuration
+# ========
+class GradOptimConfig(SubscriptableModel):
+    optimise: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Include this MVA’s weights in the global optimisation"
+        ),
+    ]
+    learning_rate: Annotated[
+        float,
+        Field(
+            default=1e-3,
+            description="Learning rate for this MVA when optimise=True"
+        ),
+    ]
+
+# ========
+# Network layers configuration
+# ========
+class LayerConfig(SubscriptableModel):
+    ndim: Annotated[
+        int,
+        Field(..., description="Output dimension of this layer")
+    ]
+    activation: Annotated[
+        Union[Callable, ActivationKey],
+        Field(
+            ...,
+            description=(
+                "For framework='jax', a Python callable; "
+                "for TF/Keras, one of the ActivationKey enums"
+            )
+        ),
+    ]
+    weights: Annotated[
+        str,
+        Field(..., description="Parameter name for the weight tensor in this layer")
+    ]
+    bias: Annotated[
+        str,
+        Field(..., description="Parameter name for the bias vector in this layer")
+    ]
+
+# ========
+# Features to train the MVA on
+# ========
+class FeatureConfig(SubscriptableModel):
+    name: Annotated[
+        str,
+        Field(..., description="Feature name")
+    ]
+    label: Annotated[
+        Optional[str],
+        Field(
+            default=None,
+            description="Optional label for plots (e.g. LaTeX string)"
+        )
+    ]
+    function: Annotated[
+        Callable,
+        Field(..., description="Callable extracting the raw feature (e.g. lambda mva: mva.n_jet)")
+    ]
+    use: Annotated[
+        List[ObjVar],
+        Field(..., description="(object, variable) pairs to pass into function, e.g. [('mva', None)]")
+    ]
+    scale: Annotated[
+        Optional[Callable],
+        Field(
+            default=None,
+            description="Optional callable to scale the extracted feature"
+        )
+    ]
+    binning: Annotated[
+        Optional[Union[str, List[float]]],
+        Field(
+            default=None,
+            description=(
+                "Optional histogramming binning for diagnostics: "
+                "either 'low,high,nbins' or explicit edge list"
+            )
+        )
+    ]
+
+# ========
+# Full MVA configuration
+# ========
+class MVAConfig(SubscriptableModel):
+    name: Annotated[
+        str,
+        Field(..., description="Unique name for this neural network")
+    ]
+    use_in_diff: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Whether to include this MVA in the global JAX gradient"
+        ),
+    ] # is this useful?
+    framework: Annotated[
+        Literal["jax", "keras", "tf"],
+        Field(..., description="Framework to use for building/training")
+    ]
+    # Global pre-training learning rate:
+    learning_rate: Annotated[
+        float,
+        Field(
+            default=0.01,
+            description="Step size for pre-training the network"
+        )
+    ]
+    grad_optimisation: Annotated[
+        GradOptimConfig,
+        Field(
+            default_factory=GradOptimConfig,
+            description="Per-MVA optimisation settings"
+        ),
+    ]
+    layers: Annotated[
+        List[LayerConfig],
+        Field(..., description="Sequential layer definitions")
+    ]
+    loss: Annotated[
+        Union[Callable, str],
+        Field(
+            ...,
+            description=(
+                "For 'jax': a Python callable (preds, features, targets)->scalar; "
+                "for TF/Keras: string loss key (e.g. 'binary_crossentropy')"
+            )
+        )
+    ]
+    features: Annotated[
+        List[FeatureConfig],
+        Field(..., description="List of input features for this network")
+    ]
+
+    classes: Annotated[
+        List[str],
+        Field(
+            ...,
+            description="List of process names (exactly as in your fileset metadata) to use as classes; "
+                        "the index in this list is the integer label."
+        ),
+    ]
+    balance_strategy: Annotated[
+        Literal["none", "undersample", "oversample", "class_weight"],
+        Field(
+            default="undersample",
+            description=(
+                "How to rebalance classes before training:\n"
+                "- `none`: leave as is\n"
+                "- `undersample`: down-sample every class to the smallest class size\n"
+                "- `oversample`: up-sample every class to the largest class size\n"
+                "- `class_weight`: compute sample-weights inversely proportional to class frequency"
+            ),
+        ),
+    ]
+    random_state: Annotated[
+        Optional[int],
+        Field(
+            default=42,
+            description="Seed for any sampling shuffle (undersample/oversample)",
+        ),
+    ]
+
+    # -------------------------------------------------------------------------
+    # Training  parameters
+    # -------------------------------------------------------------------------
+    epochs: Annotated[
+        int,
+        Field(default=1000, description="Number of training epochs for this MVA")
+    ]
+    batch_size: Annotated[
+        Optional[int],
+        Field(default=None, description="Batch size for training; None for full-batch GD")
+    ]
+    validation_split: Annotated[
+        float,
+        Field(default=0.2, description="Fraction of data reserved for validation")
+    ]
+    log_interval: Annotated[
+        int,
+        Field(default=100, description="Epoch interval for logging training progress")
+    ]
+
+    @model_validator(mode="after")
+    def check_framework_consistency(self) -> "MVAConfig":
+        if self.framework == "jax":
+            if not callable(self.loss):
+                raise ValueError("JAX 'loss' must be a callable.")
+            for L in self.layers:
+                if not callable(L.activation):
+                    raise ValueError("JAX 'activation' must be a Python callable.")
+        else:
+            if not isinstance(self.loss, str):
+                raise ValueError("TF/Keras 'loss' must be a string key.")
+            for L in self.layers:
+                if not isinstance(L.activation, ActivationKey):
+                    raise ValueError(
+                        f"TF/Keras 'activation' must be one of {list(ActivationKey)}."
+                    )
+        return self
+
+    @model_validator(mode="after")
+    def check_duplicate_features(self) -> "MVAConfig":
+        names = [feat.name for feat in self.features]
+        dup = {n for n in names if names.count(n) > 1}
+        if dup:
+            raise ValueError(f"Duplicate feature names in MVA '{self.name}': {sorted(dup)}")
+        return self
+
 # ------------------------
 # Top-level configuration
 # ------------------------
@@ -687,7 +922,13 @@ class Config(SubscriptableModel):
         Optional[StatisticalConfig],
         Field(default=None, description="Statistical analysis settings"),
     ]
-
+    mva: Annotated[
+        Optional[List[MVAConfig]],
+        Field(
+            default=None,
+            description="List of MVA configurations for pre-training and inference"
+        ),
+    ]
     plotting: Annotated[
         Optional[PlottingConfig],
         Field(
@@ -763,6 +1004,17 @@ class Config(SubscriptableModel):
                     f"Duplicate object '{mask.object}' found in good object masks."
                 )
             seen_objects.add(mask.object)
+
+        # check for duplicate mva parameter names
+        all_mva_params: List[str] = []
+        for net in self.mva:
+            for layer in net.layers:
+                all_mva_params += [layer.weights, layer.bias]
+        duplicates = {p for p in all_mva_params if all_mva_params.count(p) > 1}
+        if duplicates:
+            raise ValueError(
+                f"Duplicate NN parameter names across MVAs: {sorted(duplicates)}"
+            )
 
         return self
 

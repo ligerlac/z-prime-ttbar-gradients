@@ -9,7 +9,7 @@ import numpy.typing as npt
 
 from utils import set_logging
 
-logger = set_logging(__name__)
+logger = set_logging()
 
 
 class Draw:
@@ -100,9 +100,9 @@ class Draw:
         name: str = "histogram",
     ):
         plt.figure(figsize=(8, 4))
-        logger.info(f"Plotting {x_label}")
+        print(f"Plotting {x_label}")
         for label, values in data.items():
-            logger.info(
+            print(
                 f"label: {label}, shape: {values.shape}, "
                 + f"min: {values.min()}, max: {values.max()}"
             )

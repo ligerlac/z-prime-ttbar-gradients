@@ -8,6 +8,7 @@ from utils.cuts import (
 )
 from utils.observables import (
     get_mtt,
+    get_mva_vars,
 )
 from utils.systematics import (
     jet_pt_resolution,
@@ -41,6 +42,7 @@ config = {
         "run_statistics": True,
         "run_systematics": False,
         "run_plots_only": True,
+        "run_mva_training": True,
         "read_from_cache": True,
         "output_dir": "output/",
         "preprocessed_dir": "./preproc_uproot/z-prime-ttbar-data/",
@@ -66,7 +68,7 @@ config = {
     },
     "jax": {
         "optimize": True,
-        "learning_rate": 0.01,
+        "learning_rate": 0.01, # default learning rate
         "max_iterations": 50,
         'explicit_optimization': True,
         "soft_selection": {
@@ -118,11 +120,11 @@ config = {
                                         & (muons.miniIsoId > 1)),
             "use": [("Muon", None)],
         },
-        {
-            "object": "Jet",
-            "function": lambda jets: ((jets.jetId >= 4) & (jets.btagDeepB > 0.5)),
-            "use": [("Jet", None)],
-        },
+        # {
+        #     "object": "Jet",
+        #     "function": lambda jets: ((jets.jetId >= 4) & (jets.btagDeepB > 0.5)),
+        #     "use": [("Jet", None)],
+        # },
         {
             "object": "FatJet",
             "function": lambda fatjets: ((fatjets.pt > 500)
@@ -161,7 +163,95 @@ config = {
             "use_in_diff": False,
         },
     ],
-    "ghost_observables": [],
+    "ghost_observables": [
+        {
+            "names": (
+                "n_jet",
+                "leading_jet_mass",
+                "subleading_jet_mass",
+                "st",
+                "leading_jet_btag_score",
+                "subleading_jet_btag_score",
+                "S_zz",
+                "deltaR",
+                "pt_rel",
+                "deltaR_times_pt",
+            ),
+            "collections": "mva",
+            "function": get_mva_vars,
+            "use": [
+                ("Muon", None),
+                ("Jet", None),
+            ],
+            "works_with_jax": True,
+        },
+    ],
+    "mva":[
+        {
+            "name": "wjets_vs_ttbar_nn",
+            "use_in_diff": True,
+            "epochs": 3000,
+            "framework": "jax", # keras/tf/... if TF need more info (e.g. Model: Sequential, layers: Dense)
+            "grad_optimisation": {
+                "optimise": True,  # this will add weights to set of optimised parameters
+                "learning_rate": 0.0005,  # learning rate for the MVA optimisation
+            },
+            "layers": [
+                {
+                    "ndim":       32,
+                    "activation": lambda x, w, b: jnp.tanh(jnp.dot(x, w) + b), # if using TF, this should be a string (e.g. "relu")
+                    "weights":    "W1",
+                    "bias":       "b1",
+                },
+                {
+                    "ndim":       32,
+                    "activation": lambda x, w, b: jnp.tanh(jnp.dot(x, w) + b),
+                    "weights":    "W2",
+                    "bias":       "b2",
+                },
+                {
+                    "ndim":       1,
+                    "activation": lambda x, w, b: jnp.dot(x, w) + b,
+                    "weights":    "W3",
+                    "bias":       "b3",
+                },
+            ],
+            "loss": lambda pred, y: (np.mean(jnp.maximum(pred, 0)
+                                                 - pred * y
+                                                 + jnp.log(1 + jnp.exp(-jnp.abs(pred)))
+                                                 )
+                                        ),
+            "learning_rate": 0.05,
+            "features": [
+                {
+                    "name": "n_jet",
+                    "label": r"$N_{jets}$",
+                    "function": lambda mva: mva.n_jet,
+                    "use": [("mva", None)],
+                    "scale": lambda x: x / 10.0,  # scale to [0, 1]
+                    "binning": "0,10,10", # optional binning for pre-scaling data, scaled by "scale" for post-scaling data
+                },
+                {
+                    "name": "leading_jet_mass",
+                    "label": r"$m_{j_1}$ [GeV]",
+                    "function": lambda mva: mva.leading_jet_mass,
+                    "use": [("mva", None)],
+                    "scale": lambda x: x / 20.0,  # scale to [0, 1]
+                    "binning": "0,100,50",  # optional binning for pre-scaling data, scaled by "scale" for post-scaling data
+                },
+                {
+                    "name": "subleading_jet_mass",
+                    "label": r"$m_{j_2}$ [GeV]",
+                    "function": lambda mva: mva.subleading_jet_mass,
+                    "use": [("mva", None)],
+                    "scale": lambda x: x / 10.0,  # scale to [0, 1]
+                    "binning": "0,50,25",  # optional binning for pre-scaling data, scaled by "scale" for post-scaling data
+                }
+            ],
+            "classes": ["wjets", "ttbar_semilep"],
+            "balance_strategy": "undersample",
+        }
+    ],
     "corrections": [
         {
             "name": "pu_weight",

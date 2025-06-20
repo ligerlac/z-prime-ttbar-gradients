@@ -25,6 +25,7 @@ from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 
 from analysis.base import Analysis
 from utils.cuts import lumi_mask
+from utils.mva import JAXNetwork, TFNetwork, balance_dataset, split_train_test
 from utils.preproc import pre_process_dak, pre_process_uproot
 from utils.jax_stats import (
     calculate_significance_relaxed,
@@ -487,6 +488,113 @@ class DifferentiableAnalysis(Analysis):
 
         return per_channel
 
+    def _extract_mva_features(
+            self,
+            obj_copies: dict[str, ak.Array],
+            feat_cfgs: List[FeatureConfig],
+        ) -> np.ndarray:
+            """
+            Stack all configured features into an (n_events, n_features) array.
+            Applies any optional per-feature scaling.
+            """
+            arrays: list[np.ndarray] = []
+            for feat in feat_cfgs:
+                # grab the raw awkward array(s)
+                args = self._get_function_arguments(feat.use, obj_copies)
+                vals = feat.function(*args)
+                # apply optional scaling
+                if feat.scale is not None:
+                    vals = feat.scale(vals)
+                arrays.append(np.array(vals))
+
+            # each arrays[i] is shape (n_events,)  → stack as columns
+            X = np.stack(arrays, axis=1).astype(float)
+            return X
+
+    def _extract_mva_labels(
+            self,
+            n_events: int,
+            process: str,
+            classes: List[str],
+        ) -> np.ndarray:
+            """
+            Return a 1-D integer array of length `n_events` equal to classes.index(process).
+            """
+            try:
+                lbl = classes.index(process)
+            except ValueError:
+                raise RuntimeError(f"Process `{process}` not in MVAConfig.classes={classes}")
+            return np.full(n_events, lbl, dtype=int)
+
+
+    def run_mva_training(
+            self,
+            events_per_process: dict[str, list[Tuple[dict, int]]]
+        ) -> dict[str, Any]:
+            """
+            Train each MVAConfig using the pre‐collected object copies and event counts.
+            Returns a dict mapping mva_cfg.name -> trained (model or params).
+            """
+            trained = {}
+            for mva_cfg in self.config.mva:
+                # 1) Gather X,y per class
+                X_list, y_list = [], []
+                for cls_idx, proc in enumerate(mva_cfg.classes):
+                    entries = events_per_process.get(proc, [])
+                    if not entries:
+                        logger.warning(f"No events found for class '{proc}'.")
+                        continue
+                    for obj_copies, n_events in entries:
+                        X = self._extract_mva_features(obj_copies, mva_cfg.features)
+                        y = self._extract_mva_labels(n_events, proc, mva_cfg.classes)
+                        X_list.append(X)
+                        y_list.append(y)
+
+                X_all = np.vstack(X_list)
+                y_all = np.concatenate(y_list)
+
+                # 2) Balance
+                X_bal, y_bal, class_weights = balance_dataset(
+                    X_all, y_all,
+                    strategy=mva_cfg.balance_strategy,
+                    random_state=mva_cfg.random_state,
+                )
+
+                # 3) Split train/val
+                X_train, X_val, y_train, y_val = split_train_test(
+                    X_bal, y_bal,
+                    test_size=mva_cfg.validation_split,
+                    random_state=mva_cfg.random_state,
+                    shuffle=True,
+                    stratify=y_bal if mva_cfg.balance_strategy!="none" else None,
+                )
+
+                # 4) Fit
+                if mva_cfg.framework == "jax":
+                    net = JAXNetwork(mva_cfg)
+                    Xtr, Xvl = jnp.array(X_train), jnp.array(X_val)
+                    ytr, yvl = jnp.array(y_train), jnp.array(y_val)
+                    net.init_network()
+                    params = net.train(Xtr, ytr, Xvl, yvl)
+                    trained[mva_cfg.name] = params
+
+                else:
+                    net = TFNetwork(mva_cfg)
+                    net.init_network()
+                    sw_train = None
+                    if class_weights and mva_cfg.balance_strategy=="class_weight":
+                        sw_train = np.vectorize(class_weights.get)(y_train)
+                    fit_kwargs = {}
+                    if sw_train is not None:
+                        fit_kwargs["sample_weight"] = sw_train
+                    model = net.train(X_train, y_train, X_val, y_val, **fit_kwargs)
+                    trained[mva_cfg.name] = model
+
+                logger.info(f"Finished training MVA '{mva_cfg.name}'")
+
+            return trained
+
+
     def untraced_process(
         self,
         events: ak.Array,
@@ -697,6 +805,7 @@ class DifferentiableAnalysis(Analysis):
         """
         config = self.config
         all_events = defaultdict(lambda: defaultdict(dict))
+        mva_data: dict[str, list[Tuple[dict, int]]] = {cls: [] for cfg in (config.mva or []) for cls in cfg.classes}
         os.makedirs(cache_dir, exist_ok=True)
 
         for dataset, content in fileset.items():
@@ -790,7 +899,25 @@ class DifferentiableAnalysis(Analysis):
                     proced = self.untraced_process(events, process_name)
                     all_events[f"{dataset}___{process_name}"][f"file__{idx}"][skimmed] = (proced, metadata)
 
+                    # get nominal objects for MVA training ───
+                    if config.mva and config.general.run_mva_training:
+                        # pick the "nominal" channel entries
+                        nominal_ch = proced.get("nominal", {})
+                        # you might combine multiple channels or pick one—
+                        # here we just concatenate *all* channels for this dataset
+                        for ch_name, ch_dict in nominal_ch.items():
+                            obj_copies = ch_dict["objects"]
+                            n_events   = int(ch_dict["nevents"])
+                            mva_data.setdefault(process_name, []).append((obj_copies, n_events))
+
             logger.info(f"✅ Finished dataset: {dataset}\n")
+
+        # Train any MVAs that need pre-training
+        if self.config.general.run_mva_training and (mva_cfg := self.config.mva) is not None:
+            logger.info("Executing MVA pre-training")
+            models = self.run_mva_training(mva_data)
+
+        exit(1)
 
         return all_events
 
