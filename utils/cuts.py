@@ -186,7 +186,7 @@ def Zprime_hardcuts(
     # ---------------------
     selections.add("exactly_1mu", ak.num(muons, axis=1) == 1)
     selections.add("atleast_1jet", ak.num(jets, axis=1) > 1)
-    selections.add("atleast_1fj", ak.count(fatjets.pt, axis=1) > -1)
+    selections.add("atleast_1fj", ak.count(fatjets.pt, axis=1) == 1)
 
     # ---------------------
     # Composite region selection
