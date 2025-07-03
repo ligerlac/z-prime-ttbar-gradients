@@ -9,11 +9,11 @@ from collections.abc import Mapping, Sequence
 import hashlib
 import pickle
 import cloudpickle
+from pathlib import Path
 from pprint import pformat
 from typing import Any, Dict, Literal, List, Tuple, Optional
 
 import awkward as ak
-import evermore as evm
 import optax
 import jax
 import jax.numpy as jnp
@@ -160,32 +160,6 @@ def infer_processes_and_systematics(
     return sorted(process_set), sorted(systematics_set)
 
 
-def extract_scalar(x) -> float:
-    """
-    Extract scalar float from various input types.
-
-    Handles:
-    - evm.Parameter
-    - jnp.ndarray
-    - float
-
-    Parameters
-    ----------
-    x : Any
-        Input value to extract scalar from
-
-    Returns
-    -------
-    float
-        Extracted scalar value
-    """
-    if isinstance(x, evm.Parameter):
-        return float(x.value.astype(float)[0])
-    if isinstance(x, jnp.ndarray):
-        return float(x)
-    return float(x)
-
-
 def nested_defaultdict_to_dict(d) -> dict:
     """
     Recursively convert nested defaultdict to regular dict.
@@ -226,6 +200,29 @@ class DifferentiableAnalysis(Analysis):
         """Set the final histograms after processing."""
         self.histograms = histograms
 
+    def _prepare_dirs(self):
+            # 1) always make sure output/ exists
+            super()._prepare_dirs()
+
+            # 2) cache for gradients
+            cache = Path(self.config.general.cache_dir or "/tmp/gradients_analysis/")
+            cache.mkdir(parents=True, exist_ok=True)
+
+            # 3) preprocessed files (if used)
+            preproc = self.config.general.get("preprocessed_dir")
+            if preproc:
+                Path(preproc).mkdir(parents=True, exist_ok=True)
+
+            # 4) MVA models under output
+            mva = self.dirs["output"] / "mva_models"
+            mva.mkdir(parents=True, exist_ok=True)
+
+            # store
+            self.dirs.update({
+                "cache":       cache,
+                "preproc":     Path(preproc) if preproc else None,
+                "mva_models":  mva,
+            })
     # -------------------------------------------------------------------------
     # Significance Calculation
     # -------------------------------------------------------------------------
@@ -806,7 +803,6 @@ class DifferentiableAnalysis(Analysis):
         config = self.config
         all_events = defaultdict(lambda: defaultdict(dict))
         mva_data: dict[str, list[Tuple[dict, int]]] = {cls: [] for cfg in (config.mva or []) for cls in cfg.classes}
-        os.makedirs(cache_dir, exist_ok=True)
 
         for dataset, content in fileset.items():
             metadata = content["metadata"]
@@ -834,7 +830,6 @@ class DifferentiableAnalysis(Analysis):
                     if not config.general.preprocessed_dir
                     else f"{config.general.preprocessed_dir}/{dataset}/file__{idx}/"
                 )
-                os.makedirs(output_dir, exist_ok=True)
                 logger.info(f"Preprocessed files directory: {output_dir}")
 
                 if config.general.run_preprocessing:
@@ -917,9 +912,13 @@ class DifferentiableAnalysis(Analysis):
             logger.info("Executing MVA pre-training")
             models = self.run_mva_training(mva_data)
 
-        exit(1)
+        for model_name, model in models.items():
+            model_path = self.dirs["mva_models"] / f"{model_name}.pkl"
+            with open(model_path, "wb") as f:
+                pickle.dump(model, f)
+            logger.info(f"Saved MVA model '{model_name}' to {model_path}")
 
-        return all_events
+        return all_events, models
 
     def run_histogram_and_significance(
         self,
@@ -1000,35 +999,34 @@ class DifferentiableAnalysis(Analysis):
         read_from_cache = self.config.general.read_from_cache
         run_and_cache = not read_from_cache
 
-        with open("model.pkl", 'rb') as f:
-            initial_nn_params = pickle.load(f)
-        initial_nn_params = jax.tree.map(jnp.array, initial_nn_params)
-
         # Initialize parameters
         aux_params = self.config.jax.params.copy()
-        aux_params["nn"] = initial_nn_params
 
         all_params = {
             "aux": aux_params,
             "fit": {"mu": 1.0, "norm_ttbar_semilep": 1.0},
-            # "nn": initial_nn_params
         }
 
-        for k, v in all_params["aux"].items():
-            if k=="nn":
-                continue  # nn is already jax arrays
-            all_params["aux"][k] = jnp.array(v)
-        all_params["fit"] = {k: jnp.array(v) for k, v in all_params["fit"].items()}
-        logger.info(f"Initial parameters: {pformat(all_params)}")
 
         # Preprocess events
-        proced_events = self.run_analysis_processing(
+        proced_events, mva_models = self.run_analysis_processing(
             all_params,
             fileset,
             read_from_cache=read_from_cache,
             run_and_cache=run_and_cache,
             cache_dir=cache_dir,
         )
+
+        for model_name, model in mva_models.items():
+            initial_nn_params = jax.tree.map(jnp.array, model)
+            all_params[f"nn_{model_name}"] = nn_params
+
+        for k, v in all_params["aux"].items():
+            all_params["aux"][k] = jnp.array(v)
+        all_params["fit"] = {k: jnp.array(v) for k, v in all_params["fit"].items()}
+        logger.info(f"Initial parameters: {pformat(all_params)}")
+
+
         logger.info("✅ Event preprocessing complete\n")
 
         logger.info(" === Running untraced siginificance calculation to get initial histograms.. ===")
@@ -1106,12 +1104,8 @@ class DifferentiableAnalysis(Analysis):
 
                         pvals_history.append(float(state.value))
                         for k, v in pars["aux"].items():
-                            if k == "nn":
-                                continue
                             aux_history[k].append(float(v))
                         for k, v in state.aux.items():
-                            if k == "nn":
-                                continue
                             mle_history[k].append(float(v))
 
                 else:
@@ -1144,10 +1138,11 @@ class DifferentiableAnalysis(Analysis):
                     "mle_history": mle_history,
                     "gradients": gradients,
                 }, f)
-            numpy_params = jax.tree.map(np.array, pars["aux"]["nn"])
-            with open("model-after-optimization.pkl", 'wb') as f:
-                pickle.dump(numpy_params, f)
-
+            for model name, model in mva_models.items():
+                numpy_params = jax.tree.map(np.array, par[f"nn_{model_name}"])
+                opt_model = self.dirs["mva_models"] / f"{model_name}_optimised.pkl"
+                with open(opt_model, 'wb') as f:
+                    pickle.dump(numpy_params, f)
 
         # ——————————————————————————————————————————————————————————————
         # Plotting of results

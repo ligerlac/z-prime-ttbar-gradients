@@ -1,6 +1,7 @@
 import gzip
 import logging
 from typing import Any, Callable, Literal, Optional, Union
+from pathlib import Path
 import warnings
 
 import awkward as ak
@@ -55,6 +56,14 @@ class Analysis:
         self.corrections = config.corrections
         self.corrlib_evaluators = self._load_correctionlib()
 
+        self._prepare_dirs()
+
+    def _prepare_dirs(self):
+        """Initialise directories used by all analysis classes"""
+        out = Path(self.config.general.output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        # store for convenience
+        self.dirs = {"output": out}
 
     def _load_correctionlib(self) -> dict[str, CorrectionSet]:
         """

@@ -148,6 +148,13 @@ class GeneralConfig(SubscriptableModel):
             default=None, description="Directory containing preprocessed files"
         ),
     ]
+    cache_dir: Annotated[
+        Optional[str],
+        Field(
+            default="/tmp/gradients_analysis/",
+            description="Directory for caching preprocessed files",
+        ),
+    ]
     processes: Annotated[
         Optional[List[str]],
         Field(

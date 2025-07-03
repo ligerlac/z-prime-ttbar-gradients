@@ -44,11 +44,11 @@ config = {
         "run_plots_only": True,
         "run_mva_training": True,
         "read_from_cache": True,
-        "output_dir": "output/",
+        "output_dir": "output_with_mva/",
         "preprocessed_dir": "./preproc_uproot/z-prime-ttbar-data/",
         "processor": "uproot",
         "lumifile": "./corrections/Cert_271036-284044_13TeV_Legacy2016_Collisions16_JSON.txt",
-
+        "cache_dir": "/tmp/gradients_analysis/",
     },
     "preprocess": {
         "branches": {
@@ -190,7 +190,7 @@ config = {
         {
             "name": "wjets_vs_ttbar_nn",
             "use_in_diff": True,
-            "epochs": 3000,
+            "epochs": 1000,
             "framework": "jax", # keras/tf/... if TF need more info (e.g. Model: Sequential, layers: Dense)
             "grad_optimisation": {
                 "optimise": True,  # this will add weights to set of optimised parameters
@@ -221,7 +221,7 @@ config = {
                                                  + jnp.log(1 + jnp.exp(-jnp.abs(pred)))
                                                  )
                                         ),
-            "learning_rate": 0.05,
+            "learning_rate": 0.1,
             "features": [
                 {
                     "name": "n_jet",
