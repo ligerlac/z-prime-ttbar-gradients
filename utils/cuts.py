@@ -285,7 +285,7 @@ def Zprime_workshop_cuts(
 def Zprime_softcuts_jax_workshop(
     muons: ak.Array,
     jets: ak.Array,
-    fatjets: ak.Array,
+    nn,
     met: ak.Array,
     jet_mass: ak.Array,
     params: dict
@@ -302,8 +302,6 @@ def Zprime_softcuts_jax_workshop(
         Muon collection in JAX backend.
     jets : ak.Array
         Jet collection in JAX backend.
-    fatjets : ak.Array
-        Fat jet collection in JAX backend.
     met : ak.Array
         MET collection in JAX backend.
     params : dict
@@ -315,39 +313,25 @@ def Zprime_softcuts_jax_workshop(
         Per-event array of selection weights (range [0, 1]) for gradient flow.
     """
 
-    def forward(params, x):
-        """Forward pass through the network"""
-        # Layer 1
-        h1 = jnp.tanh(jnp.dot(x, params['W1']) + params['b1'])
+    # MO - TODO: run inference by saving network in an awkward collection?
+    # MO - TODO: how to pass the network features...
+    # nn_instance = nn["instance"]
+    # nn_features = nn["features"]
+    # nn_score = nn_instance._forward_pass(params, nn_features)
 
-        # Layer 2
-        h2 = jnp.tanh(jnp.dot(h1, params['W2']) + params['b2'])
+    # padded_jet_mass = ak.pad_none(jet_mass, target=2, axis=1, clip=True)
+    # padded_jet_mass = ak.fill_none(padded_jet_mass, 0.0)  # fill None with 0.0
 
-        # Layer 3 (output)
-        logits = jnp.dot(h2, params['W3']) + params['b3']
+    # n_jet = ak.to_jax(ak.num(jets, axis=1)) * var_scale_dict["n_jet"]
+    # leading_jet_mass = ak.to_jax(jet_mass[:, 0]) * var_scale_dict["leading_jet_mass"]
+    # subleading_jet_mass = ak.to_jax(padded_jet_mass[:, 1]) * var_scale_dict["subleading_jet_mass"]
 
-        return logits.squeeze()
+    # X = jnp.column_stack([
+    #     n_jet,
+    #     leading_jet_mass,
+    #     subleading_jet_mass
+    # ])  # shape (n_events, 3)
 
-    var_scale_dict = {
-        "n_jet": 1./10.,
-        "leading_jet_mass": 1./20.,
-        "subleading_jet_mass": 1./10.,
-    }
-
-    padded_jet_mass = ak.pad_none(jet_mass, target=2, axis=1, clip=True)
-    padded_jet_mass = ak.fill_none(padded_jet_mass, 0.0)  # fill None with 0.0
-
-    n_jet = ak.to_jax(ak.num(jets, axis=1)) * var_scale_dict["n_jet"]
-    leading_jet_mass = ak.to_jax(jet_mass[:, 0]) * var_scale_dict["leading_jet_mass"]
-    subleading_jet_mass = ak.to_jax(padded_jet_mass[:, 1]) * var_scale_dict["subleading_jet_mass"]
-
-    X = jnp.column_stack([
-        n_jet,
-        leading_jet_mass,
-        subleading_jet_mass
-    ])  # shape (n_events, 3)
-
-    mva_score = forward(params["nn"], X)
 
     # Choose a fixed numebr of jets
     max_jets = 8   # for example
@@ -382,14 +366,14 @@ def Zprime_softcuts_jax_workshop(
         'lep_ht_cut': jax.nn.sigmoid(
             (lep_ht - params['lep_ht_threshold']) / 5.0
         ),
-        'mva_cut': jax.nn.sigmoid(
-            (mva_score - 0.05) * 10.0
-        ),
+        # 'nn_cut': jax.nn.sigmoid(
+        #     (nn_score - 0.05) * 10.0
+        # ),
     }
     # ---------------------
     # Combine cut weights multiplicatively (AND logic)
     # ---------------------
-    cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"], cuts["lep_ht_cut"], cuts["mva_cut"]])
+    cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"], cuts["lep_ht_cut"], ]) # ,cuts["nn_cut"]
     selection_weight = jnp.prod(cut_values, axis=0)
     return selection_weight
 

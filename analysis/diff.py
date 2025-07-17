@@ -17,6 +17,7 @@ import awkward as ak
 import optax
 import jax
 import jax.numpy as jnp
+from jaxopt import OptaxSolver
 import numpy as np
 import uproot
 import vector
@@ -25,7 +26,7 @@ from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 
 from analysis.base import Analysis
 from utils.cuts import lumi_mask
-from utils.mva import JAXNetwork, TFNetwork, balance_dataset, split_train_test
+from utils.mva import JAXNetwork, TFNetwork
 from utils.preproc import pre_process_dak, pre_process_uproot
 from utils.jax_stats import (
     calculate_significance_relaxed,
@@ -258,7 +259,8 @@ class DifferentiableAnalysis(Analysis):
     # -------------------------------------------------------------------------
     def histogramming(
         self,
-        proced: dict,
+        processed_data: dict,
+        mva_instances: dict[str, Any],
         process: str,
         variation: str,
         xsec_weight: float,
@@ -271,7 +273,7 @@ class DifferentiableAnalysis(Analysis):
 
         Parameters
         ----------
-        proced : dict
+        processed_data : dict
             Preprocessed channel data
         process : str
             Sample label (e.g., 'ttbar', 'data')
@@ -314,11 +316,19 @@ class DifferentiableAnalysis(Analysis):
             logger.debug(f"Processing channel: {chname}")
 
             # Prepare channel data
-            obj_copies_ch = proced[chname]["objects"]
+            obj_copies_ch = processed_data[chname]["objects"]
+            #print("checkpoint 3", obj_copies_ch["mva"])
+
+            # we can comptue the MVA features at this point
+            for mva_name, mva_instance in mva_instances.items():
+                mva_features = mva_instance._extract_features(obj_copies_ch, mva_instance.mva_cfg.features)
+                #print("checkpoint 4", mva_features)
+                obj_copies_ch[mva_name] = {"features": mva_features, "instance": mva_instance}
+
             obj_copies_ch = recursive_to_backend(obj_copies_ch, "jax")
-            events_ch = proced[chname]["events"]
+            events_ch = processed_data[chname]["events"]
             events_ch = recursive_to_backend(events_ch, "jax")
-            nevents = proced[chname]["nevents"]
+            nevents = processed_data[chname]["nevents"]
             logger.debug(f"Channel {chname} has {nevents} events")
 
             # Compute differentiable weights
@@ -485,43 +495,43 @@ class DifferentiableAnalysis(Analysis):
 
         return per_channel
 
-    def _extract_mva_features(
-            self,
-            obj_copies: dict[str, ak.Array],
-            feat_cfgs: List[FeatureConfig],
-        ) -> np.ndarray:
-            """
-            Stack all configured features into an (n_events, n_features) array.
-            Applies any optional per-feature scaling.
-            """
-            arrays: list[np.ndarray] = []
-            for feat in feat_cfgs:
-                # grab the raw awkward array(s)
-                args = self._get_function_arguments(feat.use, obj_copies)
-                vals = feat.function(*args)
-                # apply optional scaling
-                if feat.scale is not None:
-                    vals = feat.scale(vals)
-                arrays.append(np.array(vals))
+    # def _extract_mva_features(
+    #         self,
+    #         obj_copies: dict[str, ak.Array],
+    #         feat_cfgs: List[FeatureConfig],
+    #     ) -> np.ndarray:
+    #         """
+    #         Stack all configured features into an (n_events, n_features) array.
+    #         Applies any optional per-feature scaling.
+    #         """
+    #         arrays: list[np.ndarray] = []
+    #         for feat in feat_cfgs:
+    #             # grab the raw awkward array(s)
+    #             args = self._get_function_arguments(feat.use, obj_copies)
+    #             vals = feat.function(*args)
+    #             # apply optional scaling
+    #             if feat.scale is not None:
+    #                 vals = feat.scale(vals)
+    #             arrays.append(np.array(vals))
 
-            # each arrays[i] is shape (n_events,)  → stack as columns
-            X = np.stack(arrays, axis=1).astype(float)
-            return X
+    #         # each arrays[i] is shape (n_events,)  → stack as columns
+    #         X = np.stack(arrays, axis=1).astype(float)
+    #         return X
 
-    def _extract_mva_labels(
-            self,
-            n_events: int,
-            process: str,
-            classes: List[str],
-        ) -> np.ndarray:
-            """
-            Return a 1-D integer array of length `n_events` equal to classes.index(process).
-            """
-            try:
-                lbl = classes.index(process)
-            except ValueError:
-                raise RuntimeError(f"Process `{process}` not in MVAConfig.classes={classes}")
-            return np.full(n_events, lbl, dtype=int)
+    # def _extract_mva_labels(
+    #         self,
+    #         n_events: int,
+    #         process: str,
+    #         classes: List[str],
+    #     ) -> np.ndarray:
+    #         """
+    #         Return a 1-D integer array of length `n_events` equal to classes.index(process).
+    #         """
+    #         try:
+    #             lbl = classes.index(process)
+    #         except ValueError:
+    #             raise RuntimeError(f"Process `{process}` not in MVAConfig.classes={classes}")
+    #         return np.full(n_events, lbl, dtype=int)
 
 
     def run_mva_training(
@@ -533,50 +543,55 @@ class DifferentiableAnalysis(Analysis):
             Returns a dict mapping mva_cfg.name -> trained (model or params).
             """
             trained = {}
+            nets = {}
             for mva_cfg in self.config.mva:
-                # 1) Gather X,y per class
-                X_list, y_list = [], []
-                for cls_idx, proc in enumerate(mva_cfg.classes):
-                    entries = events_per_process.get(proc, [])
-                    if not entries:
-                        logger.warning(f"No events found for class '{proc}'.")
-                        continue
-                    for obj_copies, n_events in entries:
-                        X = self._extract_mva_features(obj_copies, mva_cfg.features)
-                        y = self._extract_mva_labels(n_events, proc, mva_cfg.classes)
-                        X_list.append(X)
-                        y_list.append(y)
+                # # 1) Gather X,y per class
+                # X_list, y_list = [], []
+                # for cls_idx, proc in enumerate(mva_cfg.classes):
+                #     entries = events_per_process.get(proc, [])
+                #     if not entries:
+                #         logger.warning(f"No events found for class '{proc}'.")
+                #         continue
+                #     for obj_copies, n_events in entries:
+                #         X = self._extract_mva_features(obj_copies, mva_cfg.features)
+                #         y = self._extract_mva_labels(n_events, proc, mva_cfg.classes)
+                #         X_list.append(X)
+                #         y_list.append(y)
 
-                X_all = np.vstack(X_list)
-                y_all = np.concatenate(y_list)
+                # X_all = np.vstack(X_list)
+                # y_all = np.concatenate(y_list)
 
-                # 2) Balance
-                X_bal, y_bal, class_weights = balance_dataset(
-                    X_all, y_all,
-                    strategy=mva_cfg.balance_strategy,
-                    random_state=mva_cfg.random_state,
-                )
+                # # 2) Balance
+                # X_bal, y_bal, class_weights = balance_dataset(
+                #     X_all, y_all,
+                #     strategy=mva_cfg.balance_strategy,
+                #     random_state=mva_cfg.random_state,
+                # )
 
-                # 3) Split train/val
-                X_train, X_val, y_train, y_val = split_train_test(
-                    X_bal, y_bal,
-                    test_size=mva_cfg.validation_split,
-                    random_state=mva_cfg.random_state,
-                    shuffle=True,
-                    stratify=y_bal if mva_cfg.balance_strategy!="none" else None,
-                )
+                # # 3) Split train/val
+                # X_train, X_val, y_train, y_val = split_train_test(
+                #     X_bal, y_bal,
+                #     test_size=mva_cfg.validation_split,
+                #     random_state=mva_cfg.random_state,
+                #     shuffle=True,
+                #     stratify=y_bal if mva_cfg.balance_strategy!="none" else None,
+                # )
 
                 # 4) Fit
                 if mva_cfg.framework == "jax":
                     net = JAXNetwork(mva_cfg)
+                    X_train, y_train, X_val, y_val, class_weights= net.prepare_inputs(events_per_process)
                     Xtr, Xvl = jnp.array(X_train), jnp.array(X_val)
                     ytr, yvl = jnp.array(y_train), jnp.array(y_val)
                     net.init_network()
                     params = net.train(Xtr, ytr, Xvl, yvl)
                     trained[mva_cfg.name] = params
+                    nets[mva_cfg.name] = net
 
                 else:
                     net = TFNetwork(mva_cfg)
+                    # Prepare inputs from events_per_process
+                    X_train, y_train, X_val, y_val, class_weights = net.prepare_inputs(events_per_process)
                     net.init_network()
                     sw_train = None
                     if class_weights and mva_cfg.balance_strategy=="class_weight":
@@ -586,10 +601,11 @@ class DifferentiableAnalysis(Analysis):
                         fit_kwargs["sample_weight"] = sw_train
                     model = net.train(X_train, y_train, X_val, y_val, **fit_kwargs)
                     trained[mva_cfg.name] = model
+                    nets[mva_cfg.name] = net
 
                 logger.info(f"Finished training MVA '{mva_cfg.name}'")
 
-            return trained
+            return trained, nets
 
 
     def untraced_process(
@@ -612,7 +628,7 @@ class DifferentiableAnalysis(Analysis):
         dict
             Per-variation channel data for histogramming
         """
-        proced = {}
+        processed_data = {}
         logger.info(f"Starting untraced processing for {process}")
 
         # Prepare object copies and apply baseline masks
@@ -652,7 +668,7 @@ class DifferentiableAnalysis(Analysis):
             process,
             "nominal",
         )
-        proced["nominal"] = channels_data
+        processed_data["nominal"] = channels_data
         logger.info("Prepared nominal channel data")
 
         # Process systematic variations if enabled
@@ -684,17 +700,17 @@ class DifferentiableAnalysis(Analysis):
                         process,
                         varname,
                     )
-                    proced[varname] = channels_data
+                    processed_data[varname] = channels_data
                     logger.info(f"Prepared channel data for {varname}")
 
-        return proced
+        return processed_data
 
     # -------------------------------------------------------------------------
     # Event Processing Entry Point
     # -------------------------------------------------------------------------
     def collect_histograms(
         self,
-        proced: dict[str, dict[str, ak.Array]],
+        processed_data: dict[str, dict[str, ak.Array]],
         metadata: dict[str, Any],
         params: dict[str, Any],
     ) -> dict[str, dict[str, dict[str, jnp.ndarray]]]:
@@ -703,7 +719,7 @@ class DifferentiableAnalysis(Analysis):
 
         Parameters
         ----------
-        proced : dict
+        processed_data : dict
             Per-variation channel data from `untraced_process`
         metadata : dict
             Dataset metadata with keys:
@@ -734,8 +750,10 @@ class DifferentiableAnalysis(Analysis):
 
         # Process nominal variation
         logger.debug(f"Processing nominal variation for {process}")
+        #print("Checkpoint 2", processed_data.keys())
         histograms = self.histogramming(
-            proced["nominal"],
+            processed_data["nominal"],
+            processed_data["mva_nets"],
             process,
             "nominal",
             xsec_weight,
@@ -755,7 +773,8 @@ class DifferentiableAnalysis(Analysis):
                     logger.info(f"Processing {varname} for {process}")
 
                     histograms = self.histogramming(
-                        proced[varname],
+                        processed_data[varname],
+                        processed_data["mva_nets"],
                         process,
                         varname,
                         xsec_weight,
@@ -891,13 +910,13 @@ class DifferentiableAnalysis(Analysis):
                         ).events()
 
                     # Process events
-                    proced = self.untraced_process(events, process_name)
-                    all_events[f"{dataset}___{process_name}"][f"file__{idx}"][skimmed] = (proced, metadata)
+                    processed_data = self.untraced_process(events, process_name)
+                    all_events[f"{dataset}___{process_name}"][f"file__{idx}"][skimmed] = (processed_data, metadata)
 
                     # get nominal objects for MVA training ───
                     if config.mva and config.general.run_mva_training:
                         # pick the "nominal" channel entries
-                        nominal_ch = proced.get("nominal", {})
+                        nominal_ch = processed_data.get("nominal", {})
                         # you might combine multiple channels or pick one—
                         # here we just concatenate *all* channels for this dataset
                         for ch_name, ch_dict in nominal_ch.items():
@@ -910,20 +929,33 @@ class DifferentiableAnalysis(Analysis):
         # Train any MVAs that need pre-training
         if self.config.general.run_mva_training and (mva_cfg := self.config.mva) is not None:
             logger.info("Executing MVA pre-training")
-            models = self.run_mva_training(mva_data)
+            models, nets = self.run_mva_training(mva_data)
 
-        for model_name, model in models.items():
+        for model_name in models.keys():
+            model = models[model_name]
+            net = nets[model_name]
             model_path = self.dirs["mva_models"] / f"{model_name}.pkl"
+            net_path   = self.dirs["mva_models"] / f"{model_name}_network.pkl"
             with open(model_path, "wb") as f:
-                pickle.dump(model, f)
+                cloudpickle.dump(model, f)
+            with open(net_path, "wb") as f:
+                cloudpickle.dump(net, f)
             logger.info(f"Saved MVA model '{model_name}' to {model_path}")
+            logger.info(f"Saved model network '{model_name}' to {net_path}")
+
+            for dataset_files in all_events.values():                # each dataset
+                for file_dict in dataset_files.values():             # each file__idx
+                    for skim_key, (processed_data, metadata) in file_dict.items():
+                        # add a key 'mva_nets' pointing to your nets dict
+                        processed_data['mva_nets'] = nets
+
 
         return all_events, models
 
     def run_histogram_and_significance(
         self,
         params: dict[str, Any],
-        proced_events: dict,
+        processed_data_events: dict,
     ) -> jnp.ndarray:
         """
         Collect histograms from preprocessed events and compute significance.
@@ -932,7 +964,7 @@ class DifferentiableAnalysis(Analysis):
         ----------
         params : dict
             Parameters containing 'aux' and 'fit' sub-dictionaries
-        proced_events : dict
+        processed_data_events : dict
             Preprocessed events from run_analysis_processing
 
         Returns
@@ -943,8 +975,15 @@ class DifferentiableAnalysis(Analysis):
         logger.info("📊 Starting histogram collection and significance calculation...")
         process_histograms = defaultdict(dict)
 
+        aux_and_nn_params = {}
+        for param_group, param_vals in params.items():
+            if 'nn_' in param_group or param_group == "aux":
+                # TODO: at schema level enforce different parameter names? or here add prefix?
+                # TODO: check if this system works with the parameter updates?
+                aux_and_nn_params.update(param_vals)
+
         # Process each dataset
-        for dataset, files in proced_events.items():
+        for dataset, files in processed_data_events.items():
             process_name = dataset.split("___")[1]
             logger.info(
                 f"Processing dataset {dataset} ({process_name}) with {len(files)} files"
@@ -955,12 +994,13 @@ class DifferentiableAnalysis(Analysis):
 
             # Process each file
             for file_key, skim in files.items():
-                for proced, metadata in skim.values():
+                for processed_data, metadata in skim.values():
                     logger.debug(
                         f"Processing histograms from {file_key} in {dataset}"
                     )
                     # Collect histograms for this file
-                    histograms = self.collect_histograms(proced, metadata, params["aux"])
+                    # print("Checkpoint 1", processed_data, aux_and_nn_params.keys())
+                    histograms = self.collect_histograms(processed_data, metadata, aux_and_nn_params)
                     # Merge with existing histograms
                     process_histograms[process_name] = merge_histograms(
                         process_histograms[process_name], dict(histograms)
@@ -991,9 +1031,6 @@ class DifferentiableAnalysis(Analysis):
         tuple
             Optimized parameters and final significance
         """
-        from functools import partial
-        from jaxopt import OptaxSolver
-
         # Configure caching
         cache_dir = "/tmp/gradients_analysis/"
         read_from_cache = self.config.general.read_from_cache
@@ -1007,9 +1044,8 @@ class DifferentiableAnalysis(Analysis):
             "fit": {"mu": 1.0, "norm_ttbar_semilep": 1.0},
         }
 
-
         # Preprocess events
-        proced_events, mva_models = self.run_analysis_processing(
+        processed_data_events, mva_models = self.run_analysis_processing(
             all_params,
             fileset,
             read_from_cache=read_from_cache,
@@ -1019,7 +1055,7 @@ class DifferentiableAnalysis(Analysis):
 
         for model_name, model in mva_models.items():
             initial_nn_params = jax.tree.map(jnp.array, model)
-            all_params[f"nn_{model_name}"] = nn_params
+            all_params[f"nn_{model_name}"] = initial_nn_params
 
         for k, v in all_params["aux"].items():
             all_params["aux"][k] = jnp.array(v)
@@ -1031,7 +1067,7 @@ class DifferentiableAnalysis(Analysis):
 
         logger.info(" === Running untraced siginificance calculation to get initial histograms.. ===")
         init_pval, init_mle_pars = self.run_histogram_and_significance(
-            all_params, proced_events
+            all_params, processed_data_events
         )
         init_histograms = self.histograms
 
@@ -1050,11 +1086,11 @@ class DifferentiableAnalysis(Analysis):
                 self.run_histogram_and_significance,
                 has_aux=True,
                 argnums=0,
-            )(all_params, proced_events)
+            )(all_params, processed_data_events)
 
             # Define objective function (negative significance)
             def objective(params):
-                p0, mle_pars = self.run_histogram_and_significance(params, proced_events)
+                p0, mle_pars = self.run_histogram_and_significance(params, processed_data_events)
                 return -p0, mle_pars
 
             # Create parameter clamping function
@@ -1062,7 +1098,7 @@ class DifferentiableAnalysis(Analysis):
 
             # Configure learning rates
             if (config_lr := self.config.jax.learning_rates) is not None:
-                make_builder = make_lr_and_clamp_transform(config_lr, default_lr=1e-2, fit_lr=1e-3, clamp_fn=clamp_fn)
+                make_builder = make_lr_and_clamp_transform(config_lr, default_lr=1e-2, fit_lr=1e-3, nn_lr=0.0005, clamp_fn=clamp_fn)
                 tx, _ = make_builder(all_params)
             else:
                 tx = optax.adam(learning_rate=self.config.jax.learning_rate)
@@ -1070,6 +1106,7 @@ class DifferentiableAnalysis(Analysis):
             logger.info(f"== Starting gradient-based optimisation ===")
 
             initial_params = all_params.copy()
+            print(initial_params)
             # Optimization loop
             pvals_history = []
             aux_history = {k: [] for k in all_params["aux"]}
@@ -1105,6 +1142,7 @@ class DifferentiableAnalysis(Analysis):
                         pvals_history.append(float(state.value))
                         for k, v in pars["aux"].items():
                             aux_history[k].append(float(v))
+                        # auxiliary returns are the MLE fit parameters
                         for k, v in state.aux.items():
                             mle_history[k].append(float(v))
 
@@ -1125,7 +1163,7 @@ class DifferentiableAnalysis(Analysis):
             logger.info(f"Gradients: {gradients}")
 
             _ = self.run_histogram_and_significance(
-                all_params, proced_events
+                all_params, processed_data_events
             )
             with open(f"{cache_dir}/cached_result.pkl", "wb") as f:
                 cloudpickle.dump({
@@ -1138,8 +1176,8 @@ class DifferentiableAnalysis(Analysis):
                     "mle_history": mle_history,
                     "gradients": gradients,
                 }, f)
-            for model name, model in mva_models.items():
-                numpy_params = jax.tree.map(np.array, par[f"nn_{model_name}"])
+            for model_name, model in mva_models.items():
+                numpy_params = jax.tree.map(np.array, pars[f"nn_{model_name}"])
                 opt_model = self.dirs["mva_models"] / f"{model_name}_optimised.pkl"
                 with open(opt_model, 'wb') as f:
                     pickle.dump(numpy_params, f)
@@ -1274,7 +1312,7 @@ def make_apply_param_updates(param_update_rules: dict) -> callable:
             else:
                 new_aux[key] = x_temp
 
-        return {"aux": new_aux, "fit": tentative_new_params["fit"]}
+        return {"aux": new_aux, "fit": tentative_new_params["fit"], **{nn: tentative_new_params[nn] for nn in tentative_new_params if nn.startswith("nn_")}}
 
     return apply_rules
 
@@ -1297,7 +1335,7 @@ def make_clamp_transform(clamp_fn):
 
 
 def make_lr_and_clamp_transform(
-    lr_map: dict, default_lr: float, fit_lr: float, clamp_fn: callable
+    lr_map: dict, default_lr: float, fit_lr: float, nn_lr: float, clamp_fn: callable
 ) -> callable:
     """
     Combines your per-parameter LR multi-transform with a clamp-after-step transform.
@@ -1308,16 +1346,26 @@ def make_lr_and_clamp_transform(
         **{f"aux__{k}": optax.adam(lr) for k, lr in lr_map.items()},
         "aux__default":    optax.adam(default_lr),
         "fit__default":    optax.adam(fit_lr),
+        "nn__default":     optax.adam(nn_lr),
     }
 
     def make_label_pytree(params):
-        labels = {"aux": {}, "fit": {}}
+        labels = {"aux": {}, "fit": {}, **{nn: {} for nn in params if nn.startswith("nn_")}}
         for aux_key in params["aux"]:
             labels["aux"][aux_key] = (
                 f"aux__{aux_key}" if aux_key in lr_map else "aux__default"
             )
+
+        for key in params.keys():
+            if not key.startswith("nn_"): continue
+            for nn_key in params[key]:
+                labels[key][nn_key] = (
+                f"aux__{nn_key}" if nn_key in lr_map else "nn__default"
+                )
+
         for fit_key in params["fit"]:
             labels["fit"][fit_key] = "fit__default"
+
         return labels
 
     # clamp‐after‐update transform

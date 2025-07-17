@@ -1,6 +1,6 @@
 from collections import Counter
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import jax
@@ -8,79 +8,23 @@ import jax.numpy as jnp
 from jax import random, value_and_grad, jit
 from equinox import filter_jit
 import tensorflow as tf
+from sklearn.model_selection import train_test_split
+
+
+from analysis.base import Analysis
 
 # =============================================================================
 # Supporting functions
 # =============================================================================
-def balance_dataset(
-    X: np.ndarray,
-    y: np.ndarray,
-    strategy: str,
-    random_state: int,
-) -> tuple[np.ndarray, np.ndarray, Optional[dict[int,float]]]:
-    """
-    Rebalance X,y according to strategy.
-    Returns (X_new, y_new, class_weights).
-    If strategy=='class_weight', X and y are unchanged, but class_weights is set.
-    """
-    rng = np.random.RandomState(random_state)
-    counts = Counter(y)
-    labels = sorted(counts.keys())
-    n_min  = min(counts.values())
-    n_max  = max(counts.values())
-
-    if strategy == "none":
-        return X, y, None
-
-    if strategy in ("undersample", "oversample"):
-        Xs, ys = [], []
-        for lbl in labels:
-            idx = np.where(y==lbl)[0]
-            if strategy == "undersample":
-                sel = rng.choice(idx, size=n_min, replace=False)
-            else:  # oversample
-                sel = rng.choice(idx, size=n_max, replace=True)
-            Xs.append(X[sel])
-            ys.append(y[sel])
-        X_new = np.concatenate(Xs, axis=0)
-        y_new = np.concatenate(ys, axis=0)
-        # shuffle
-        perm = rng.permutation(len(y_new))
-        return X_new[perm], y_new[perm], None
-
-    if strategy == "class_weight":
-        # sample_weights for each event
-        total = float(len(y))
-        class_weights = {lbl: total/(len(labels)*counts[lbl]) for lbl in labels}
-        sw = np.vectorize(class_weights.get)(y)
-        return X, y, class_weights
-
-    raise ValueError(f"Unknown balance_strategy={strategy}")
 
 # ===============================================================================
 # Train-Test split
 # ===============================================================================
-from sklearn.model_selection import train_test_split
-def split_train_test(
-        X: np.ndarray,
-        y: np.ndarray,
-        test_size: float = 0.2,
-        random_state: Optional[int] = None,
-        shuffle: bool = True,
-        stratify: Optional[np.ndarray] = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    return train_test_split(
-        X, y,
-        test_size=test_size,
-        random_state=random_state,
-        shuffle=shuffle,
-        stratify=stratify
-    )
 
 # ----------------------------------------------------------------------------
 # Abstract BaseNetwork class
 # ----------------------------------------------------------------------------
-class BaseNetwork(ABC):
+class BaseNetwork(ABC, Analysis):
     """
     Abstract interface for MVA networks. Subclasses must implement framework-specific
     initialization, training, and prediction.
@@ -98,6 +42,127 @@ class BaseNetwork(ABC):
         self.parameters: Dict[str, Any] = {}
         # For TF/Keras: holds the Sequential model. For JAX: remains None.
         self.model: Any = None
+
+    def split_train_test(
+            self,
+            X: np.ndarray,
+            y: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+
+        test_size=self.mva_cfg.validation_split
+        random_state=self.mva_cfg.random_state
+        shuffle=True
+        stratify=y if self.mva_cfg.balance_strategy!="none" else None
+
+        return train_test_split(
+            X, y,
+            test_size=test_size,
+            random_state=random_state,
+            shuffle=shuffle,
+            stratify=stratify
+        )
+
+    def _extract_features(
+        self,
+        obj_copies: Dict[str, Any],
+        feat_cfgs: List[Any]
+    ) -> np.ndarray:
+        """
+        Compute and stack all features for one event batch.
+        """
+        arrays: List[np.ndarray] = []
+        for feat in feat_cfgs:
+            # grab raw inputs for this feature
+            args = self._get_function_arguments(feat.use, obj_copies)
+            vals = feat.function(*args)
+            if feat.scale is not None:
+                vals = feat.scale(vals)
+            arrays.append(np.asarray(vals))
+        # stack as columns
+        return np.stack(arrays, axis=1).astype(float)
+
+    def _make_labels(
+        self,
+        n_events: int,
+        process: str,
+        classes: List[str]
+    ) -> np.ndarray:
+        """
+        Produce integer labels for a given process/class.
+        """
+        try:
+            idx = classes.index(process)
+        except ValueError:
+            raise RuntimeError(
+                f"Process `{process}` not in classes={classes}"
+            )
+        return np.full(n_events, idx, dtype=int)
+
+    def _balance_dataset(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray, Optional[Dict[int, float]]]:
+        """
+        Rebalance X,y according to `strategy` (none, undersample, oversample, class_weight).
+        """
+        strategy = self.mva_cfg.balance_strategy
+        random_state = self.mva_cfg.random_state
+
+        if strategy == "none":
+            return X, y, None
+
+        rng = np.random.RandomState(random_state)
+        counts = Counter(y)
+        labels = sorted(counts.keys())
+        if strategy in ("undersample", "oversample"):
+            # target count per class
+            target = min(counts.values()) if strategy == "undersample" else max(counts.values())
+            Xs, ys = [], []
+            for lbl in labels:
+                idxs = np.where(y == lbl)[0]
+                sel = rng.choice(idxs, size=target, replace=(strategy=="oversample"))
+                Xs.append(X[sel]); ys.append(y[sel])
+            X_new = np.concatenate(Xs, axis=0)
+            y_new = np.concatenate(ys, axis=0)
+            perm = rng.permutation(len(y_new))
+            return X_new[perm], y_new[perm], None
+
+        if strategy == "class_weight":
+            total = float(len(y))
+            class_weights = {lbl: total/(len(labels)*counts[lbl]) for lbl in labels}
+            return X, y, class_weights
+
+        raise ValueError(f"Unknown balance_strategy={strategy}")
+
+    def prepare_inputs(
+        self,
+        events_per_process: list[tuple[dict, int]],
+    ) -> Any:
+
+        # 1) Gather X,y per class
+        X_list, y_list = [], []
+        for cls_idx, proc in enumerate(self.mva_cfg.classes):
+            entries = events_per_process.get(proc, [])
+            if not entries:
+                logger.warning(f"No events found for class '{proc}'.")
+                continue
+            for obj_copies, n_events in entries:
+                X = self._extract_features(obj_copies, self.mva_cfg.features)
+                y = self._make_labels(n_events, proc, self.mva_cfg.classes)
+                X_list.append(X)
+                y_list.append(y)
+
+        X = np.vstack(X_list)
+        y = np.concatenate(y_list)
+
+        # 2) balance
+        Xb, yb, cw = self._balance_dataset(X, y)
+
+        # 3) split
+        Xtr, Xvl, ytr, yvl = self.split_train_test(Xb, yb)
+
+        return Xtr, ytr, Xvl, yvl, cw
 
     @abstractmethod
     def init_network(self) -> None:
@@ -244,10 +309,8 @@ class JAXNetwork(BaseNetwork):
         val_split = getattr(self.mva_cfg, 'validation_split', 0.0)
         log_interval = getattr(self.mva_cfg, 'log_interval', 100)
 
-        # JIT-compile the update step if optimisation enabled
-        #if self.mva_cfg.grad_optimisation.optimise:
+        # JIT-compile the update step
         self._update_step = jit(self._update_step)
-
 
 
         # Split data into training/validation if requested

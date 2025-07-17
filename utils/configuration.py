@@ -76,7 +76,7 @@ config = {
             "use": [
                 ("Muon", "pt"),
                 ("Jet", "btagDeepB"),
-                ("FatJet", "pt"),
+                ("wjets_vs_ttbar_nn", None),
                 ("PuppiMET", "pt"),
                 ("Jet", "mass"),
             ],
