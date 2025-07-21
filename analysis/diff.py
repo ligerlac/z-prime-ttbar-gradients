@@ -950,13 +950,6 @@ class DifferentiableAnalysis(Analysis):
         logger.info("📊 Starting histogram collection and significance calculation...")
         process_histograms = defaultdict(dict)
 
-        aux_and_nn_params = {}
-        for param_group, param_vals in params.items():
-            if 'nn_' in param_group or param_group == "aux":
-                # TODO: at schema level enforce different parameter names? or here add prefix?
-                # TODO: check if this system works with the parameter updates?
-                aux_and_nn_params.update(param_vals)
-
         # Process each dataset
         for dataset, files in processed_data_events.items():
             process_name = dataset.split("___")[1]
@@ -975,7 +968,8 @@ class DifferentiableAnalysis(Analysis):
                     )
                     # Collect histograms for this file
                     # print("Checkpoint 1", processed_data, aux_and_nn_params.keys())
-                    histograms = self.collect_histograms(processed_data, metadata, aux_and_nn_params)
+                    print(params["aux"].keys())
+                    histograms = self.collect_histograms(processed_data, metadata, params["aux"])
                     # Merge with existing histograms
                     process_histograms[process_name] = merge_histograms(
                         process_histograms[process_name], dict(histograms)
@@ -1028,9 +1022,13 @@ class DifferentiableAnalysis(Analysis):
             cache_dir=cache_dir,
         )
 
+        flattened_params = {}
         for model_name, model in mva_models.items():
             initial_nn_params = jax.tree.map(jnp.array, model)
-            all_params[f"nn_{model_name}"] = initial_nn_params
+            for param, value in initial_nn_params.items():
+                flattened_params[param] = value
+
+        all_params[f"aux"].update(flattened_params)
 
         for k, v in all_params["aux"].items():
             all_params["aux"][k] = jnp.array(v)
@@ -1116,6 +1114,7 @@ class DifferentiableAnalysis(Analysis):
 
                         pvals_history.append(float(state.value))
                         for k, v in pars["aux"].items():
+                            if "__NN" in k: continue
                             aux_history[k].append(float(v))
                         # auxiliary returns are the MLE fit parameters
                         for k, v in state.aux.items():
@@ -1152,7 +1151,8 @@ class DifferentiableAnalysis(Analysis):
                     "gradients": gradients,
                 }, f)
             for model_name, model in mva_models.items():
-                numpy_params = jax.tree.map(np.array, pars[f"nn_{model_name}"])
+                nn_pars = {p: v for p, v in pars["aux"].items() if "__NN" in p and model_name in p}
+                numpy_params = jax.tree.map(np.array, nn_pars)
                 opt_model = self.dirs["mva_models"] / f"{model_name}_optimised.pkl"
                 with open(opt_model, 'wb') as f:
                     pickle.dump(numpy_params, f)
@@ -1287,7 +1287,7 @@ def make_apply_param_updates(param_update_rules: dict) -> callable:
             else:
                 new_aux[key] = x_temp
 
-        return {"aux": new_aux, "fit": tentative_new_params["fit"], **{nn: tentative_new_params[nn] for nn in tentative_new_params if nn.startswith("nn_")}}
+        return {"aux": new_aux, "fit": tentative_new_params["fit"]}#, **{nn: tentative_new_params[nn] for nn in tentative_new_params if nn.startswith("nn_")}}
 
     return apply_rules
 
@@ -1299,6 +1299,7 @@ def make_clamp_transform(clamp_fn):
 
     def update_fn(updates, state, params=None):
         # 1) apply the raw updates to get tentative new params
+        print("Params:: ", params, "\n Update:: ", updates)
         new_params = optax.apply_updates(params, updates)
         # 2) clamp into your allowed region
         new_params = clamp_fn(params, new_params)
@@ -1321,22 +1322,22 @@ def make_lr_and_clamp_transform(
         **{f"aux__{k}": optax.adam(lr) for k, lr in lr_map.items()},
         "aux__default":    optax.adam(default_lr),
         "fit__default":    optax.adam(fit_lr),
-        "nn__default":     optax.adam(nn_lr),
+        #"nn__default":     optax.adam(nn_lr),
     }
 
     def make_label_pytree(params):
-        labels = {"aux": {}, "fit": {}, **{nn: {} for nn in params if nn.startswith("nn_")}}
+        labels = {"aux": {}, "fit": {}, **{param: {} for param in params if param.startswith("nn_")}}
         for aux_key in params["aux"]:
             labels["aux"][aux_key] = (
                 f"aux__{aux_key}" if aux_key in lr_map else "aux__default"
             )
 
-        for key in params.keys():
-            if not key.startswith("nn_"): continue
-            for nn_key in params[key]:
-                labels[key][nn_key] = (
-                f"aux__{nn_key}" if nn_key in lr_map else "nn__default"
-                )
+        # for key in params.keys():
+        #     if not key.startswith("nn_"): continue
+        #     for nn_key in params[key]:
+        #         labels[key][nn_key] = (
+        #         f"aux__{nn_key}" if nn_key in lr_map else "nn__default"
+        #         )
 
         for fit_key in params["fit"]:
             labels["fit"][fit_key] = "fit__default"

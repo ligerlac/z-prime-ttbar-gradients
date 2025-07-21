@@ -70,7 +70,7 @@ config = {
     "jax": {
         "optimize": True,
         "learning_rate": 0.01, # default learning rate
-        "max_iterations": 50,
+        "max_iterations": 2,
         'explicit_optimization': True,
         "soft_selection": {
             "function": Zprime_softcuts_jax_workshop,
@@ -199,6 +199,8 @@ config = {
                 "optimise": True,  # this will add weights to set of optimised parameters
                 "learning_rate": 0.0005,  # learning rate for the MVA optimisation
             },
+            "classes": ["wjets", "ttbar_semilep"],
+            "balance_strategy": "undersample",
             "layers": [
                 {
                     "ndim":       16,
@@ -250,8 +252,6 @@ config = {
                     "binning": "0,50,25",  # optional binning for pre-scaling data, scaled by "scale" for post-scaling data
                 }
             ],
-            "classes": ["wjets", "ttbar_semilep"],
-            "balance_strategy": "undersample",
         }
     ],
     "corrections": [

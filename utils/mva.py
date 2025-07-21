@@ -38,6 +38,7 @@ class BaseNetwork(ABC, Analysis):
             mva_cfg: MVAConfig instance describing layers, training params, etc.
         """
         self.mva_cfg = mva_cfg
+        self.name = mva_cfg.name
         # For JAX: dictionary of weight/bias arrays. For TF: not used.
         self.parameters: Dict[str, Any] = {}
         # For TF/Keras: holds the Sequential model. For JAX: remains None.
@@ -242,9 +243,9 @@ class JAXNetwork(BaseNetwork):
             w_key, b_key = random.split(keys[idx], 2)
             in_dim, out_dim = dims[idx], dims[idx + 1]
             # Weights: small normal initialization
-            self.parameters[layer_cfg.weights] = random.normal(w_key, (in_dim, out_dim)) * 0.1
+            self.parameters[f"__NN_{self.name}_{layer_cfg.weights}"] = random.normal(w_key, (in_dim, out_dim)) * 0.1
             # Biases: zeros
-            self.parameters[layer_cfg.bias]    = jnp.zeros(out_dim)
+            self.parameters[f"__NN_{self.name}_{layer_cfg.bias}"]    = jnp.zeros(out_dim)
 
         print("Total parameters", sum(p.size for p in jax.tree.leaves(self.parameters)))
 
@@ -260,8 +261,9 @@ class JAXNetwork(BaseNetwork):
         """
         h = x
         for layer_cfg in self.mva_cfg.layers:
-            w = params[layer_cfg.weights]
-            b = params[layer_cfg.bias]
+
+            w = params[f"__NN_{self.name}_{layer_cfg.weights}"]
+            b = params[f"__NN_{self.name}_{layer_cfg.bias}"]
             h = layer_cfg.activation(h, w, b)
         return h.squeeze()
 
