@@ -230,20 +230,23 @@ class JAXNetwork(BaseNetwork):
         """
         # Build list of layer dimensions: input + each hidden/output size
         dims = [len(self.mva_cfg.features)] + [layer.ndim for layer in self.mva_cfg.layers]
-        # Derive RNG seed from learning rate (scaled integer)
-        seed_int = int(self.mva_cfg.grad_optimisation.learning_rate * 1e6)
+        # mo:: key implementation different from lino code generates slightly different results
+        # check jupyer nb for linos implementation to debug!
+        # Derive RNG seed from random_state configuration variable
+        seed_int = int(self.mva_cfg.random_state)
         rng_key = random.PRNGKey(seed_int)
-        # One key per weight or bias tensor
-        keys = random.split(rng_key, 2 * len(self.mva_cfg.layers))
-
+        # One key per layer
+        keys = random.split(rng_key, 1 * len(self.mva_cfg.layers))
         # Allocate and store parameters
         for idx, layer_cfg in enumerate(self.mva_cfg.layers):
-            w_key, b_key = keys[2 * idx], keys[2 * idx + 1]
+            w_key, b_key = random.split(keys[idx], 2)
             in_dim, out_dim = dims[idx], dims[idx + 1]
             # Weights: small normal initialization
             self.parameters[layer_cfg.weights] = random.normal(w_key, (in_dim, out_dim)) * 0.1
             # Biases: zeros
             self.parameters[layer_cfg.bias]    = jnp.zeros(out_dim)
+
+        print("Total parameters", sum(p.size for p in jax.tree.leaves(self.parameters)))
 
     def _forward_pass(self, params, x: jnp.ndarray) -> jnp.ndarray:
         """

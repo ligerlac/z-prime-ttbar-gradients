@@ -7,10 +7,6 @@ import mplhep as hep
 import numpy as np
 import numpy.typing as npt
 
-from utils import set_logging
-
-logger = set_logging()
-
 
 class Draw:
     def __init__(

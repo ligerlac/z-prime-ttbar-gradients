@@ -317,7 +317,6 @@ class DifferentiableAnalysis(Analysis):
 
             # Prepare channel data
             obj_copies_ch = processed_data[chname]["objects"]
-            #print("checkpoint 3", obj_copies_ch["mva"])
 
             # we can comptue the MVA features at this point
             for mva_name, mva_instance in mva_instances.items():
@@ -436,7 +435,11 @@ class DifferentiableAnalysis(Analysis):
         events = recursive_to_backend(events, "cpu")
         object_copies = recursive_to_backend(object_copies, "cpu")
         per_channel = defaultdict(dict)
-
+        per_channel["__presel"] = {
+            "objects": object_copies,
+            "events": events,
+            "nevents": -1,
+        }
         for channel in self.channels:
             # Skip channels not used in differentiable analysis
             if not channel.use_in_diff:
@@ -545,39 +548,6 @@ class DifferentiableAnalysis(Analysis):
             trained = {}
             nets = {}
             for mva_cfg in self.config.mva:
-                # # 1) Gather X,y per class
-                # X_list, y_list = [], []
-                # for cls_idx, proc in enumerate(mva_cfg.classes):
-                #     entries = events_per_process.get(proc, [])
-                #     if not entries:
-                #         logger.warning(f"No events found for class '{proc}'.")
-                #         continue
-                #     for obj_copies, n_events in entries:
-                #         X = self._extract_mva_features(obj_copies, mva_cfg.features)
-                #         y = self._extract_mva_labels(n_events, proc, mva_cfg.classes)
-                #         X_list.append(X)
-                #         y_list.append(y)
-
-                # X_all = np.vstack(X_list)
-                # y_all = np.concatenate(y_list)
-
-                # # 2) Balance
-                # X_bal, y_bal, class_weights = balance_dataset(
-                #     X_all, y_all,
-                #     strategy=mva_cfg.balance_strategy,
-                #     random_state=mva_cfg.random_state,
-                # )
-
-                # # 3) Split train/val
-                # X_train, X_val, y_train, y_val = split_train_test(
-                #     X_bal, y_bal,
-                #     test_size=mva_cfg.validation_split,
-                #     random_state=mva_cfg.random_state,
-                #     shuffle=True,
-                #     stratify=y_bal if mva_cfg.balance_strategy!="none" else None,
-                # )
-
-                # 4) Fit
                 if mva_cfg.framework == "jax":
                     net = JAXNetwork(mva_cfg)
                     X_train, y_train, X_val, y_val, class_weights= net.prepare_inputs(events_per_process)
@@ -668,6 +638,7 @@ class DifferentiableAnalysis(Analysis):
             process,
             "nominal",
         )
+        channels_data["__presel"]["nevents"] = ak.sum(mask)
         processed_data["nominal"] = channels_data
         logger.info("Prepared nominal channel data")
 
@@ -700,6 +671,7 @@ class DifferentiableAnalysis(Analysis):
                         process,
                         varname,
                     )
+                    channels_data["__presel"]["nevents"] = ak.sum(mask)
                     processed_data[varname] = channels_data
                     logger.info(f"Prepared channel data for {varname}")
 
@@ -915,14 +887,13 @@ class DifferentiableAnalysis(Analysis):
 
                     # get nominal objects for MVA training ───
                     if config.mva and config.general.run_mva_training:
+
                         # pick the "nominal" channel entries
-                        nominal_ch = processed_data.get("nominal", {})
-                        # you might combine multiple channels or pick one—
-                        # here we just concatenate *all* channels for this dataset
-                        for ch_name, ch_dict in nominal_ch.items():
-                            obj_copies = ch_dict["objects"]
-                            n_events   = int(ch_dict["nevents"])
-                            mva_data.setdefault(process_name, []).append((obj_copies, n_events))
+                        nominal_channels = processed_data.get("nominal", {})
+                        if nominal_channels:
+                            presel_ch = nominal_channels["__presel"]
+                            print(f"Number of __presel events for {process_name}", presel_ch["nevents"])
+                            mva_data.setdefault(process_name, []).append((presel_ch["objects"], presel_ch["nevents"]))
 
             logger.info(f"✅ Finished dataset: {dataset}\n")
 
@@ -948,6 +919,10 @@ class DifferentiableAnalysis(Analysis):
                     for skim_key, (processed_data, metadata) in file_dict.items():
                         # add a key 'mva_nets' pointing to your nets dict
                         processed_data['mva_nets'] = nets
+
+
+        # Apply some additional selection if needed before JAX code
+        pass
 
 
         return all_events, models

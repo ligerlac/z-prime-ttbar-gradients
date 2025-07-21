@@ -3,6 +3,7 @@ import jax.numpy as jnp
 
 from utils.cuts import (
     Zprime_hardcuts,
+    Zprime_hardcuts_no_fj,
     Zprime_softcuts_jax_workshop,
     Zprime_workshop_cuts
 )
@@ -104,11 +105,10 @@ config = {
         }
     },
     "baseline_selection": {
-        "function": Zprime_hardcuts,
+        "function": Zprime_hardcuts_no_fj,
         "use": [
             ("Muon", None),
             ("Jet", None),
-            ("FatJet", None),
         ],
     },
     "good_object_masks": [
@@ -192,19 +192,22 @@ config = {
             "use_in_diff": True,
             "epochs": 1000,
             "framework": "jax", # keras/tf/... if TF need more info (e.g. Model: Sequential, layers: Dense)
+            "learning_rate": 0.02,
+            "validation_split": 0.2,
+            "random_state": 42,
             "grad_optimisation": {
                 "optimise": True,  # this will add weights to set of optimised parameters
                 "learning_rate": 0.0005,  # learning rate for the MVA optimisation
             },
             "layers": [
                 {
-                    "ndim":       32,
+                    "ndim":       16,
                     "activation": lambda x, w, b: jnp.tanh(jnp.dot(x, w) + b), # if using TF, this should be a string (e.g. "relu")
                     "weights":    "W1",
                     "bias":       "b1",
                 },
                 {
-                    "ndim":       32,
+                    "ndim":       16,
                     "activation": lambda x, w, b: jnp.tanh(jnp.dot(x, w) + b),
                     "weights":    "W2",
                     "bias":       "b2",
@@ -220,8 +223,7 @@ config = {
                                                  - pred * y
                                                  + jnp.log(1 + jnp.exp(-jnp.abs(pred)))
                                                  )
-                                        ),
-            "learning_rate": 0.1,
+                                    ),
             "features": [
                 {
                     "name": "n_jet",

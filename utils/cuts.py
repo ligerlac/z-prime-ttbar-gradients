@@ -186,7 +186,7 @@ def Zprime_hardcuts(
     # ---------------------
     selections.add("exactly_1mu", ak.num(muons, axis=1) == 1)
     selections.add("atleast_1jet", ak.num(jets, axis=1) > 1)
-    selections.add("atleast_1fj", ak.count(fatjets.pt, axis=1) == 1)
+    selections.add("atleast_1fj", ak.count(fatjets.pt, axis=1) > 0)
 
     # ---------------------
     # Composite region selection
@@ -194,6 +194,45 @@ def Zprime_hardcuts(
     selections.add(
         "Zprime_channel",
         selections.all("exactly_1mu", "atleast_1jet", "atleast_1fj")
+    )
+
+    return selections
+
+def Zprime_hardcuts_no_fj(
+    muons: ak.Array,
+    jets: ak.Array,
+) -> PackedSelection:
+    """
+    Define non-optimizable kinematic cuts (used in JAX analysis)
+    These hard cuts + baseline cuts ensure observable calculations
+    can work without errors.
+
+    Parameters
+    ----------
+    muons : ak.Array
+        Muon collection.
+    jets : ak.Array
+        Jet collection.
+
+    Returns
+    -------
+    PackedSelection
+        Bitmask selection object containing hard selection criteria.
+    """
+    selections = PackedSelection(dtype="uint64")
+
+    # ---------------------
+    # Object count requirements
+    # ---------------------
+    selections.add("exactly_1mu", ak.num(muons, axis=1) == 1)
+    selections.add("atleast_1jet", ak.num(jets, axis=1) > 1)
+
+    # ---------------------
+    # Composite region selection
+    # ---------------------
+    selections.add(
+        "Zprime_channel_no_fj",
+        selections.all("exactly_1mu", "atleast_1jet")
     )
 
     return selections
