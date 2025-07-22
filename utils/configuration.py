@@ -70,16 +70,16 @@ config = {
     "jax": {
         "optimize": True,
         "learning_rate": 0.01, # default learning rate
-        "max_iterations": 2,
+        "max_iterations": 50,
         'explicit_optimization': True,
         "soft_selection": {
             "function": Zprime_softcuts_jax_workshop,
             "use": [
                 ("Muon", "pt"),
                 ("Jet", "btagDeepB"),
-                ("wjets_vs_ttbar_nn", None),
                 ("PuppiMET", "pt"),
                 ("Jet", "mass"),
+                ("wjets_vs_ttbar_nn", None),
             ],
         },
         "params": {
@@ -120,11 +120,11 @@ config = {
                                         & (muons.miniIsoId > 1)),
             "use": [("Muon", None)],
         },
-        # {
-        #     "object": "Jet",
-        #     "function": lambda jets: ((jets.jetId >= 4) & (jets.btagDeepB > 0.5)),
-        #     "use": [("Jet", None)],
-        # },
+        {
+            "object": "Jet",
+            "function": lambda jets: ((jets.jetId >= 4) & (jets.btagDeepB > 0.5)),
+            "use": [("Jet", None)],
+        },
         {
             "object": "FatJet",
             "function": lambda fatjets: ((fatjets.pt > 500)

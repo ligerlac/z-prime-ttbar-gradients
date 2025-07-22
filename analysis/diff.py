@@ -224,179 +224,6 @@ class DifferentiableAnalysis(Analysis):
                 "preproc":     Path(preproc) if preproc else None,
                 "mva_models":  mva,
             })
-    # -------------------------------------------------------------------------
-    # Significance Calculation
-    # -------------------------------------------------------------------------
-    def _calculate_significance(
-        self,
-        process_histograms: dict,
-        params: dict,
-        recreate_fit_params: bool = False
-    ) -> jnp.ndarray:
-        """
-        Calculate asymptotic significance using evermore with multi-channel modeling.
-
-        Parameters
-        ----------
-        process_histograms : dict
-            Histograms organized by process, variation, region and observable
-        params : dict
-            Fit parameters for significance calculation
-
-        Returns
-        -------
-        jnp.ndarray
-            Asymptotic significance (sqrt(q0)) from profile likelihood ratio
-        """
-        logger.info("📊 Calculating significance from histograms...")
-        histograms = nested_defaultdict_to_dict(process_histograms).copy()
-        significance, mle_pars= calculate_significance_relaxed(histograms, self.channels, params)
-        logger.info(f"✅ Significance calculation complete\n")
-        return significance, mle_pars
-
-    # -------------------------------------------------------------------------
-    # Histogramming Logic
-    # -------------------------------------------------------------------------
-    def histogramming(
-        self,
-        processed_data: dict,
-        mva_instances: dict[str, Any],
-        process: str,
-        variation: str,
-        xsec_weight: float,
-        params: dict[str, Any],
-        event_syst: Optional[dict[str, Any]] = None,
-        direction: Literal["up", "down", "nominal"] = "nominal",
-    ) -> dict[str, jnp.ndarray]:
-        """
-        Apply selections and fill histograms for each observable and channel.
-
-        Parameters
-        ----------
-        processed_data : dict
-            Preprocessed channel data
-        process : str
-            Sample label (e.g., 'ttbar', 'data')
-        variation : str
-            Systematic variation label
-        xsec_weight : float
-            Cross-section normalization factor
-        params : dict
-            JAX parameters for soft selections
-        event_syst : dict, optional
-            Event-level systematic information
-        direction : str, optional
-            Systematic direction ('up', 'down', 'nominal')
-
-        Returns
-        -------
-        dict[str, jnp.ndarray]
-            Histograms for the channel and observables
-        """
-        jax_config = self.config.jax
-        histograms = defaultdict(dict)
-
-        # Skip systematic variations for data
-        if process == "data" and variation != "nominal":
-            logger.debug(f"Skipping {variation} for data")
-            return histograms
-
-        for channel in self.channels:
-            # Skip channels not used in differentiable analysis
-            if not channel.use_in_diff:
-                logger.info(f"Skipping channel {channel.name} (use_in_diff=False)")
-                continue
-
-            chname = channel["name"]
-            # Skip channels not in requested list
-            if (req := self.config.general.channels) and chname not in req:
-                logger.debug(f"Skipping channel {chname} (not in requested channels)")
-                continue
-
-            logger.debug(f"Processing channel: {chname}")
-
-            # Prepare channel data
-            obj_copies_ch = processed_data[chname]["objects"]
-
-            # we can comptue the MVA features at this point
-            for mva_name, mva_instance in mva_instances.items():
-                mva_features = mva_instance._extract_features(obj_copies_ch, mva_instance.mva_cfg.features)
-                #print("checkpoint 4", mva_features)
-                obj_copies_ch[mva_name] = {"features": mva_features, "instance": mva_instance}
-
-            obj_copies_ch = recursive_to_backend(obj_copies_ch, "jax")
-            events_ch = processed_data[chname]["events"]
-            events_ch = recursive_to_backend(events_ch, "jax")
-            nevents = processed_data[chname]["nevents"]
-            logger.debug(f"Channel {chname} has {nevents} events")
-
-            # Compute differentiable weights
-            diff_args = self._get_function_arguments(
-                jax_config.soft_selection.use, obj_copies_ch
-            )
-            diff_weights = jax_config.soft_selection.function(
-                *diff_args, params
-            )
-            logger.debug("Computed differentiable weights")
-
-            # Prepare event weights
-            if process != "data":
-                weights = (events_ch.genWeight * xsec_weight) / abs(events_ch.genWeight)
-                logger.debug(f"MC weights: xsec_weight={xsec_weight:.4f}")
-            else:
-                weights = ak.Array(np.ones(nevents))
-                logger.debug("Using unit weights for data")
-
-            # Apply systematic variations
-            if event_syst and process != "data":
-                weights = self.apply_event_weight_correction(
-                    weights, event_syst, direction, obj_copies_ch
-                )
-                logger.debug(f"Applied {event_syst['name']} {direction} correction")
-
-            weights = jnp.asarray(ak.to_jax(weights))
-            logger.info(
-                f"Events in {chname}: raw={nevents}, weighted={ak.sum(weights):.2f}"
-            )
-
-            # Fill histograms for each observable
-            for observable in channel["observables"]:
-                obs_name = observable["name"]
-                # Skip non-JAX compatible observables
-                if not observable.works_with_jax:
-                    logger.warning(f"Skipping {obs_name} - not JAX-compatible")
-                    continue
-
-                logger.info(f"Processing observable: {obs_name}")
-
-                # Compute observable values
-                obs_args = self._get_function_arguments(observable["use"], obj_copies_ch)
-                values = jnp.asarray(ak.to_jax(observable["function"](*obs_args)))
-                logger.debug(f"Computed {obs_name} values")
-                # Binning
-                binning = observable["binning"]
-                if isinstance(binning, str):
-                    low, high, nbins = map(float, binning.split(","))
-                    binning = jnp.linspace(low, high, int(nbins))
-                else:
-                    binning = jnp.array(binning)
-
-                # Prepare binning
-                bandwidth = jax_config.params["kde_bandwidth"]
-                # Compute KDE-based histogram
-                cdf = jax.scipy.stats.norm.cdf(
-                    binning.reshape(-1, 1),
-                    loc=values.reshape(1, -1),
-                    scale=bandwidth,
-                )
-                weighted_cdf = cdf * diff_weights.reshape(1, -1) * weights.reshape(1, -1)
-                bin_weights = weighted_cdf[1:, :] - weighted_cdf[:-1, :]
-                histogram = jnp.sum(bin_weights, axis=1)
-
-                histograms[chname][obs_name] = (jnp.asarray(histogram), binning)
-                logger.info(f"Filled histogram for {obs_name} in {chname}")
-
-        return histograms
 
     def get_channel_data(
         self,
@@ -498,45 +325,6 @@ class DifferentiableAnalysis(Analysis):
 
         return per_channel
 
-    # def _extract_mva_features(
-    #         self,
-    #         obj_copies: dict[str, ak.Array],
-    #         feat_cfgs: List[FeatureConfig],
-    #     ) -> np.ndarray:
-    #         """
-    #         Stack all configured features into an (n_events, n_features) array.
-    #         Applies any optional per-feature scaling.
-    #         """
-    #         arrays: list[np.ndarray] = []
-    #         for feat in feat_cfgs:
-    #             # grab the raw awkward array(s)
-    #             args = self._get_function_arguments(feat.use, obj_copies)
-    #             vals = feat.function(*args)
-    #             # apply optional scaling
-    #             if feat.scale is not None:
-    #                 vals = feat.scale(vals)
-    #             arrays.append(np.array(vals))
-
-    #         # each arrays[i] is shape (n_events,)  → stack as columns
-    #         X = np.stack(arrays, axis=1).astype(float)
-    #         return X
-
-    # def _extract_mva_labels(
-    #         self,
-    #         n_events: int,
-    #         process: str,
-    #         classes: List[str],
-    #     ) -> np.ndarray:
-    #         """
-    #         Return a 1-D integer array of length `n_events` equal to classes.index(process).
-    #         """
-    #         try:
-    #             lbl = classes.index(process)
-    #         except ValueError:
-    #             raise RuntimeError(f"Process `{process}` not in MVAConfig.classes={classes}")
-    #         return np.full(n_events, lbl, dtype=int)
-
-
     def run_mva_training(
             self,
             events_per_process: dict[str, list[Tuple[dict, int]]]
@@ -576,7 +364,6 @@ class DifferentiableAnalysis(Analysis):
                 logger.info(f"Finished training MVA '{mva_cfg.name}'")
 
             return trained, nets
-
 
     def untraced_process(
         self,
@@ -678,6 +465,180 @@ class DifferentiableAnalysis(Analysis):
         return processed_data
 
     # -------------------------------------------------------------------------
+    # Significance Calculation
+    # -------------------------------------------------------------------------
+    def _calculate_significance(
+        self,
+        process_histograms: dict,
+        params: dict,
+        recreate_fit_params: bool = False
+    ) -> jnp.ndarray:
+        """
+        Calculate asymptotic significance using evermore with multi-channel modeling.
+
+        Parameters
+        ----------
+        process_histograms : dict
+            Histograms organized by process, variation, region and observable
+        params : dict
+            Fit parameters for significance calculation
+
+        Returns
+        -------
+        jnp.ndarray
+            Asymptotic significance (sqrt(q0)) from profile likelihood ratio
+        """
+        logger.info("📊 Calculating significance from histograms...")
+        histograms = nested_defaultdict_to_dict(process_histograms).copy()
+        significance, mle_pars= calculate_significance_relaxed(histograms, self.channels, params)
+        logger.info(f"✅ Significance calculation complete\n")
+        return significance, mle_pars
+
+    # -------------------------------------------------------------------------
+    # Histogramming Logic
+    # -------------------------------------------------------------------------
+    def histogramming(
+        self,
+        processed_data: dict,
+        mva_instances: dict[str, Any],
+        process: str,
+        variation: str,
+        xsec_weight: float,
+        params: dict[str, Any],
+        event_syst: Optional[dict[str, Any]] = None,
+        direction: Literal["up", "down", "nominal"] = "nominal",
+    ) -> dict[str, jnp.ndarray]:
+        """
+        Apply selections and fill histograms for each observable and channel.
+
+        Parameters
+        ----------
+        processed_data : dict
+            Preprocessed channel data
+        process : str
+            Sample label (e.g., 'ttbar', 'data')
+        variation : str
+            Systematic variation label
+        xsec_weight : float
+            Cross-section normalization factor
+        params : dict
+            JAX parameters for soft selections
+        event_syst : dict, optional
+            Event-level systematic information
+        direction : str, optional
+            Systematic direction ('up', 'down', 'nominal')
+
+        Returns
+        -------
+        dict[str, jnp.ndarray]
+            Histograms for the channel and observables
+        """
+        jax_config = self.config.jax
+        histograms = defaultdict(dict)
+
+        # Skip systematic variations for data
+        if process == "data" and variation != "nominal":
+            logger.debug(f"Skipping {variation} for data")
+            return histograms
+
+        for channel in self.channels:
+            # Skip channels not used in differentiable analysis
+            if not channel.use_in_diff:
+                logger.info(f"Skipping channel {channel.name} (use_in_diff=False)")
+                continue
+
+            chname = channel["name"]
+            # Skip channels not in requested list
+            if (req := self.config.general.channels) and chname not in req:
+                logger.debug(f"Skipping channel {chname} (not in requested channels)")
+                continue
+
+            logger.debug(f"Processing channel: {chname}")
+
+            # Prepare channel data
+            obj_copies_ch = processed_data[chname]["objects"]
+
+            # we can comptue the MVA features at this point
+            for mva_name, mva_instance in mva_instances.items():
+                mva_features = mva_instance._extract_features(obj_copies_ch, mva_instance.mva_cfg.features)
+                obj_copies_ch[mva_name] = {"features": mva_features, "instance": mva_instance}
+
+            obj_copies_ch = recursive_to_backend(obj_copies_ch, "jax")
+            events_ch = processed_data[chname]["events"]
+            events_ch = recursive_to_backend(events_ch, "jax")
+            nevents = processed_data[chname]["nevents"]
+            logger.debug(f"Channel {chname} has {nevents} events")
+
+            # Compute differentiable weights
+            diff_args = self._get_function_arguments(
+                jax_config.soft_selection.use, obj_copies_ch
+            )
+            diff_weights = jax_config.soft_selection.function(
+                *diff_args, params
+            )
+            logger.debug("Computed differentiable weights")
+
+            # Prepare event weights
+            if process != "data":
+                weights = (events_ch.genWeight * xsec_weight) / abs(events_ch.genWeight)
+                logger.debug(f"MC weights: xsec_weight={xsec_weight:.4f}")
+            else:
+                weights = ak.Array(np.ones(nevents))
+                logger.debug("Using unit weights for data")
+
+            # Apply systematic variations
+            if event_syst and process != "data":
+                weights = self.apply_event_weight_correction(
+                    weights, event_syst, direction, obj_copies_ch
+                )
+                logger.debug(f"Applied {event_syst['name']} {direction} correction")
+
+            weights = jnp.asarray(ak.to_jax(weights))
+            logger.info(
+                f"Events in {chname}: raw={nevents}, weighted={ak.sum(weights):.2f}"
+            )
+
+            # Fill histograms for each observable
+            for observable in channel["observables"]:
+                obs_name = observable["name"]
+                # Skip non-JAX compatible observables
+                if not observable.works_with_jax:
+                    logger.warning(f"Skipping {obs_name} - not JAX-compatible")
+                    continue
+
+                logger.info(f"Processing observable: {obs_name}")
+
+                # Compute observable values
+                obs_args = self._get_function_arguments(observable["use"], obj_copies_ch)
+                values = jnp.asarray(ak.to_jax(observable["function"](*obs_args)))
+                logger.debug(f"Computed {obs_name} values")
+                # Binning
+                binning = observable["binning"]
+                if isinstance(binning, str):
+                    low, high, nbins = map(float, binning.split(","))
+                    binning = jnp.linspace(low, high, int(nbins))
+                else:
+                    binning = jnp.array(binning)
+
+                # Prepare binning
+                bandwidth = params["kde_bandwidth"]
+                # Compute KDE-based histogram
+                cdf = jax.scipy.stats.norm.cdf(
+                    binning.reshape(-1, 1),
+                    loc=values.reshape(1, -1),
+                    scale=bandwidth,
+                )
+                weighted_cdf = cdf * diff_weights.reshape(1, -1) * weights.reshape(1, -1)
+                bin_weights = weighted_cdf[1:, :] - weighted_cdf[:-1, :]
+                histogram = jnp.sum(bin_weights, axis=1)
+
+                histograms[chname][obs_name] = (jnp.asarray(histogram), binning)
+                logger.info(f"Filled histogram for {obs_name} in {chname}")
+
+        return histograms
+
+
+    # -------------------------------------------------------------------------
     # Event Processing Entry Point
     # -------------------------------------------------------------------------
     def collect_histograms(
@@ -722,7 +683,6 @@ class DifferentiableAnalysis(Analysis):
 
         # Process nominal variation
         logger.debug(f"Processing nominal variation for {process}")
-        #print("Checkpoint 2", processed_data.keys())
         histograms = self.histogramming(
             processed_data["nominal"],
             processed_data["mva_nets"],
@@ -920,10 +880,8 @@ class DifferentiableAnalysis(Analysis):
                         # add a key 'mva_nets' pointing to your nets dict
                         processed_data['mva_nets'] = nets
 
-
-        # Apply some additional selection if needed before JAX code
-        pass
-
+            with open("model.pkl", "rb") as f:
+                models[model_name] = cloudpickle.load(f)
 
         return all_events, models
 
@@ -967,8 +925,6 @@ class DifferentiableAnalysis(Analysis):
                         f"Processing histograms from {file_key} in {dataset}"
                     )
                     # Collect histograms for this file
-                    # print("Checkpoint 1", processed_data, aux_and_nn_params.keys())
-                    print(params["aux"].keys())
                     histograms = self.collect_histograms(processed_data, metadata, params["aux"])
                     # Merge with existing histograms
                     process_histograms[process_name] = merge_histograms(
@@ -978,7 +934,7 @@ class DifferentiableAnalysis(Analysis):
         # Calculate final significance
         logger.info(f"✅ Histogramming complete")
         significance, mle_pars = self._calculate_significance(process_histograms, params["fit"])
-        jax.lax.stop_gradient(self.set_histograms(process_histograms))
+        self.set_histograms(process_histograms)
         return significance, mle_pars
 
     # -------------------------------------------------------------------------
@@ -1064,23 +1020,25 @@ class DifferentiableAnalysis(Analysis):
             # Define objective function (negative significance)
             def objective(params):
                 p0, mle_pars = self.run_histogram_and_significance(params, processed_data_events)
-                return -p0, mle_pars
+                return p0, mle_pars
 
             # Create parameter clamping function
             clamp_fn = make_apply_param_updates(self.config.jax.param_updates)
 
             # Configure learning rates
             if (config_lr := self.config.jax.learning_rates) is not None:
-                make_builder = make_lr_and_clamp_transform(config_lr, default_lr=1e-2, fit_lr=1e-3, nn_lr=0.0005, clamp_fn=clamp_fn)
+                make_builder = make_lr_and_clamp_transform(config_lr,
+                                                           default_lr=1e-2,
+                                                           fit_lr=1e-3,
+                                                           nn_lr=0.0005,
+                                                           clamp_fn=clamp_fn)
                 tx, _ = make_builder(all_params)
             else:
                 tx = optax.adam(learning_rate=self.config.jax.learning_rate)
 
             logger.info(f"== Starting gradient-based optimisation ===")
-
             initial_params = all_params.copy()
-            print(initial_params)
-            # Optimization loop
+            # Optimisation loop
             pvals_history = []
             aux_history = {k: [] for k in all_params["aux"]}
             mle_history = {k: [] for k in init_mle_pars}
@@ -1095,7 +1053,6 @@ class DifferentiableAnalysis(Analysis):
 
                 state = solver.init_state(pars)
                 logger.info("Starting gradient-based optimization...")
-
                 if self.config.jax.explicit_optimization:
                     logger.info("Using explicit optimization loop")
                     for step in range(n_steps):
@@ -1125,7 +1082,7 @@ class DifferentiableAnalysis(Analysis):
                     mle_pars = state.aux
 
                 # At the end, return final gradients and final p-value
-                return -state.value, mle_pars, pars
+                return state.value, mle_pars, pars
 
             # Set up optimizer
             final_pval, mle_pars, pars = optimize_and_log(n_steps=self.config.jax.max_iterations)
@@ -1287,7 +1244,7 @@ def make_apply_param_updates(param_update_rules: dict) -> callable:
             else:
                 new_aux[key] = x_temp
 
-        return {"aux": new_aux, "fit": tentative_new_params["fit"]}#, **{nn: tentative_new_params[nn] for nn in tentative_new_params if nn.startswith("nn_")}}
+        return {"aux": new_aux, "fit": tentative_new_params["fit"]}
 
     return apply_rules
 
@@ -1299,7 +1256,6 @@ def make_clamp_transform(clamp_fn):
 
     def update_fn(updates, state, params=None):
         # 1) apply the raw updates to get tentative new params
-        print("Params:: ", params, "\n Update:: ", updates)
         new_params = optax.apply_updates(params, updates)
         # 2) clamp into your allowed region
         new_params = clamp_fn(params, new_params)
@@ -1321,23 +1277,19 @@ def make_lr_and_clamp_transform(
     sub_transforms = {
         **{f"aux__{k}": optax.adam(lr) for k, lr in lr_map.items()},
         "aux__default":    optax.adam(default_lr),
+        "NN__default":    optax.adam(nn_lr),
         "fit__default":    optax.adam(fit_lr),
-        #"nn__default":     optax.adam(nn_lr),
     }
 
     def make_label_pytree(params):
-        labels = {"aux": {}, "fit": {}, **{param: {} for param in params if param.startswith("nn_")}}
+        labels = {"aux": {}, "fit": {}}
         for aux_key in params["aux"]:
+            print(aux_key)
             labels["aux"][aux_key] = (
                 f"aux__{aux_key}" if aux_key in lr_map else "aux__default"
             )
-
-        # for key in params.keys():
-        #     if not key.startswith("nn_"): continue
-        #     for nn_key in params[key]:
-        #         labels[key][nn_key] = (
-        #         f"aux__{nn_key}" if nn_key in lr_map else "nn__default"
-        #         )
+            if "__NN" in aux_key:
+                labels["aux"][aux_key] = "NN__default"
 
         for fit_key in params["fit"]:
             labels["fit"][fit_key] = "fit__default"

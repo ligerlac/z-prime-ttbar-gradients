@@ -247,7 +247,6 @@ class JAXNetwork(BaseNetwork):
             # Biases: zeros
             self.parameters[f"__NN_{self.name}_{layer_cfg.bias}"]    = jnp.zeros(out_dim)
 
-        print("Total parameters", sum(p.size for p in jax.tree.leaves(self.parameters)))
 
     def _forward_pass(self, params, x: jnp.ndarray) -> jnp.ndarray:
         """

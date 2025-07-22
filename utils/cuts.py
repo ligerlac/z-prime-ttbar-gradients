@@ -184,8 +184,8 @@ def Zprime_hardcuts(
     # ---------------------
     # Object count requirements
     # ---------------------
-    selections.add("exactly_1mu", ak.num(muons, axis=1) == 1)
-    selections.add("atleast_1jet", ak.num(jets, axis=1) > 1)
+    selections.add("exactly_1mu", ak.count(muons.pt, axis=1) == 1)
+    selections.add("atleast_1jet", ak.count(jets.pt, axis=1) > 1)
     selections.add("atleast_1fj", ak.count(fatjets.pt, axis=1) > 0)
 
     # ---------------------
@@ -224,8 +224,8 @@ def Zprime_hardcuts_no_fj(
     # ---------------------
     # Object count requirements
     # ---------------------
-    selections.add("exactly_1mu", ak.num(muons, axis=1) == 1)
-    selections.add("atleast_1jet", ak.num(jets, axis=1) > 1)
+    selections.add("exactly_1mu", ak.count(muons.pt, axis=1) == 1)
+    selections.add("atleast_1jet", ak.count(jets.pt, axis=1) > 1)
 
     # ---------------------
     # Composite region selection
@@ -320,13 +320,12 @@ def Zprime_workshop_cuts(
 #====================
 # JAX version of the workshop selection
 #====================
-#@jax.jit
 def Zprime_softcuts_jax_workshop(
     muons: ak.Array,
     jets: ak.Array,
-    nn,
     met: ak.Array,
     jet_mass: ak.Array,
+    nn,
     params: dict
 ) -> jnp.ndarray:
     """
@@ -412,7 +411,7 @@ def Zprime_softcuts_jax_workshop(
     # ---------------------
     # Combine cut weights multiplicatively (AND logic)
     # ---------------------
-    cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"], cuts["lep_ht_cut"], cuts["nn_cut"]]) # ,
+    cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"], cuts["lep_ht_cut"], cuts["nn_cut"]]) #
     selection_weight = jnp.prod(cut_values, axis=0)
     return selection_weight
 
