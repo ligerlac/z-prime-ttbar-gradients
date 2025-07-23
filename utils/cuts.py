@@ -492,9 +492,6 @@ def Zprime_softcuts_SR_tag(
     -------
     PackedSelection
     """
-    print("================================================================")
-    print("==============   Zprime_softcuts_SR_tag called   ==============")
-    print("================================================================")
     selections = PackedSelection(dtype="uint64")
     lep_ht = muons.pt + met.pt
 
@@ -535,10 +532,6 @@ def Zprime_softcuts_SR_notag(
     -------
     PackedSelection
     """
-    print("================================================================")
-    print("=============   Zprime_softcuts_SR_notag called   ==============")
-    print("================================================================")
-
     selections = PackedSelection(dtype="uint64")
     lep_ht = muons.pt + met.pt
 
