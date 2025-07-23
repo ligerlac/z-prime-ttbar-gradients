@@ -993,7 +993,6 @@ class DifferentiableAnalysis(Analysis):
 
 
         logger.info("✅ Event preprocessing complete\n")
-
         logger.info(" === Running untraced siginificance calculation to get initial histograms.. ===")
         init_pval, init_mle_pars = self.run_histogram_and_significance(
             all_params, processed_data_events
@@ -1026,15 +1025,28 @@ class DifferentiableAnalysis(Analysis):
             clamp_fn = make_apply_param_updates(self.config.jax.param_updates)
 
             # Configure learning rates
-            if (config_lr := self.config.jax.learning_rates) is not None:
-                make_builder = make_lr_and_clamp_transform(config_lr,
-                                                           default_lr=1e-2,
-                                                           fit_lr=1e-3,
-                                                           nn_lr=0.0005,
-                                                           clamp_fn=clamp_fn)
-                tx, _ = make_builder(all_params)
-            else:
-                tx = optax.adam(learning_rate=self.config.jax.learning_rate)
+            config_lr = self.config.jax.learning_rates if self.config.jax.learning_rates else {}
+
+            # Frozen parameters (so far only NN parameters can be frozen)
+            frozen_keys = set()
+            nn_config_lr = {}
+            for mva_config in self.config.mva:
+                if not mva_config.grad_optimisation.optimise:
+                    for param in all_params["aux"]:
+                        if "__NN" in param and mva_config.name in param:
+                            frozen_keys.add(param)
+                else:
+                    nn_config_lr[mva_config.name] = mva_config.grad_optimisation.learning_rate
+
+            make_builder = make_lr_and_clamp_transform(config_lr,
+                                                        default_lr=self.config.jax.learning_rate,
+                                                        fit_lr=1e-3,
+                                                        nn_lr=nn_config_lr,
+                                                        clamp_fn=clamp_fn,
+                                                        frozen_keys=frozen_keys)
+            tx, _ = make_builder(all_params)
+
+
 
             logger.info(f"== Starting gradient-based optimisation ===")
             initial_params = all_params.copy()
@@ -1267,7 +1279,12 @@ def make_clamp_transform(clamp_fn):
 
 
 def make_lr_and_clamp_transform(
-    lr_map: dict, default_lr: float, fit_lr: float, nn_lr: float, clamp_fn: callable
+    lr_map: dict,
+    default_lr: float,
+    fit_lr: float,
+    nn_lr: dict,
+    clamp_fn: callable,
+    frozen_keys: Optional[set[str]] = set(),
 ) -> callable:
     """
     Combines your per-parameter LR multi-transform with a clamp-after-step transform.
@@ -1275,24 +1292,36 @@ def make_lr_and_clamp_transform(
     """
     # first, your existing sub_transforms and label builder:
     sub_transforms = {
-        **{f"aux__{k}": optax.adam(lr) for k, lr in lr_map.items()},
-        "aux__default":    optax.adam(default_lr),
-        "NN__default":    optax.adam(nn_lr),
-        "fit__default":    optax.adam(fit_lr),
+        **{f"aux__{k}":     optax.adam(lr) for k, lr in lr_map.items()},
+        **{f"NN__{k}":      optax.adam(lr) for k, lr in nn_lr.items()},
+        "aux__default":     optax.adam(default_lr),
+        "NN__default":      optax.adam(default_lr),
+        "fit__default":     optax.adam(fit_lr),
+        "no_update":        optax.set_to_zero(),  # no-op transform
     }
 
     def make_label_pytree(params):
         labels = {"aux": {}, "fit": {}}
         for aux_key in params["aux"]:
-            print(aux_key)
-            labels["aux"][aux_key] = (
-                f"aux__{aux_key}" if aux_key in lr_map else "aux__default"
-            )
-            if "__NN" in aux_key:
-                labels["aux"][aux_key] = "NN__default"
+            if aux_key in frozen_keys:
+                labels["aux"][aux_key] = "no_update"
+            elif "__NN" in aux_key:
+                for mva_with_lr in nn_lr:
+                    if mva_with_lr in aux_key:
+                        labels["aux"][aux_key] = f"NN__{mva_with_lr}"
+                        break
+                    else:
+                        labels["aux"][aux_key] = "NN__default"
+            elif aux_key in lr_map:
+                labels["aux"][aux_key] = f"aux__{aux_key}"
+            else:
+                labels["aux"][aux_key] = "aux__default"
 
         for fit_key in params["fit"]:
-            labels["fit"][fit_key] = "fit__default"
+            if fit_key in frozen_keys:
+                labels["fit"][fit_key] = "no_update"
+            else:
+                labels["fit"][fit_key] = "fit__default"
 
         return labels
 

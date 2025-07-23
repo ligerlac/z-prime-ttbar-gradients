@@ -357,20 +357,6 @@ def Zprime_softcuts_jax_workshop(
     nn_features = nn["features"]
     nn_score = nn_instance._forward_pass(params, nn_features)
 
-    # padded_jet_mass = ak.pad_none(jet_mass, target=2, axis=1, clip=True)
-    # padded_jet_mass = ak.fill_none(padded_jet_mass, 0.0)  # fill None with 0.0
-
-    # n_jet = ak.to_jax(ak.num(jets, axis=1)) * var_scale_dict["n_jet"]
-    # leading_jet_mass = ak.to_jax(jet_mass[:, 0]) * var_scale_dict["leading_jet_mass"]
-    # subleading_jet_mass = ak.to_jax(padded_jet_mass[:, 1]) * var_scale_dict["subleading_jet_mass"]
-
-    # X = jnp.column_stack([
-    #     n_jet,
-    #     leading_jet_mass,
-    #     subleading_jet_mass
-    # ])  # shape (n_events, 3)
-
-
     # Choose a fixed numebr of jets
     max_jets = 8   # for example
     padded = ak.pad_none(jets, target=max_jets, axis=1, clip=True)

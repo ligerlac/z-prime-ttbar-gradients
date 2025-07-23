@@ -64,7 +64,6 @@ def get_mtt(
         with_name="Momentum4D",
     )
     p4tot = p4mu + p4fj + p4j + p4met
-    #print(p4tot.mass)
     return p4tot.mass
 
 
@@ -523,9 +522,11 @@ def compute_mva_vars(muons: ak.Array, jets: ak.Array) -> dict[str, np.ndarray]:
     features = {}
 
     # jet-level features 1
-    features["n_jet"] = ak.num(jets, axis=1).to_numpy()
+    padded_jet_mass = ak.pad_none(jets.mass, target=2, axis=1, clip=True)
+    padded_jet_mass = ak.fill_none(padded_jet_mass, 0.0)  # fill None with 0.0
+    features["n_jet"] = ak.to_numpy(ak.num(jets, axis=1))
     features["leading_jet_mass"] = ak.to_numpy(jets.mass[:, 0])
-    features["subleading_jet_mass"] = ak.to_numpy(jets.mass[:, 1])
+    features["subleading_jet_mass"] = ak.to_numpy(padded_jet_mass[:, 1])
 
     # Scalar sum of transverse momenta (ST)
     features["st"] = ak.to_numpy(
