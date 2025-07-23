@@ -142,11 +142,6 @@ config = {
                                         & (muons.miniIsoId > 1)),
             "use": [("Muon", None)],
         },
-        # {
-        #     "object": "Jet",
-        #     "function": lambda jets: ((jets.jetId >= 4) & (jets.btagDeepB > 0.5)),
-        #     "use": [("Jet", None)],
-        # },
         {
             "object": "FatJet",
             "function": lambda fatjets: ((fatjets.pt > 500)
@@ -222,7 +217,7 @@ config = {
                 "optimise": True,  # this will add weights to set of optimised parameters
                 "learning_rate": 0.0005,  # learning rate for the MVA optimisation
             },
-            "classes": ["wjets", "ttbar_semilep"], # (TODO:: dict elements to combine processes into single class)
+            "classes": ["wjets", {"ttbar": ("ttbar_semilep", "ttbar_had", "ttbar_lep")}],
             "balance_strategy": "undersample",
             "layers": [
                 {

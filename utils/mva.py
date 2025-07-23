@@ -86,18 +86,44 @@ class BaseNetwork(ABC, Analysis):
         self,
         n_events: int,
         process: str,
-        classes: List[str]
+        classes: list[Union[str, dict[str, tuple[str]]]],
     ) -> np.ndarray:
         """
-        Produce integer labels for a given process/class.
+        Produce integer labels for a given process, based on class definitions.
+
+        Parameters
+        ----------
+        n_events : int
+            Number of events for this process.
+        process : str
+            The process name (e.g. 'ttbar_semilep', 'wjets').
+        classes : list
+            List of class definitions, where each entry is either:
+            - a string (single-process class), or
+            - a dict mapping a class name to a list/tuple of process names to merge.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (n_events,) filled with the integer label corresponding to the process.
+
+        Raises
+        ------
+        RuntimeError
+            If the process name is not found in any class definition.
         """
-        try:
-            idx = classes.index(process)
-        except ValueError:
-            raise RuntimeError(
-                f"Process `{process}` not in classes={classes}"
-            )
-        return np.full(n_events, idx, dtype=int)
+        for idx, cls in enumerate(classes):
+            if isinstance(cls, str):
+                if process == cls:
+                    return np.full(n_events, idx, dtype=int)
+            elif isinstance(cls, dict):
+                class_name, proc_list = next(iter(cls.items()))
+                if process == class_name:
+                    return np.full(n_events, idx, dtype=int)
+
+        raise RuntimeError(
+            f"Process '{process}' not found in any class definition in: {classes}"
+        )
 
     def _balance_dataset(
         self,
@@ -138,29 +164,78 @@ class BaseNetwork(ABC, Analysis):
 
     def prepare_inputs(
         self,
-        events_per_process: list[tuple[dict, int]],
+        events_per_process: dict[str, list[tuple[dict, int]]],
     ) -> Any:
+        """
+        Prepare input features and labels for MVA training.
 
-        # 1) Gather X,y per class
+        Parameters
+        ----------
+        events_per_process : dict
+            Mapping from process name to a list of (object_copies, n_events) tuples.
+            These represent the corrected object collections and number of events for each process.
+
+        Returns
+        -------
+        Tuple[np.ndarray, ...]
+            Tuple containing:
+            - Training features Xtr
+            - Training labels ytr
+            - Validation features Xvl
+            - Validation labels yvl
+            - Class weights cw (to rebalance losses)
+        """
         X_list, y_list = [], []
-        for cls_idx, proc in enumerate(self.mva_cfg.classes):
-            entries = events_per_process.get(proc, [])
-            if not entries:
-                logger.warning(f"No events found for class '{proc}'.")
+
+        # Loop over class definitions in config
+        for cls_idx, class_def in enumerate(self.mva_cfg.classes):
+            # Handle plain string: single-process class like "wjets"
+            if isinstance(class_def, str):
+                class_name = class_def
+                process_list = [class_def]
+
+            # Handle dictionary: merged-process class like {"ttbar": ["ttbar_semilep", ...]}
+            elif isinstance(class_def, dict):
+                # Assumes only one key-value pair per dict
+                class_name, process_list = next(iter(class_def.items()))
+
+            else:
+                raise TypeError(f"Invalid class definition: {class_def}")
+
+            # Directly get entries for this class name from the training data
+            all_entries = events_per_process.get(class_name, [])
+
+            if not all_entries:
+                logger.warning(f"No events found for MVA class '{class_name}'. Skipping.")
                 continue
-            for obj_copies, n_events in entries:
+
+            # For each (object_copies, n_events) pair in this class
+            for obj_copies, n_events in all_entries:
+                # Extract feature matrix from object dictionaries
                 X = self._extract_features(obj_copies, self.mva_cfg.features)
-                y = self._make_labels(n_events, proc, self.mva_cfg.classes)
+
+                # Generate label array for this batch of size n_events
+                y = self._make_labels(n_events, class_name, self.mva_cfg.classes)
+
+                print(X.shape, y.shape, class_name)
+                # Append to full dataset lists
                 X_list.append(X)
                 y_list.append(y)
 
+        # Sanity check: ensure we have data
+        if not X_list or not y_list:
+            raise ValueError("No valid training data found for any class.")
+
+        # Stack all batches into unified arrays
         X = np.vstack(X_list)
         y = np.concatenate(y_list)
 
-        # 2) balance
+        # Step 2: balance the dataset (e.g. by undersampling/oversampling)
         Xb, yb, cw = self._balance_dataset(X, y)
 
-        # 3) split
+        print(Xb.shape, yb.shape)
+
+        # Step 3: train/validation split
         Xtr, Xvl, ytr, yvl = self.split_train_test(Xb, yb)
 
         return Xtr, ytr, Xvl, yvl, cw
@@ -238,9 +313,11 @@ class JAXNetwork(BaseNetwork):
         rng_key = random.PRNGKey(seed_int)
         # One key per layer
         keys = random.split(rng_key, 1 * len(self.mva_cfg.layers))
+        keys = random.split(keys[2], 6)  # split each key into two for weights/biases
         # Allocate and store parameters
         for idx, layer_cfg in enumerate(self.mva_cfg.layers):
-            w_key, b_key = random.split(keys[idx], 2)
+            #w_key, b_key = random.split(keys[idx], 2)
+            w_key, b_key = keys[2*idx], keys[2*idx + 1]
             in_dim, out_dim = dims[idx], dims[idx + 1]
             # Weights: small normal initialization
             self.parameters[f"__NN_{self.name}_{layer_cfg.weights}"] = random.normal(w_key, (in_dim, out_dim)) * 0.1

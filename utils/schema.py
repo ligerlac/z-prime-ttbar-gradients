@@ -803,12 +803,17 @@ class MVAConfig(SubscriptableModel):
     ]
 
     classes: Annotated[
-        List[str],
+        List[Union[str, dict[str, Union[Tuple[str, ...], List[str]]]]],
         Field(
             ...,
-            description="List of process names (exactly as in your fileset metadata) to use as classes; "
-                        "the index in this list is the integer label."
-        ),
+            description=(
+                "List of class definitions for training the classifier. Each entry can be:\n"
+                "- a single process name (e.g. 'wjets'), or\n"
+                "- a dictionary mapping a class label to multiple process names "
+                "(e.g. {'ttbar': ['ttbar_semilep', 'ttbar_had', 'ttbar_lep']}).\n"
+                "The index of each entry determines the class label."
+            ),
+        )
     ]
     balance_strategy: Annotated[
         Literal["none", "undersample", "oversample", "class_weight"],

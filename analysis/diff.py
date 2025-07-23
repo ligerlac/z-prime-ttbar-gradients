@@ -827,7 +827,14 @@ class DifferentiableAnalysis(Analysis):
         """
         config = self.config
         all_events = defaultdict(lambda: defaultdict(dict))
-        mva_data: dict[str, list[Tuple[dict, int]]] = {cls: [] for cfg in (config.mva or []) for cls in cfg.classes}
+        mva_data: dict[str, list[Tuple[dict, int]]] = {}
+        for mva_cfg in config.mva or []:
+            for cls in mva_cfg.classes:
+                if isinstance(cls, str):
+                    mva_data.setdefault(cls, [])
+                elif isinstance(cls, dict):
+                    class_name = next(iter(cls.keys()))
+                    mva_data.setdefault(class_name, [])
 
         for dataset, content in fileset.items():
             metadata = content["metadata"]
@@ -922,13 +929,44 @@ class DifferentiableAnalysis(Analysis):
                     # get nominal objects for MVA training ───
                     if config.mva and config.general.run_mva_training:
 
-                        # pick the "nominal" channel entries
-                        nominal_channels = processed_data.get("nominal", {})
-                        if nominal_channels:
-                            presel_ch = nominal_channels["__presel"]
-                            print(f"Number of __presel events for {process_name} in analysis: ", presel_ch["nevents"])
-                            print(f"Number of __presel events for {process_name} in MVA pre-training: ", presel_ch["nevents"])
-                            mva_data.setdefault(process_name, []).append((presel_ch["mva_objects"], presel_ch["mva_nevents"]))
+                        # --------------------------------------------------------
+                        # Determine which MVA class this process should contribute to
+                        # --------------------------------------------------------
+                        for mva_cfg in config.mva:
+
+                            # Iterate over all class definitions in the MVA config
+                            for cls in mva_cfg.classes:
+                                # Handle simple string class: e.g. "wjets"
+                                if isinstance(cls, str):
+                                    class_name = cls
+                                    proc_names = [cls]
+
+                                # Handle merged class: e.g. {"ttbar": ["ttbar_semilep", "ttbar_lep"]}
+                                elif isinstance(cls, dict):
+                                    class_name, proc_names = next(iter(cls.items()))
+
+                                else:
+                                    # Skip invalid definitions (shouldn’t occur with validated config)
+                                    continue
+
+                                # Skip this class if the current process isn't in its process list
+                                if process_name not in proc_names:
+                                    continue
+
+                                # If this process contributes to the class, extract MVA input objects
+                                nominal_channels = processed_data.get("nominal", {})
+                                if nominal_channels:
+                                    presel_ch = nominal_channels["__presel"]
+
+                                    logger.debug(
+                                        f"Adding {presel_ch['mva_nevents']} events from process '{process_name}' "
+                                        f"to MVA training class '{class_name}'."
+                                    )
+
+                                    # Append MVA training data (objects, count) to this class
+                                    mva_data[class_name].append(
+                                        (presel_ch["mva_objects"], presel_ch["mva_nevents"])
+                                    )
 
             logger.info(f"✅ Finished dataset: {dataset}\n")
 
@@ -955,7 +993,7 @@ class DifferentiableAnalysis(Analysis):
                         # add a key 'mva_nets' pointing to your nets dict
                         processed_data['mva_nets'] = nets
 
-
+        exit(1)
         return all_events, models
 
     def run_histogram_and_significance(
