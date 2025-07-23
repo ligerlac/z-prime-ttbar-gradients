@@ -129,8 +129,8 @@ class Analysis:
 
         return good_objects
 
-    def apply_object_masks(self, obj_copies):
-        if (obj_masks := self.config.good_object_masks) == []:
+    def apply_object_masks(self, obj_copies, mask_set="analysis"):
+        if (obj_masks := self.config.good_object_masks.get(mask_set, [])) == []:
             return obj_copies
         filtered = self.get_good_objects(obj_copies, obj_masks)
         for k in filtered:

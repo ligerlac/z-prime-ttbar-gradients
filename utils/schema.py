@@ -66,6 +66,9 @@ class GoodObjectMasksConfig(SubscriptableModel):
 
         return self
 
+class GoodObjectMasksBlockConfig(SubscriptableModel):
+    analysis: List[GoodObjectMasksConfig]
+    mva: List[GoodObjectMasksConfig]
 
 # ------------------------
 # General configuration
@@ -903,11 +906,11 @@ class Config(SubscriptableModel):
         ),
     ]
     good_object_masks: Annotated[
-        Optional[List[GoodObjectMasksConfig]],
+        Optional[GoodObjectMasksBlockConfig],
         Field(
-            default=[],
-            description="Good object masks to apply before channel selection. "
-            "These are applied to the object in the 'object' field"
+            default={},
+            description="Good object masks to apply before channel selection in analysis or pre-training of MVAs. "
+            "The mask functions are applied to the object in the 'object' field"
         ),
     ]
     channels: Annotated[
@@ -1004,13 +1007,22 @@ class Config(SubscriptableModel):
                 seen_ghost_obs.add(pair)
 
         # check for duplicate object names in object masks
-        seen_objects = set()
-        for mask in self.good_object_masks:
-            if mask.object in seen_objects:
+
+        for object_mask in self.good_object_masks.analysis:
+            seen_objects = set()
+            if object_mask.object in seen_objects:
                 raise ValueError(
-                    f"Duplicate object '{mask.object}' found in good object masks."
+                    f"Duplicate object '{object_mask.object}' found in good object masks collection 'analysis'."
                 )
-            seen_objects.add(mask.object)
+            seen_objects.add(object_mask.object)
+
+        for object_mask in self.good_object_masks.mva:
+            seen_objects = set()
+            if object_mask.object in seen_objects:
+                raise ValueError(
+                    f"Duplicate object '{object_mask.object}' found in good object masks collection 'mva'."
+                )
+            seen_objects.add(object_mask.object)
 
         # check for duplicate mva parameter names
         all_mva_params: List[str] = []

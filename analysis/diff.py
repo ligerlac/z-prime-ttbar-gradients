@@ -227,74 +227,89 @@ class DifferentiableAnalysis(Analysis):
 
     def get_channel_data(
         self,
-        object_copies: dict[str, ak.Array],
-        events: ak.Array,
+        object_copies_analysis: dict[str, ak.Array],
+        events_analysis: ak.Array,
+        object_copies_mva: dict[str, ak.Array],
+        events_mva: ak.Array,
         process: str,
         variation: str,
-    ) -> dict[str, jnp.ndarray]:
+    ) -> dict[str, dict[str, Any]]:
         """
-        Apply per-channel event selection and prepare data for histogramming.
+        Apply per-channel selection to the corrected object and event collections,
+        and return selected data for both physics analysis and MVA pre-training.
+
+        This function performs selection using the analysis branch and returns:
+        - selected objects and events for histogramming (from analysis branch)
+        - selected objects and events for MVA pre-training (from MVA branch)
+        - total number of selected events from each branch
+        - unmasked inputs in a '__presel' entry
 
         Parameters
         ----------
-        object_copies : dict
-            Corrected event-level objects
-        events : ak.Array
-            Original NanoAOD events
+        object_copies_analysis : dict[str, ak.Array]
+            Corrected object collections (e.g. jets, muons) for the analysis branch.
+        events_analysis : ak.Array
+            Original NanoAOD events for the analysis branch.
+        object_copies_mva : dict[str, ak.Array]
+            Corrected object collections for the MVA branch.
+        events_mva : ak.Array
+            Original NanoAOD events for the MVA branch.
         process : str
-            Sample label
+            Sample or dataset label (e.g. "data", "ttbar", "signal").
         variation : str
-            Systematic variation label
+            Systematic variation name (e.g. "nominal", "jesUp").
+            If variation is not nominal and the process is "data", the function returns
+            an empty result.
 
         Returns
         -------
-        dict[str, jnp.ndarray]
-            Channel-wise data with keys:
-            - 'objects': selected objects
-            - 'events': selected events
-            - 'nevents': number of selected events
+        dict[str, dict[str, Any]]
+            Dictionary keyed by channel name. Each entry contains:
+                - 'objects':      Selected objects (analysis branch)
+                - 'events':       Selected events (analysis branch)
+                - 'nevents':      Number of selected events in analysis branch
+                - 'mva_objects':  Selected objects from MVA branch (same mask)
+                - 'mva_events':   Selected events from MVA branch (same mask)
+                - 'mva_nevents':  Number of selected events in MVA branch (same mask)
+
+            A special key '__presel' contains:
+                - 'objects':      Unmasked analysis objects
+                - 'events':       Unmasked analysis events
+                - 'mva_objects':  Unmasked MVA objects
+                - 'mva_events':   Unmasked MVA events
+
+        Notes
+        -----
+        - The MVA branch is used only to extract inputs for ML pre-training on the same
+        selected events. It does not influence the selection logic.
+        - Selection is applied using `channel.selection.function` on the analysis objects.
+        - For data, a luminosity mask is applied after the main selection.
+        - Channels with zero selected events are skipped.
         """
-        # Skip systematic variations for data
         if process == "data" and variation != "nominal":
             logger.debug(f"Skipping {variation} for data")
             return {}
 
-        events = recursive_to_backend(events, "cpu")
-        object_copies = recursive_to_backend(object_copies, "cpu")
-        per_channel = defaultdict(dict)
-        per_channel["__presel"] = {
-            "objects": object_copies,
-            "events": events,
-            "nevents": -1,
-        }
-        for channel in self.channels:
-            # Skip channels not used in differentiable analysis
-            if not channel.use_in_diff:
-                logger.info(f"Skipping channel {channel.name} in diff analysis")
-                continue
+        def apply_selection(
+            channel,
+            object_copies: dict[str, ak.Array],
+            events: ak.Array,
+            label: str,
+        ) -> tuple[dict[str, ak.Array], ak.Array, ak.Array]:
+            events = recursive_to_backend(events, "cpu")
+            object_copies = recursive_to_backend(object_copies, "cpu")
 
-            chname = channel["name"]
-            # Skip channels not in requested list
-            if (req := self.config.general.channels) and chname not in req:
-                logger.debug(f"Skipping channel {chname} (not in requested channels)")
-                continue
+            if not channel.selection.function:
+                logger.warning(f"[{label}] No selection function for channel {channel.name}")
+                return object_copies, events, ak.ones_like(events, dtype=bool)
 
-            logger.info(f"Applying selection for {chname} in {process}")
-
-            # Apply channel selection
-            mask = 1
-            if sel_fn := channel.selection.function:
-                sel_args = self._get_function_arguments(channel.selection.use, object_copies)
-                packed = sel_fn(*sel_args)
-                if not isinstance(packed, PackedSelection):
-                    raise ValueError("Selection function must return PackedSelection")
-                mask = ak.Array(packed.all(packed.names[-1]))
-            else:
-                logger.warning(f"No selection function for channel {chname}")
-
+            sel_args = self._get_function_arguments(channel.selection.use, object_copies)
+            packed = channel.selection.function(*sel_args)
+            if not isinstance(packed, PackedSelection):
+                raise ValueError("Selection function must return PackedSelection")
+            mask = ak.Array(packed.all(packed.names[-1]))
             mask = recursive_to_backend(mask, "cpu")
 
-            # Apply luminosity mask for data
             if process == "data":
                 good_runs = lumi_mask(
                     self.config.general.lumifile,
@@ -303,24 +318,55 @@ class DifferentiableAnalysis(Analysis):
                     jax=True,
                 )
                 mask = mask & ak.to_backend(good_runs, "cpu")
-                logger.debug("Applied luminosity mask for data")
+                logger.debug(f"[{label}] Applied luminosity mask for data")
 
-            # Check if any events survive selection
-            n_events_after = ak.sum(mask)
-            if n_events_after == 0:
+            return object_copies, events, mask
+
+        per_channel = defaultdict(dict)
+        per_channel["__presel"] = {
+            "objects": object_copies_analysis,
+            "events": events_analysis,
+            "mva_objects": object_copies_mva,
+            "mva_events": events_mva,
+        }
+
+        for channel in self.channels:
+            if not channel.use_in_diff:
+                logger.info(f"Skipping channel {channel.name} in diff analysis")
+                continue
+
+            chname = channel["name"]
+            if (req := self.config.general.channels) and chname not in req:
+                logger.debug(f"Skipping channel {chname} (not in requested channels)")
+                continue
+
+            logger.info(f"Applying selection for {chname} in {process}")
+
+            # Apply selection based on analysis branch
+            _, events_analysis_cpu, mask = apply_selection(
+                channel, object_copies_analysis, events_analysis, label="analysis"
+            )
+
+            n_events = ak.sum(mask)
+            if n_events == 0:
                 logger.warning(f"No events left in {chname} for {process} after selection")
                 continue
 
-            logger.info(
-                f"Events in {chname}: before={len(mask)}, after={n_events_after}"
-            )
+            logger.info(f"Events in {chname}: before={len(mask)}, after={n_events}")
 
-            # Prepare selected data
-            object_copies_ch = {k: v[mask] for k, v in object_copies.items()}
+            # Extract selected events and objects from both branches
+            obj_analysis = {k: v[mask] for k, v in object_copies_analysis.items()}
+            evt_analysis = events_analysis_cpu[mask]
+            obj_mva = {k: v[mask] for k, v in object_copies_mva.items()}
+            evt_mva = events_mva[mask]
+
             per_channel[chname] = {
-                "objects": object_copies_ch,
-                "events": events[mask],
-                "nevents": n_events_after,
+                "objects": obj_analysis,
+                "events": evt_analysis,
+                "nevents": n_events,
+                "mva_objects": obj_mva,
+                "mva_events": evt_mva,
+                "mva_nevents": len(evt_mva),
             }
 
         return per_channel
@@ -365,6 +411,7 @@ class DifferentiableAnalysis(Analysis):
 
             return trained, nets
 
+
     def untraced_process(
         self,
         events: ak.Array,
@@ -388,44 +435,64 @@ class DifferentiableAnalysis(Analysis):
         processed_data = {}
         logger.info(f"Starting untraced processing for {process}")
 
+        def prepare_full_obj_copies(events, mask_set: str, label: str):
+            # 1. Copy and mask
+            obj_copies = self.get_object_copies(events)
+            obj_copies = self.apply_object_masks(obj_copies, mask_set=mask_set)
+            logger.debug(f"[{label}] Created object copies and applied '{mask_set}' masks")
+
+            # 2. Move to CPU
+            events_cpu = recursive_to_backend(events, "cpu")
+            obj_copies = recursive_to_backend(obj_copies, "cpu")
+
+            # 3. Baseline selection
+            baseline_args = self._get_function_arguments(
+                self.config.baseline_selection["use"], obj_copies
+            )
+            packed = self.config.baseline_selection["function"](*baseline_args)
+            mask = ak.Array(packed.all(packed.names[-1]))
+            mask = recursive_to_backend(mask, "cpu")
+
+            obj_copies = {k: v[mask] for k, v in obj_copies.items()}
+            logger.info(f"[{label}] Baseline selection: before={len(mask)}, after={ak.sum(mask)} events")
+
+            # 4. Compute ghost observables
+            obj_copies = self.compute_ghost_observables(obj_copies)
+            logger.debug(f"[{label}] Computed ghost observables")
+
+            # 5. Apply corrections
+            obj_copies_corrected = self.apply_object_corrections(
+                obj_copies, self.corrections, direction="nominal"
+            )
+            obj_copies_corrected = recursive_to_backend(obj_copies_corrected, "cpu")
+            logger.debug(f"[{label}] Applied object corrections")
+
+            return obj_copies, obj_copies_corrected, mask
+
+        #
+        # Select which mask set to use for mva
+        mva_mask_set = "mva" if self.config.good_object_masks.get("mva", []) else "analysis"
+
         # Prepare object copies and apply baseline masks
-        obj_copies = self.get_object_copies(events)
-        obj_copies = self.apply_object_masks(obj_copies)
-        logger.debug("Created object copies and applied masks")
-
-        events = recursive_to_backend(events, "cpu")
-        obj_copies = recursive_to_backend(obj_copies, "cpu")
-
-        # Apply baseline selection
-        baseline_args = self._get_function_arguments(
-            self.config.baseline_selection["use"], obj_copies
-        )
-        packed = self.config.baseline_selection["function"](*baseline_args)
-        mask = ak.Array(packed.all(packed.names[-1]))
-        mask = recursive_to_backend(mask, "cpu")
-        obj_copies = {k: v[mask] for k, v in obj_copies.items()}
-        logger.info(
-            f"Baseline selection: before={len(mask)}, after={ak.sum(mask)} events"
+        obj_copies_analysis, obj_copies_corrected_analysis, mask_analysis = prepare_full_obj_copies(
+            events, mask_set="analysis", label="analysis"
         )
 
-        # Compute ghost observables and apply corrections
-        obj_copies = self.compute_ghost_observables(obj_copies)
-        logger.debug("Computed ghost observables")
-
-        obj_copies_corrected = self.apply_object_corrections(
-            obj_copies, self.corrections, direction="nominal"
+        obj_copies_mva, obj_copies_corrected_mva, mask_mva = prepare_full_obj_copies(
+            events, mask_set=mva_mask_set, label="mva"
         )
-        obj_copies_corrected = recursive_to_backend(obj_copies_corrected, "cpu")
-        logger.debug("Applied object corrections")
 
         # Get nominal channel data
         channels_data = self.get_channel_data(
-            obj_copies_corrected,
-            events[mask],
+            obj_copies_corrected_analysis,
+            events[mask_analysis],
+            obj_copies_corrected_mva,
+            events[mask_mva],
             process,
             "nominal",
         )
-        channels_data["__presel"]["nevents"] = ak.sum(mask)
+        channels_data["__presel"]["nevents"] = ak.sum(mask_analysis)
+        channels_data["__presel"]["mva_nevents"] = ak.sum(mask_mva)
         processed_data["nominal"] = channels_data
         logger.info("Prepared nominal channel data")
 
@@ -444,21 +511,28 @@ class DifferentiableAnalysis(Analysis):
 
                     # Reset backend
                     events = recursive_to_backend(events, "cpu")
-                    obj_copies = recursive_to_backend(obj_copies, "cpu")
+                    obj_copies_analysis = recursive_to_backend(obj_copies_analysis, "cpu")
+                    obj_copies_mva = recursive_to_backend(obj_copies_mva, "cpu")
 
                     # Apply systematic correction
-                    obj_copies_corrected = self.apply_object_corrections(
-                        obj_copies, [syst], direction=direction
+                    obj_copies_corrected_analysis = self.apply_object_corrections(
+                        obj_copies_analysis, [syst], direction=direction
+                    )
+                    obj_copies_corrected_mva = self.apply_object_corrections(
+                        obj_copies_mva, [syst], direction=direction
                     )
 
                     # Get channel data for this variation
                     channels_data = self.get_channel_data(
-                        obj_copies_corrected,
-                        events[mask],
+                        obj_copies_corrected_analysis,
+                        events[mask_analysis],
+                        obj_copies_corrected_mva,
+                        events[mask_mva],
                         process,
                         varname,
                     )
-                    channels_data["__presel"]["nevents"] = ak.sum(mask)
+                    channels_data["__presel"]["nevents"] = ak.sum(mask_analysis)
+                    channels_data["__presel"]["mva_nevents"] = ak.sum(mask_mva)
                     processed_data[varname] = channels_data
                     logger.info(f"Prepared channel data for {varname}")
 
@@ -852,8 +926,9 @@ class DifferentiableAnalysis(Analysis):
                         nominal_channels = processed_data.get("nominal", {})
                         if nominal_channels:
                             presel_ch = nominal_channels["__presel"]
-                            print(f"Number of __presel events for {process_name}", presel_ch["nevents"])
-                            mva_data.setdefault(process_name, []).append((presel_ch["objects"], presel_ch["nevents"]))
+                            print(f"Number of __presel events for {process_name} in analysis: ", presel_ch["nevents"])
+                            print(f"Number of __presel events for {process_name} in MVA pre-training: ", presel_ch["nevents"])
+                            mva_data.setdefault(process_name, []).append((presel_ch["mva_objects"], presel_ch["mva_nevents"]))
 
             logger.info(f"✅ Finished dataset: {dataset}\n")
 
@@ -880,6 +955,7 @@ class DifferentiableAnalysis(Analysis):
                         # add a key 'mva_nets' pointing to your nets dict
                         processed_data['mva_nets'] = nets
 
+            # MO:: TODO:: hack to read model from separate pre-training
             with open("model.pkl", "rb") as f:
                 models[model_name] = cloudpickle.load(f)
 

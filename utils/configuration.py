@@ -111,7 +111,8 @@ config = {
             ("Jet", None),
         ],
     },
-    "good_object_masks": [
+    "good_object_masks": {
+        "analysis": [
         {
             "object": "Muon",
             "function": lambda muons:   ((muons.pt > 55)
@@ -132,6 +133,28 @@ config = {
             "use": [("FatJet", None)],
         },
     ],
+    "mva": [
+        {
+            "object": "Muon",
+            "function": lambda muons:   ((muons.pt > 55)
+                                        & (abs(muons.eta) < 2.4)
+                                        & (muons.tightId)
+                                        & (muons.miniIsoId > 1)),
+            "use": [("Muon", None)],
+        },
+        # {
+        #     "object": "Jet",
+        #     "function": lambda jets: ((jets.jetId >= 4) & (jets.btagDeepB > 0.5)),
+        #     "use": [("Jet", None)],
+        # },
+        {
+            "object": "FatJet",
+            "function": lambda fatjets: ((fatjets.pt > 500)
+                                         & (fatjets.particleNet_TvsQCD > 0.5)),
+            "use": [("FatJet", None)],
+        },
+    ],
+    },
     "channels": [
         {
             "name": "CMS_WORKSHOP_JAX",
@@ -199,7 +222,7 @@ config = {
                 "optimise": True,  # this will add weights to set of optimised parameters
                 "learning_rate": 0.0005,  # learning rate for the MVA optimisation
             },
-            "classes": ["wjets", "ttbar_semilep"],
+            "classes": ["wjets", "ttbar_semilep"], # (TODO:: dict elements to combine processes into single class)
             "balance_strategy": "undersample",
             "layers": [
                 {
