@@ -993,7 +993,6 @@ class DifferentiableAnalysis(Analysis):
                         # add a key 'mva_nets' pointing to your nets dict
                         processed_data['mva_nets'] = nets
 
-        exit(1)
         return all_events, models
 
     def run_histogram_and_significance(

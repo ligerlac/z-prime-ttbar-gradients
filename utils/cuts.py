@@ -355,7 +355,7 @@ def Zprime_softcuts_jax_workshop(
     # MO - TODO: how to pass the network features...
     nn_instance = nn["instance"]
     nn_features = nn["features"]
-    nn_score = nn_instance._forward_pass(params, nn_features)
+    nn_score = nn_instance.forward_pass(params, nn_features)
 
     # Choose a fixed numebr of jets
     max_jets = 8   # for example

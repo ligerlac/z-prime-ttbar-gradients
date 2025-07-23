@@ -845,7 +845,7 @@ class MVAConfig(SubscriptableModel):
     ]
     batch_size: Annotated[
         Optional[int],
-        Field(default=None, description="Batch size for training; None for full-batch GD")
+        Field(default=32, description="Batch size for training; None for full-batch GD")
     ]
     validation_split: Annotated[
         float,

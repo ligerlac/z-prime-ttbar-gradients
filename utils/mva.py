@@ -1,274 +1,320 @@
-from collections import Counter
+# =============================================================================
+# Imports
+# =============================================================================
+
 from abc import ABC, abstractmethod
+from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import numpy as np
 import jax
 import jax.numpy as jnp
-from jax import random, value_and_grad, jit
-from equinox import filter_jit
+import numpy as np
 import tensorflow as tf
+from equinox import filter_jit
+from jax import random, value_and_grad, jit
 from sklearn.model_selection import train_test_split
-
 
 from analysis.base import Analysis
 
+
 # =============================================================================
-# Supporting functions
+# Abstract Base Class
 # =============================================================================
 
-# ===============================================================================
-# Train-Test split
-# ===============================================================================
-
-# ----------------------------------------------------------------------------
-# Abstract BaseNetwork class
-# ----------------------------------------------------------------------------
 class BaseNetwork(ABC, Analysis):
     """
-    Abstract interface for MVA networks. Subclasses must implement framework-specific
-    initialization, training, and prediction.
+    Abstract base class for MVA networks (e.g. JAX, TensorFlow).
+    Handles data preparation, feature extraction, class balancing,
+    and defines abstract methods for training and prediction.
     """
 
     def __init__(self, mva_cfg: Dict[str, Any]) -> None:
         """
-        Store the Pydantic configuration for this MVA.
+        Initialize the network with a configuration dictionary.
 
         Args:
-            mva_cfg: MVAConfig instance describing layers, training params, etc.
+            mva_cfg (Dict[str, Any]): Pydantic config specifying network architecture
+                and training options.
         """
         self.mva_cfg = mva_cfg
         self.name = mva_cfg.name
-        # For JAX: dictionary of weight/bias arrays. For TF: not used.
-        self.parameters: Dict[str, Any] = {}
-        # For TF/Keras: holds the Sequential model. For JAX: remains None.
-        self.model: Any = None
+        self.parameters: Dict[str, Any] = {}  # Used by JAX models
+        self.model: Any = None  # Used by TensorFlow models
 
-    def split_train_test(
-            self,
-            X: np.ndarray,
-            y: np.ndarray,
+    def _split_train_test(
+        self,
+        features: np.ndarray,
+        labels: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Split features and labels into training and validation sets.
 
-        test_size=self.mva_cfg.validation_split
-        random_state=self.mva_cfg.random_state
-        shuffle=True
-        stratify=y if self.mva_cfg.balance_strategy!="none" else None
+        Args:
+            features (np.ndarray): Full feature matrix of shape (n_samples, n_features).
+            labels (np.ndarray): Corresponding class labels of shape (n_samples,).
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+            Training and validation splits: (X_train, X_val, y_train, y_val)
+        """
+        test_size = self.mva_cfg.validation_split
+        random_state = self.mva_cfg.random_state
+
+        # Stratify if balancing is active
+        stratify = labels if self.mva_cfg.balance_strategy != "none" else None
 
         return train_test_split(
-            X, y,
+            features,
+            labels,
             test_size=test_size,
             random_state=random_state,
-            shuffle=shuffle,
-            stratify=stratify
+            shuffle=True,
+            stratify=stratify,
         )
 
     def _extract_features(
         self,
-        obj_copies: Dict[str, Any],
-        feat_cfgs: List[Any]
+        object_collections: Dict[str, Any],
+        feature_configs: List[Any]
     ) -> np.ndarray:
         """
         Compute and stack all features for one event batch.
+
+        Args:
+            object_collections (Dict[str, Any]): Dictionary of NanoAOD-style
+                objects per event.
+            feature_configs (List[Any]): List of feature configuration objects,
+            each defining a callable and its required input objects.
+
+        Returns:
+            np.ndarray: 2D array of shape (n_events, n_features) with stacked features.
         """
-        arrays: List[np.ndarray] = []
-        for feat in feat_cfgs:
-            # grab raw inputs for this feature
-            args = self._get_function_arguments(feat.use, obj_copies)
-            vals = feat.function(*args)
-            if feat.scale is not None:
-                vals = feat.scale(vals)
-            arrays.append(np.asarray(vals))
-        # stack as columns
-        return np.stack(arrays, axis=1).astype(float)
+        feature_arrays = []
+
+        for feature_cfg in feature_configs:
+            # Extract input arguments for the feature from the object collections
+            args = self._get_function_arguments(feature_cfg.use, object_collections)
+
+            # Compute raw feature values
+            feature_values = feature_cfg.function(*args)
+
+            # Optionally apply scaling (e.g., normalization)
+            if feature_cfg.scale is not None:
+                feature_values = feature_cfg.scale(feature_values)
+
+            # Convert to NumPy array
+            feature_arrays.append(np.asarray(feature_values))
+
+        # Stack all features as columns into a matrix
+        return np.stack(feature_arrays, axis=1).astype(float)
 
     def _make_labels(
         self,
-        n_events: int,
-        process: str,
-        classes: list[Union[str, dict[str, tuple[str]]]],
+        num_events: int,
+        process_name: str,
+        class_definitions: list[Union[str, dict[str, tuple[str]]]],
     ) -> np.ndarray:
         """
-        Produce integer labels for a given process, based on class definitions.
+        Generate integer class labels for events belonging to a process.
 
-        Parameters
-        ----------
-        n_events : int
-            Number of events for this process.
-        process : str
-            The process name (e.g. 'ttbar_semilep', 'wjets').
-        classes : list
-            List of class definitions, where each entry is either:
-            - a string (single-process class), or
-            - a dict mapping a class name to a list/tuple of process names to merge.
+        Args:
+            num_events (int): Number of events to label.
+            process_name (str): Name of the process (e.g., 'ttbar').
+            class_definitions (list): List of class definitions, each a string or dict
+                mapping class name to one or more process names.
 
-        Returns
-        -------
-        np.ndarray
-            Array of shape (n_events,) filled with the integer label corresponding to the process.
+        Returns:
+            np.ndarray: Integer label array of shape (num_events,) filled with
+                class index.
 
-        Raises
-        ------
-        RuntimeError
-            If the process name is not found in any class definition.
+        Raises:
+            RuntimeError: If the process is not matched in any class definition.
         """
-        for idx, cls in enumerate(classes):
-            if isinstance(cls, str):
-                if process == cls:
-                    return np.full(n_events, idx, dtype=int)
-            elif isinstance(cls, dict):
-                class_name, proc_list = next(iter(cls.items()))
-                if process == class_name:
-                    return np.full(n_events, idx, dtype=int)
+        for class_index, class_entry in enumerate(class_definitions):
+            # Simple class: match process directly
+            if isinstance(class_entry, str) and process_name == class_entry:
+                return np.full(num_events, class_index, dtype=int)
 
+            # Merged class: match dictionary key
+            elif isinstance(class_entry, dict):
+                class_name, _ = next(iter(class_entry.items()))
+                if process_name == class_name:
+                    return np.full(num_events, class_index, dtype=int)
+
+        # If not matched, raise an error
         raise RuntimeError(
-            f"Process '{process}' not found in any class definition in: {classes}"
+            f"Process '{process_name}' not found in any class definition: \
+                {class_definitions}"
         )
 
     def _balance_dataset(
         self,
-        X: np.ndarray,
-        y: np.ndarray,
+        features: np.ndarray,
+        labels: np.ndarray,
     ) -> Tuple[np.ndarray, np.ndarray, Optional[Dict[int, float]]]:
         """
-        Rebalance X,y according to `strategy` (none, undersample, oversample, class_weight).
+        Balance the dataset using undersampling, oversampling, or class reweighting.
+
+        Args:
+            features (np.ndarray): Input feature matrix of shape (n_samples,n_features).
+            labels (np.ndarray): Integer class labels of shape (n_samples,).
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray, Optional[Dict[int, float]]]:
+                Balanced feature matrix, balanced label array,
+                and optionally a dictionary of class weights.
         """
         strategy = self.mva_cfg.balance_strategy
         random_state = self.mva_cfg.random_state
 
+        # No balancing: return input as-is
         if strategy == "none":
-            return X, y, None
+            return features, labels, None
 
+        # Create reproducible RNG and compute class counts
         rng = np.random.RandomState(random_state)
-        counts = Counter(y)
-        labels = sorted(counts.keys())
+        class_counts = Counter(labels)
+        unique_labels = sorted(class_counts)
+
         if strategy in ("undersample", "oversample"):
-            # target count per class
-            target = min(counts.values()) if strategy == "undersample" else max(counts.values())
-            Xs, ys = [], []
-            for lbl in labels:
-                idxs = np.where(y == lbl)[0]
-                sel = rng.choice(idxs, size=target, replace=(strategy=="oversample"))
-                Xs.append(X[sel]); ys.append(y[sel])
-            X_new = np.concatenate(Xs, axis=0)
-            y_new = np.concatenate(ys, axis=0)
-            perm = rng.permutation(len(y_new))
-            return X_new[perm], y_new[perm], None
+            # Determine how many samples per class to retain/generate
+            target = (
+                min(class_counts.values()) if strategy == "undersample"
+                else max(class_counts.values())
+            )
+
+            balanced_features = []
+            balanced_labels = []
+
+            # Resample each class to the target count
+            for label in unique_labels:
+                label_indices = np.where(labels == label)[0]
+
+                # Oversampling allows replacement; undersampling does not
+                resampled_indices = rng.choice(
+                    label_indices,
+                    size=target,
+                    replace=(strategy == "oversample")
+                )
+
+                balanced_features.append(features[resampled_indices])
+                balanced_labels.append(labels[resampled_indices])
+
+            # Concatenate all resampled classes and shuffle
+            features_stacked = np.concatenate(balanced_features, axis=0)
+            labels_stacked = np.concatenate(balanced_labels, axis=0)
+            permuted_indices = rng.permutation(len(labels_stacked))
+
+            return (
+                features_stacked[permuted_indices],
+                labels_stacked[permuted_indices],
+                None
+            )
 
         if strategy == "class_weight":
-            total = float(len(y))
-            class_weights = {lbl: total/(len(labels)*counts[lbl]) for lbl in labels}
-            return X, y, class_weights
+            # Compute inverse frequency weights for use in the loss function
+            total_samples = float(len(labels))
+            class_weights = {
+                label: total_samples / (len(unique_labels) * class_counts[label])
+                for label in unique_labels
+            }
+            return features, labels, class_weights
 
+        # If we reach here, strategy was invalid
         raise ValueError(f"Unknown balance_strategy={strategy}")
 
     def prepare_inputs(
         self,
         events_per_process: dict[str, list[tuple[dict, int]]],
-    ) -> Any:
+    ) -> tuple[np.ndarray, np.ndarray,
+               np.ndarray, np.ndarray,
+               Optional[Dict[int, float]]]:
         """
-        Prepare input features and labels for MVA training.
+        Prepare training/validation data from event-level inputs.
 
-        Parameters
-        ----------
-        events_per_process : dict
-            Mapping from process name to a list of (object_copies, n_events) tuples.
-            These represent the corrected object collections and number of events for each process.
+        Args:
+            events_per_process (dict):
+                Mapping from process name to a list of tuples:
+                (object_collections: dict, n_events: int)
 
-        Returns
-        -------
-        Tuple[np.ndarray, ...]
-            Tuple containing:
-            - Training features Xtr
-            - Training labels ytr
-            - Validation features Xvl
-            - Validation labels yvl
-            - Class weights cw (to rebalance losses)
+        Returns:
+            tuple:
+                - features_train (np.ndarray)
+                - labels_train (np.ndarray)
+                - features_val (np.ndarray)
+                - labels_val (np.ndarray)
+                - class_weights (Optional[dict[int, float]])
         """
-        X_list, y_list = [], []
+        all_features = []
+        all_labels = []
 
-        # Loop over class definitions in config
-        for cls_idx, class_def in enumerate(self.mva_cfg.classes):
-            # Handle plain string: single-process class like "wjets"
+        for class_def in self.mva_cfg.classes:
             if isinstance(class_def, str):
                 class_name = class_def
                 process_list = [class_def]
-
-            # Handle dictionary: merged-process class like {"ttbar": ["ttbar_semilep", ...]}
             elif isinstance(class_def, dict):
-                # Assumes only one key-value pair per dict
                 class_name, process_list = next(iter(class_def.items()))
-
             else:
                 raise TypeError(f"Invalid class definition: {class_def}")
 
-            # Directly get entries for this class name from the training data
-            all_entries = events_per_process.get(class_name, [])
-
-            if not all_entries:
-                logger.warning(f"No events found for MVA class '{class_name}'. Skipping.")
+            entries = events_per_process.get(class_name, [])
+            if not entries:
+                logger.warning(f"No events found for MVA class '{class_name}'. \
+                               Skipping.")
                 continue
 
-            # For each (object_copies, n_events) pair in this class
-            for obj_copies, n_events in all_entries:
-                # Extract feature matrix from object dictionaries
-                X = self._extract_features(obj_copies, self.mva_cfg.features)
+            for object_dict, num_events in entries:
+                feature_matrix = self._extract_features(object_dict,
+                                                        self.mva_cfg.features)
+                label_array = self._make_labels(num_events,
+                                                class_name,
+                                                self.mva_cfg.classes)
 
-                # Generate label array for this batch of size n_events
-                y = self._make_labels(n_events, class_name, self.mva_cfg.classes)
+                all_features.append(feature_matrix)
+                all_labels.append(label_array)
 
-                print(X.shape, y.shape, class_name)
-                # Append to full dataset lists
-                X_list.append(X)
-                y_list.append(y)
-
-        # Sanity check: ensure we have data
-        if not X_list or not y_list:
+        if not all_features or not all_labels:
             raise ValueError("No valid training data found for any class.")
 
-        # Stack all batches into unified arrays
-        X = np.vstack(X_list)
-        y = np.concatenate(y_list)
+        features = np.vstack(all_features)
+        labels = np.concatenate(all_labels)
 
-        # Step 2: balance the dataset (e.g. by undersampling/oversampling)
-        Xb, yb, cw = self._balance_dataset(X, y)
+        features_balanced, labels_balanced, class_weights = (
+            self._balance_dataset(features, labels))
 
-        print(Xb.shape, yb.shape)
+        X_train, X_val, y_train, y_val = (
+            self._split_train_test(features_balanced, labels_balanced))
 
-        # Step 3: train/validation split
-        Xtr, Xvl, ytr, yvl = self.split_train_test(Xb, yb)
-
-        return Xtr, ytr, Xvl, yvl, cw
+        return X_train, y_train, X_val, y_val, class_weights
 
     @abstractmethod
     def init_network(self) -> None:
         """
-        Set up the network structure:
-        - For JAX: initialize weight and bias parameters
-        - For TF/Keras: build and compile tf.keras.Sequential model
+        Initialize network architecture and parameters.
+
+        Must be implemented by subclass.
         """
         raise NotImplementedError
 
     @abstractmethod
     def train(
         self,
-        inputs: Union[jnp.ndarray, Any],
-        targets: Union[jnp.ndarray, Any],
-        val_inputs: Optional[Union[jnp.ndarray, Any]] = None,
-        val_targets: Optional[Union[jnp.ndarray, Any]] = None
+        training_inputs: Union[jnp.ndarray, Any],
+        training_labels: Union[jnp.ndarray, Any],
+        validation_inputs: Optional[Union[jnp.ndarray, Any]] = None,
+        validation_labels: Optional[Union[jnp.ndarray, Any]] = None
     ) -> Any:
         """
-        Perform training over the given data.
+        Train the model.
 
         Args:
-            inputs: training features
-            targets: training labels
-            val_inputs: optional validation features
-            val_targets: optional validation labels
+            inputs (array): Training feature array.
+            targets (array): Training labels.
+            val_inputs (Optional[array]): Validation features.
+            val_targets (Optional[array]): Validation labels.
 
         Returns:
-            For JAX: dict of trained parameters
-            For TF/Keras: trained tf.keras.Model
+            Trained model or parameter state.
         """
         raise NotImplementedError
 
@@ -279,178 +325,222 @@ class BaseNetwork(ABC, Analysis):
         **kwargs
     ) -> Any:
         """
-        Compute model outputs for new data.
+        Perform inference with trained model.
 
         Args:
-            inputs: feature array for inference
-            **kwargs: additional framework-specific args (e.g., batch_size)
+            inputs (array): Feature input for prediction.
+            **kwargs: Optional keyword args for inference.
 
         Returns:
-            Predicted outputs (logits/probabilities)
+            Prediction results (array or backend-specific output).
         """
         raise NotImplementedError
+
 
 # ----------------------------------------------------------------------------
 # JAXNetwork implementation
 # ----------------------------------------------------------------------------
+
 class JAXNetwork(BaseNetwork):
     """
-    JAX-based MVA using manual parameter management and gradient updates.
+    JAX-based MVA implementation using explicit parameter management and manual gradient
+    descent updates.
     """
 
     def init_network(self) -> None:
         """
-        Initialize weight and bias parameters for each layer.
+        Initialize weight and bias parameters for each layer using
+        random number generator.
 
-        Uses a seed derived from the learning rate for reproducibility.
+        Uses the configured random seed for reproducibility.
         """
-        # Build list of layer dimensions: input + each hidden/output size
-        dims = [len(self.mva_cfg.features)] + [layer.ndim for layer in self.mva_cfg.layers]
-        # mo:: key implementation different from lino code generates slightly different results
-        # check jupyer nb for linos implementation to debug!
-        # Derive RNG seed from random_state configuration variable
-        seed_int = int(self.mva_cfg.random_state)
-        rng_key = random.PRNGKey(seed_int)
-        # One key per layer
-        keys = random.split(rng_key, 1 * len(self.mva_cfg.layers))
-        #keys = random.split(keys[2], 6)  # split each key into two for weights/biases
-        # Allocate and store parameters
-        for idx, layer_cfg in enumerate(self.mva_cfg.layers):
-            w_key, b_key = random.split(keys[idx], 2)
-            #w_key, b_key = keys[2*idx], keys[2*idx + 1]
-            in_dim, out_dim = dims[idx], dims[idx + 1]
-            # Weights: small normal initialization
-            self.parameters[f"__NN_{self.name}_{layer_cfg.weights}"] = random.normal(w_key, (in_dim, out_dim)) * 0.1
-            # Biases: zeros
-            self.parameters[f"__NN_{self.name}_{layer_cfg.bias}"]    = jnp.zeros(out_dim)
+        layer_dimensions = [len(self.mva_cfg.features)]
+                            + [layer.ndim for layer in self.mva_cfg.layers]
+        seed_value = int(self.mva_cfg.random_state)
+        rng_key = random.PRNGKey(seed_value)
+        layer_keys = random.split(rng_key, len(self.mva_cfg.layers))
 
+        for layer_index, layer_config in enumerate(self.mva_cfg.layers):
+            weight_key, bias_key = random.split(layer_keys[layer_index], 2)
+            input_dim, output_dim = (layer_dimensions[layer_index],
+                                     layer_dimensions[layer_index + 1])
 
-    def _forward_pass(self, params, x: jnp.ndarray) -> jnp.ndarray:
+            weight_name = f"__NN_{self.name}_{layer_config.weights}"
+            bias_name = f"__NN_{self.name}_{layer_config.bias}"
+
+            self.parameters[weight_name] = random.normal(weight_key,
+                                                         (input_dim, output_dim)) * 0.1
+            self.parameters[bias_name] = jnp.zeros(output_dim)
+
+    def forward_pass(self, parameters: dict, inputs: jnp.ndarray) -> jnp.ndarray:
         """
         Compute network output by sequentially applying each layer's activation.
 
         Args:
-            x: input array of shape (batch_size, input_dim)
+            parameters (dict): Dictionary of trained weights and biases.
+            inputs (jnp.ndarray): Input data of shape (n_samples, n_features).
 
         Returns:
-            Output array of shape (batch_size,) or (batch_size, output_dim) squeezed
+            jnp.ndarray: Output predictions of shape (n_samples,).
         """
-        h = x
-        for layer_cfg in self.mva_cfg.layers:
+        activations = inputs
+        for layer_config in self.mva_cfg.layers:
+            weights = parameters[f"__NN_{self.name}_{layer_config.weights}"]
+            biases = parameters[f"__NN_{self.name}_{layer_config.bias}"]
+            activations = layer_config.activation(activations, weights, biases)
+        return activations.squeeze()
 
-            w = params[f"__NN_{self.name}_{layer_cfg.weights}"]
-            b = params[f"__NN_{self.name}_{layer_cfg.bias}"]
-            h = layer_cfg.activation(h, w, b)
-        return h.squeeze()
+    def compute_loss(self,
+                     parameters: dict,
+                     inputs: jnp.ndarray,
+                     targets: jnp.ndarray
+    ) -> jnp.ndarray:
+        """
+        Compute scalar loss value from predictions and true labels.
 
-    def _compute_loss(self, params, x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
-        """
-        Evaluate configured loss function on predictions vs.
-        true labels.
-        """
-        preds = self._forward_pass(params, x)
-        return self.mva_cfg.loss(preds, y)
+        Args:
+            parameters (dict): Network parameters.
+            inputs (jnp.ndarray): Input features.
+            targets (jnp.ndarray): True labels.
 
-    def _compute_accuracy(self, params, x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
+        Returns:
+            jnp.ndarray: Scalar loss value.
         """
-        Compute binary classification accuracy using threshold 0.
+        predictions = self.forward_pass(parameters, inputs)
+        return self.mva_cfg.loss(predictions, targets)
+
+    def compute_accuracy(self,
+                         parameters: dict,
+                         inputs: jnp.ndarray,
+                         targets: jnp.ndarray
+    ) -> jnp.ndarray:
         """
-        logits = self._forward_pass(params, x)
+        Compute binary classification accuracy using a threshold at zero.
+
+        Args:
+            parameters (dict): Model parameters.
+            inputs (jnp.ndarray): Input feature matrix.
+            targets (jnp.ndarray): Ground truth labels.
+
+        Returns:
+            jnp.ndarray: Mean classification accuracy.
+        """
+        logits = self.forward_pass(parameters, inputs)
         predictions = (logits > 0).astype(jnp.float32)
-        return jnp.mean(predictions == y)
+        return jnp.mean(predictions == targets)
 
-    def _update_step(self, params, x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
+    def _update_step(self,
+                     parameters: dict,
+                     inputs: jnp.ndarray,
+                     targets: jnp.ndarray
+        ) -> tuple[dict, jnp.ndarray]:
         """
-        Perform a single gradient descent update over a batch.
+        Perform one step of gradient descent to update parameters.
+
+        Args:
+            parameters (dict): Current parameter dictionary.
+            inputs (jnp.ndarray): Feature batch.
+            targets (jnp.ndarray): Label batch.
 
         Returns:
-            Scalar loss value for the batch.
+            tuple: (updated parameters, loss value)
         """
-        lr = self.mva_cfg.learning_rate
-        loss_val, grads = value_and_grad(self._compute_loss)(params, x, y)
-        # Update each parameter with gradient
-        new_params = jax.tree.map(lambda p, g: p - lr * g, params, grads)
-        return new_params, loss_val
+        learning_rate = self.mva_cfg.learning_rate
+        loss_value, gradients = value_and_grad(self.compute_loss)(parameters,
+                                                                  inputs,
+                                                                  targets)
+        updated_parameters = jax.tree.map(lambda p, g: p - learning_rate * g,
+                                          parameters, gradients)
+        return updated_parameters, loss_value
 
     def train(
         self,
-        inputs: jnp.ndarray,
-        targets: jnp.ndarray,
-        val_inputs: Optional[jnp.ndarray] = None,
-        val_targets: Optional[jnp.ndarray] = None
+        training_inputs: jnp.ndarray,
+        training_labels: jnp.ndarray,
+        validation_inputs: Optional[jnp.ndarray] = None,
+        validation_labels: Optional[jnp.ndarray] = None
     ) -> Dict[str, jnp.ndarray]:
         """
-        Training loop with optional mini-batching and validation split.
+        Train the model using optional mini-batching and validation.
 
-        Respects config: epochs, batch_size, validation_split, log_interval.
+        Args:
+            training_inputs (jnp.ndarray): Training feature matrix.
+            training_labels (jnp.ndarray): Training label vector.
+            validation_inputs (Optional[jnp.ndarray]): Validation features.
+            validation_labels (Optional[jnp.ndarray]): Validation labels.
+
+        Returns:
+            dict: Final trained parameter dictionary.
         """
-        # Load training settings
-        epochs = getattr(self.mva_cfg, 'epochs', 1000)
+        total_epochs = getattr(self.mva_cfg, 'epochs', 1000)
         batch_size = getattr(self.mva_cfg, 'batch_size', None)
-        val_split = getattr(self.mva_cfg, 'validation_split', 0.0)
-        log_interval = getattr(self.mva_cfg, 'log_interval', 100)
+        validation_fraction = getattr(self.mva_cfg, 'validation_split', 0.0)
+        log_frequency = getattr(self.mva_cfg, 'log_interval', 100)
 
-        # JIT-compile the update step
         self._update_step = jit(self._update_step)
+        total_samples = training_inputs.shape[0]
 
-
-        # Split data into training/validation if requested
-        num_samples = inputs.shape[0]
-        if val_split > 0:
-            split_idx = int(num_samples * (1 - val_split))
-            train_x, train_y = inputs[:split_idx], targets[:split_idx]
-            valid_x, valid_y = inputs[split_idx:], targets[split_idx:]
+        if validation_fraction > 0:
+            split_index = int(total_samples * (1 - validation_fraction))
+            train_x, train_y = (training_inputs[:split_index],
+                                training_labels[:split_index])
+            valid_x, valid_y = (training_inputs[split_index:],
+                                training_labels[split_index:])
         else:
-            train_x, train_y = inputs, targets
+            train_x, train_y = training_inputs, training_labels
             valid_x = valid_y = None
 
-        # Iterate epochs
-        params = self.parameters
-        for epoch in range(1, epochs + 1):
-            # Shuffle dataset each epoch for SGD
-            rng = random.PRNGKey(epoch)
-            perm = random.permutation(rng, train_x.shape[0])
-            x_shuf = train_x[perm]
-            y_shuf = train_y[perm]
+        parameters = self.parameters
+        for epoch in range(1, total_epochs + 1):
+            rng_key = random.PRNGKey(epoch)
+            shuffled_indices = random.permutation(rng_key, train_x.shape[0])
+            shuffled_inputs = train_x[shuffled_indices]
+            shuffled_labels = train_y[shuffled_indices]
 
-            # Full-batch or mini-batch updates
             if batch_size is None:
-                params, loss_val = self._update_step(params, x_shuf, y_shuf)
+                parameters, current_loss = self._update_step(parameters,
+                                                             shuffled_inputs,
+                                                             shuffled_labels)
             else:
-                loss_val = 0.0
-                for start in range(0, x_shuf.shape[0], batch_size):
-                    end = start + batch_size
-                    params, loss_val = self._update_step(params, x_shuf[start:end], y_shuf[start:end])
+                current_loss = 0.0
+                for batch_start in range(0, shuffled_inputs.shape[0], batch_size):
+                    batch_end = batch_start + batch_size
+                    batch_inputs = shuffled_inputs[batch_start:batch_end]
+                    batch_labels = shuffled_labels[batch_start:batch_end]
+                    parameters, current_loss = self._update_step(parameters,
+                                                                 batch_inputs,
+                                                                 batch_labels)
 
-            # Logging progress
-            if epoch % log_interval == 0 or epoch == epochs:
-                train_acc = self._compute_accuracy(params, train_x, train_y)
-                msg = f"{self.mva_cfg.name} | Epoch {epoch}: loss={loss_val:.4f}, acc={train_acc:.4f}"
+            if epoch % log_frequency == 0 or epoch == total_epochs:
+                training_accuracy = self.compute_accuracy(parameters, train_x, train_y)
+                log_message = f"{self.mva_cfg.name} | \
+                                Epoch {epoch}: loss={current_loss:.4f}, \
+                                acc={training_accuracy:.4f}"
                 if valid_x is not None:
-                    val_acc = self._compute_accuracy(params, valid_x, valid_y)
-                    msg += f", val_acc={val_acc:.4f}"
-                print(msg)
+                    validation_accuracy = self.compute_accuracy(parameters,
+                                                                valid_x,
+                                                                valid_y)
+                    log_message += f", val_acc={validation_accuracy:.4f}"
+                print(log_message)
 
-        self.parameters = params
-
+        self.parameters = parameters
         return self.parameters
 
     def predict(
         self,
         inputs: jnp.ndarray,
-        **kwargs
     ) -> jnp.ndarray:
         """
-        Run a forward pass to compute outputs for new inputs.
+        Generate predictions from the trained network.
 
         Args:
-            inputs: array of shape (num_examples, input_dim)
-            **kwargs: ignored for JAX
+            inputs (jnp.ndarray): Input data of shape (n_samples, n_features).
 
         Returns:
-            Array of predictions or logits.
+            jnp.ndarray: Model output logits or probabilities.
         """
-        return self._forward_pass(self.parameters, inputs)
+        return self.forward_pass(self.parameters, inputs)
+
 
 # ----------------------------------------------------------------------------
 # TFNetwork implementation
@@ -458,69 +548,80 @@ class JAXNetwork(BaseNetwork):
 class TFNetwork(BaseNetwork):
     """
     TensorFlow/Keras-based MVA leveraging built-in .fit() and .predict().
+    Implements network initialization, training, and prediction for Keras models.
     """
 
     def init_network(self) -> None:
         """
-        Construct and compile a Keras Sequential model based on layer configs.
+        Construct and compile a Keras Sequential model based on layer configuration.
+
+        Uses the layer configuration from `mva_cfg` to define fully-connected layers,
+        with activations and input shape for the first layer.
         """
-        input_dim = len(self.mva_cfg.features)
+        input_dimension = len(self.mva_cfg.features)
         keras_layers = []
 
-        # Build dense layers in sequence
-        for idx, layer_cfg in enumerate(self.mva_cfg.layers):
-            layer_args: Dict[str, Any] = {
-                'units': layer_cfg.ndim,
+        for layer_index, layer_config in enumerate(self.mva_cfg.layers):
+            dense_layer_args: Dict[str, Any] = {
+                'units': layer_config.ndim,
                 'activation': (
-                    layer_cfg.activation.value
-                    if hasattr(layer_cfg.activation, 'value') else layer_cfg.activation
+                    layer_config.activation.value
+                    if hasattr(layer_config.activation, 'value')
+                    else layer_config.activation
                 )
             }
-            if idx == 0:
-                # Only first layer needs input_shape
-                layer_args['input_shape'] = (input_dim,)
-            keras_layers.append(tf.keras.layers.Dense(**layer_args))
+            if layer_index == 0:
+                dense_layer_args['input_shape'] = (input_dimension,)
 
-        # Assemble model
+            keras_layers.append(tf.keras.layers.Dense(**dense_layer_args))
+
         self.model = tf.keras.Sequential(keras_layers)
-        # Compile with specified optimizer, loss, and metrics
         self.model.compile(
             optimizer=tf.keras.optimizers.Adam(
-                learning_rate=self.mva_cfg.learning_rate
-            ),
+            learning_rate=self.mva_cfg.learning_rate),
             loss=self.mva_cfg.loss,
             metrics=['accuracy']
         )
 
     def train(
         self,
-        inputs: Any,
-        targets: Any,
-        val_inputs: Optional[Any] = None,
-        val_targets: Optional[Any] = None
+        training_inputs: Any,
+        training_labels: Any,
+        validation_inputs: Optional[Any] = None,
+        validation_labels: Optional[Any] = None
     ) -> tf.keras.Model:
         """
-        Train the Keras model using .fit(), with config-driven parameters.
-        """
-        # Extract training params
-        epochs = getattr(self.mva_cfg, 'epochs', 50)
-        batch_size = getattr(self.mva_cfg, 'batch_size', 32)
-        val_split = getattr(self.mva_cfg, 'validation_split', 0.0)
+        Train the Keras model using the .fit() method with optional validation data.
 
-        fit_kwargs = {
-            'x': inputs,
-            'y': targets,
-            'epochs': epochs,
+        Args:
+            training_inputs (Any): Input training data.
+            training_labels (Any): Training labels.
+            validation_inputs (Optional[Any]): Validation feature array.
+            validation_labels (Optional[Any]): Validation labels.
+
+        Returns:
+            tf.keras.Model: The trained Keras model instance.
+        """
+        total_epochs = getattr(self.mva_cfg, 'epochs', 50)
+        batch_size = getattr(self.mva_cfg, 'batch_size', 32)
+        validation_split_fraction = getattr(self.mva_cfg, 'validation_split', 0.0)
+
+        training_arguments = {
+            'x': training_inputs,
+            'y': training_labels,
+            'epochs': total_epochs,
             'batch_size': batch_size,
-            'validation_split': val_split,
+            'validation_split': validation_split_fraction,
             'verbose': 1
         }
-        # If explicit validation data provided, override split
-        if val_inputs is not None and val_targets is not None:
-            fit_kwargs.pop('validation_split')
-            fit_kwargs['validation_data'] = (val_inputs, val_targets)
 
-        self.model.fit(**fit_kwargs)
+        if validation_inputs is not None and validation_labels is not None:
+            # Use explicit validation data instead of split
+            training_arguments.pop('validation_split')
+            training_arguments['validation_data'] = (validation_inputs,
+                                                     validation_labels)
+
+        self.model.fit(**training_arguments)
         return self.model
 
     def predict(
@@ -533,10 +634,11 @@ class TFNetwork(BaseNetwork):
         Generate predictions using the trained Keras model.
 
         Args:
-            inputs: array-like features
-            batch_size: optional batch size for prediction
+            inputs (Any): Input features to run inference on.
+            batch_size (Optional[int]): Optional batch size for inference.
+            **kwargs: Additional keyword arguments passed to Keras predict.
 
         Returns:
-            Numpy array of model outputs.
+            Any: Prediction results from the model.
         """
-        return self.model.predict(inputs, batch_size=batch_size)
+        return self.model.predict(inputs, batch_size=batch_size, **kwargs)
