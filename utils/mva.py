@@ -313,11 +313,11 @@ class JAXNetwork(BaseNetwork):
         rng_key = random.PRNGKey(seed_int)
         # One key per layer
         keys = random.split(rng_key, 1 * len(self.mva_cfg.layers))
-        keys = random.split(keys[2], 6)  # split each key into two for weights/biases
+        #keys = random.split(keys[2], 6)  # split each key into two for weights/biases
         # Allocate and store parameters
         for idx, layer_cfg in enumerate(self.mva_cfg.layers):
-            #w_key, b_key = random.split(keys[idx], 2)
-            w_key, b_key = keys[2*idx], keys[2*idx + 1]
+            w_key, b_key = random.split(keys[idx], 2)
+            #w_key, b_key = keys[2*idx], keys[2*idx + 1]
             in_dim, out_dim = dims[idx], dims[idx + 1]
             # Weights: small normal initialization
             self.parameters[f"__NN_{self.name}_{layer_cfg.weights}"] = random.normal(w_key, (in_dim, out_dim)) * 0.1
