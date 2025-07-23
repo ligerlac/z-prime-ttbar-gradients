@@ -185,7 +185,7 @@ def Zprime_hardcuts(
     # Object count requirements
     # ---------------------
     selections.add("exactly_1mu", ak.count(muons.pt, axis=1) == 1)
-    selections.add("atleast_1jet", ak.count(jets.pt, axis=1) > 1)
+    selections.add("atleast_2jet", ak.count(jets.pt, axis=1) > 1)
     selections.add("atleast_1fj", ak.count(fatjets.pt, axis=1) > 0)
 
     # ---------------------
@@ -193,7 +193,7 @@ def Zprime_hardcuts(
     # ---------------------
     selections.add(
         "Zprime_channel",
-        selections.all("exactly_1mu", "atleast_1jet", "atleast_1fj")
+        selections.all("exactly_1mu", "atleast_2jet", "atleast_1fj")
     )
 
     return selections
@@ -225,14 +225,14 @@ def Zprime_hardcuts_no_fj(
     # Object count requirements
     # ---------------------
     selections.add("exactly_1mu", ak.count(muons.pt, axis=1) == 1)
-    selections.add("atleast_1jet", ak.count(jets.pt, axis=1) > 1)
+    selections.add("atleast_2jet", ak.count(jets.pt, axis=1) > 1)
 
     # ---------------------
     # Composite region selection
     # ---------------------
     selections.add(
         "Zprime_channel_no_fj",
-        selections.all("exactly_1mu", "atleast_1jet")
+        selections.all("exactly_1mu", "atleast_2jet")
     )
 
     return selections
@@ -351,8 +351,6 @@ def Zprime_softcuts_jax_workshop(
         Per-event array of selection weights (range [0, 1]) for gradient flow.
     """
 
-    # MO - TODO: run inference by saving network in an awkward collection?
-    # MO - TODO: how to pass the network features...
     nn_instance = nn["instance"]
     nn_features = nn["features"]
     nn_score = nn_instance.forward_pass(params, nn_features)
