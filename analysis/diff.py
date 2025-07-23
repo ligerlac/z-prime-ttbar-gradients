@@ -955,9 +955,6 @@ class DifferentiableAnalysis(Analysis):
                         # add a key 'mva_nets' pointing to your nets dict
                         processed_data['mva_nets'] = nets
 
-            # MO:: TODO:: hack to read model from separate pre-training
-            with open("model.pkl", "rb") as f:
-                models[model_name] = cloudpickle.load(f)
 
         return all_events, models
 
