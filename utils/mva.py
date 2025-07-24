@@ -352,10 +352,10 @@ class JAXNetwork(BaseNetwork):
         Initialize weight and bias parameters for each layer using
         random number generator.
 
-        Uses the configured random seed for reproducibility.
+        Uses the configured random seed for reproducibility.ßß
         """
-        layer_dimensions = [len(self.mva_cfg.features)]
-                            + [layer.ndim for layer in self.mva_cfg.layers]
+        layer_dimensions = ([len(self.mva_cfg.features)]
+                            + [layer.ndim for layer in self.mva_cfg.layers])
         seed_value = int(self.mva_cfg.random_state)
         rng_key = random.PRNGKey(seed_value)
         layer_keys = random.split(rng_key, len(self.mva_cfg.layers))
