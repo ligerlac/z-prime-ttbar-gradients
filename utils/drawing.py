@@ -7,8 +7,6 @@ import mplhep as hep
 import numpy as np
 import numpy.typing as npt
 
-logger = logging.getLogger(__name__)
-
 
 class Draw:
     def __init__(
@@ -98,9 +96,9 @@ class Draw:
         name: str = "histogram",
     ):
         plt.figure(figsize=(8, 4))
-        logger.info(f"Plotting {x_label}")
+        print(f"Plotting {x_label}")
         for label, values in data.items():
-            logger.info(
+            print(
                 f"label: {label}, shape: {values.shape}, "
                 + f"min: {values.min()}, max: {values.max()}"
             )

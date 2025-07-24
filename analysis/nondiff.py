@@ -2,8 +2,8 @@ from collections import defaultdict
 from functools import reduce
 import glob
 import logging
-import operator
 import os
+from pathlib import Path
 from typing import Any, Literal, Optional
 import warnings
 
@@ -57,6 +57,23 @@ class NonDiffAnalysis(Analysis):
         """
         super().__init__(config)
         self.nD_hists_per_region = self._init_histograms()
+
+    def _prepare_dirs(self):
+            # 1) create top-level output
+            super()._prepare_dirs()
+
+            out = self.dirs["output"]
+
+            # 2) histograms lives under <output>/histograms
+            (out / "histograms").mkdir(parents=True, exist_ok=True)
+
+            # 3) cabinetry workspaces & stats
+            (out / "statistics").mkdir(parents=True, exist_ok=True)
+
+            self.dirs.update({
+                "histograms":  out / "histograms",
+                "statistics":  out / "statistics",
+            })
 
     def _init_histograms(self) -> dict[str, dict[str, hist.Hist]]:
         """

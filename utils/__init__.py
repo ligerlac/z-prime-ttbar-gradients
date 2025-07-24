@@ -30,7 +30,7 @@ def __dir__():
     return __all__
 
 
-def set_logging() -> None:
+def set_logging(name) -> None:
     """Sets up customized and verbose logging output.
 
     Logging can be alternatively customized with the Python ``logging`` module directly.
@@ -38,5 +38,4 @@ def set_logging() -> None:
     logging.basicConfig(
         level=logging.INFO, format="[%(levelname)s] %(message)s"
     )
-    logging.getLogger("ZprimeAnalysis").setLevel(logging.DEBUG)
-    # logging.getLogger("pyhf").setLevel(logging.INFO)
+    logging.getLogger(f"utils::{name}").setLevel(logging.DEBUG)

@@ -185,7 +185,7 @@ def Zprime_hardcuts(
     # Object count requirements
     # ---------------------
     selections.add("exactly_1mu", ak.count(muons.pt, axis=1) == 1)
-    selections.add("atleast_1jet", ak.count(jets.pt, axis=1) > 0)
+    selections.add("atleast_2jet", ak.count(jets.pt, axis=1) > 1)
     selections.add("atleast_1fj", ak.count(fatjets.pt, axis=1) > 0)
 
     # ---------------------
@@ -193,7 +193,46 @@ def Zprime_hardcuts(
     # ---------------------
     selections.add(
         "Zprime_channel",
-        selections.all("exactly_1mu", "atleast_1jet", "atleast_1fj")
+        selections.all("exactly_1mu", "atleast_2jet", "atleast_1fj")
+    )
+
+    return selections
+
+def Zprime_hardcuts_no_fj(
+    muons: ak.Array,
+    jets: ak.Array,
+) -> PackedSelection:
+    """
+    Define non-optimizable kinematic cuts (used in JAX analysis)
+    These hard cuts + baseline cuts ensure observable calculations
+    can work without errors.
+
+    Parameters
+    ----------
+    muons : ak.Array
+        Muon collection.
+    jets : ak.Array
+        Jet collection.
+
+    Returns
+    -------
+    PackedSelection
+        Bitmask selection object containing hard selection criteria.
+    """
+    selections = PackedSelection(dtype="uint64")
+
+    # ---------------------
+    # Object count requirements
+    # ---------------------
+    selections.add("exactly_1mu", ak.count(muons.pt, axis=1) == 1)
+    selections.add("atleast_2jet", ak.count(jets.pt, axis=1) > 1)
+
+    # ---------------------
+    # Composite region selection
+    # ---------------------
+    selections.add(
+        "Zprime_channel_no_fj",
+        selections.all("exactly_1mu", "atleast_2jet")
     )
 
     return selections
@@ -281,12 +320,12 @@ def Zprime_workshop_cuts(
 #====================
 # JAX version of the workshop selection
 #====================
-#@jax.jit
 def Zprime_softcuts_jax_workshop(
     muons: ak.Array,
     jets: ak.Array,
-    fatjets: ak.Array,
     met: ak.Array,
+    jet_mass: ak.Array,
+    nn,
     params: dict
 ) -> jnp.ndarray:
     """
@@ -301,8 +340,6 @@ def Zprime_softcuts_jax_workshop(
         Muon collection in JAX backend.
     jets : ak.Array
         Jet collection in JAX backend.
-    fatjets : ak.Array
-        Fat jet collection in JAX backend.
     met : ak.Array
         MET collection in JAX backend.
     params : dict
@@ -313,6 +350,11 @@ def Zprime_softcuts_jax_workshop(
     jnp.ndarray
         Per-event array of selection weights (range [0, 1]) for gradient flow.
     """
+
+    nn_instance = nn["instance"]
+    nn_features = nn["features"]
+    nn_score = nn_instance.forward_pass(params, nn_features)
+
     # Choose a fixed numebr of jets
     max_jets = 8   # for example
     padded = ak.pad_none(jets, target=max_jets, axis=1, clip=True)
@@ -346,12 +388,14 @@ def Zprime_softcuts_jax_workshop(
         'lep_ht_cut': jax.nn.sigmoid(
             (lep_ht - params['lep_ht_threshold']) / 5.0
         ),
+        'nn_cut': jax.nn.sigmoid(
+            (nn_score - 0.05) * 10.0
+        ),
     }
-
     # ---------------------
     # Combine cut weights multiplicatively (AND logic)
     # ---------------------
-    cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"], cuts["lep_ht_cut"]])
+    cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"], cuts["lep_ht_cut"], cuts["nn_cut"]]) #
     selection_weight = jnp.prod(cut_values, axis=0)
     return selection_weight
 
