@@ -225,11 +225,11 @@ def plot_model_scores(
         # Styled plot
         fig, ax = plt.subplots(figsize=(8, 4))
         bins = np.linspace(0, 1, 50)
-        ax.hist(wjets_score, bins=bins, label="wjets", color=PLOT_COLORS["wjets"],
+        counts_wjets = ax.hist(wjets_score, bins=bins, label="wjets", color=PLOT_COLORS["wjets"],
                 alpha=0.5, density=True)
-        ax.hist(ttbar_score, bins=bins, label="ttbar", color=PLOT_COLORS["ttbar"],
+        counts_ttbar = ax.hist(ttbar_score, bins=bins, label="ttbar", color=PLOT_COLORS["ttbar"],
                 alpha=0.5, density=True)
-        ax.hist(signal_score, bins=bins, label="signal", color=PLOT_COLORS["signal"],
+        counts_signal = ax.hist(signal_score, bins=bins, label="signal", color=PLOT_COLORS["signal"],
                 alpha=0.5, density=True)
 
         ax.set_title(f"{model_name}  |  Test acc: {test_acc:.2f}  |  Signal acc: {signal_acc:.2f}",
@@ -237,7 +237,7 @@ def plot_model_scores(
 
         ax.set_xlabel("Score", fontsize=12)
         ax.set_ylabel("a.u.", fontsize=12)
-        ax.set_ylim(0, max(max(wjets_score), max(ttbar_score), max(signal_score)) * 1.1)
+        ax.set_ylim(0, max(max(counts_wjets[0]), max(counts_ttbar[0]), max(counts_signal[0])) * 1.1)
         ax.tick_params(axis='both', labelsize=12)
         ax.legend(fontsize=12)
         fig.tight_layout()
