@@ -319,27 +319,37 @@ class DifferentiableAnalysis(Analysis):
         self.histograms = histograms
 
     def _prepare_dirs(self):
-            # 1) always make sure output/ exists
+            # always make sure output/ exists
             super()._prepare_dirs()
 
-            # 2) cache for gradients
+            # cache for gradients
             cache = Path(self.config.general.cache_dir or "/tmp/gradients_analysis/")
             cache.mkdir(parents=True, exist_ok=True)
 
-            # 3) preprocessed files (if used)
+            # preprocessed files (if used)
             preproc = self.config.general.get("preprocessed_dir")
             if preproc:
                 Path(preproc).mkdir(parents=True, exist_ok=True)
 
-            # 4) MVA models under output
+            # MVA models under output
             mva = self.dirs["output"] / "mva_models"
             mva.mkdir(parents=True, exist_ok=True)
+
+            # Optimisation plots
+            optimisation_plots = self.dirs["output"] / "plots" / "optimisation"
+            optimisation_plots.mkdir(parents=True, exist_ok=True)
+
+            # fit plots
+            fit_plots = self.dirs["output"] / "plots" / "fit"
+            fit_plots.mkdir(parents=True, exist_ok=True)
 
             # store
             self.dirs.update({
                 "cache":       cache,
                 "preproc":     Path(preproc) if preproc else None,
                 "mva_models":  mva,
+                "optimisation_plots":   optimisation_plots,
+                "fit_plots": fit_plots,
             })
 
     def _get_channel_data(
@@ -1043,7 +1053,7 @@ class DifferentiableAnalysis(Analysis):
                     all_events[f"{dataset}___{process_name}"][f"file__{idx}"][skimmed] = (processed_data, metadata)
 
                     # get nominal objects for MVA training ───
-                    if config.mva and config.general._run_mva_training:
+                    if config.mva and config.general.run_mva_training:
 
                         # --------------------------------------------------------
                         # Determine which MVA class this process should contribute to
@@ -1087,7 +1097,7 @@ class DifferentiableAnalysis(Analysis):
             logger.info(f"✅ Finished dataset: {dataset}\n")
 
         # Train any MVAs that need pre-training
-        if self.config.general._run_mva_training and (mva_cfg := self.config.mva) is not None:
+        if self.config.general.run_mva_training and (mva_cfg := self.config.mva) is not None:
             logger.info("Executing MVA pre-training")
             models, nets = self._run_mva_training(mva_data)
 
@@ -1124,7 +1134,7 @@ class DifferentiableAnalysis(Analysis):
         params : dict
             Parameters containing 'aux' and 'fit' sub-dictionaries
         processed_data_events : dict
-            Preprocessed events from run_analysis_processing
+            Preprocessed events from _prepare_data
 
         Returns
         -------
@@ -1196,7 +1206,7 @@ class DifferentiableAnalysis(Analysis):
         }
 
         # Preprocess events
-        processed_data_events, mva_models = self.run_analysis_processing(
+        processed_data_events, mva_models = self._prepare_data(
             all_params,
             fileset,
             read_from_cache=read_from_cache,
@@ -1373,8 +1383,21 @@ class DifferentiableAnalysis(Analysis):
             else:
                 lrs = self.config.jax.learning_rates
 
-            plot_pval_history(pvals_history, aux_history, mle_history, gradients, lrs, plot_settings=plot_settings)
-            plot_params_per_iter(pvals_history, aux_history, mle_history,  gradients, lrs, plot_settings=plot_settings)
+            plot_pval_history( pvals_history,
+                               aux_history,
+                               mle_history,
+                               gradients,
+                               lrs,
+                               plot_settings=plot_settings,
+                               fname=f"{self.dirs['optimisation_plots']}/pval_history.pdf",)
+
+            plot_params_per_iter(pvals_history,
+                                 aux_history,
+                                 mle_history,
+                                 gradients,
+                                 lrs,
+                                 plot_settings=plot_settings,
+                                 fname=f"{self.dirs['optimisation_plots']}/params_per_iter.pdf",)
 
         # ————————————————————————————————————————————————————————————————
         # 1) Prepare your inputs
@@ -1412,7 +1435,7 @@ class DifferentiableAnalysis(Analysis):
                 xlabel        = obs_label,
                 #title        = f"Pre-Fit: {ch.binning.shape[0]-1} bins in {ch}",
             )
-            fig_prefit.savefig(f"prefit_{ch.name}.png", dpi=150)
+            fig_prefit.savefig(f"{self.dirs['fit_plots']}/prefit_{ch.name}.png", dpi=150)
 
 
         # ————————————————————————————————————————————————————————————————
@@ -1432,7 +1455,7 @@ class DifferentiableAnalysis(Analysis):
                 xlabel        = obs_label,
                 #title         = f"Post-Fit: {ch}",
             )
-            fig_postfit.savefig(f"postfit_{ch.name}.png", dpi=150)
+            fig_postfit.savefig(f"{self.dirs['fit_plots']}/postopt_postfit_{ch.name}.pdf", dpi=300)
 
         # ————————————————————————————————————————————————————————————————
         # 4) Post-fit plots with the initial MLE parameters and histograms
@@ -1451,6 +1474,6 @@ class DifferentiableAnalysis(Analysis):
                 xlabel        = obs_label,
                 #title         = f"Post-Fit: {ch}",
             )
-            fig_postfit.savefig(f"init_postfit_{ch.name}.png", dpi=150)
+            fig_postfit.savefig(f"{self.dirs['fit_plots']}/preopt_postfit_{ch.name}.pdf", dpi=300)
 
 
