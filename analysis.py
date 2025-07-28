@@ -49,7 +49,7 @@ def main():
     elif analysis_mode == "diff":
         logger.info("Running Differentiable Analysis")
         diff_analysis = DifferentiableAnalysis(config)
-        diff_analysis.optimize_analysis_cuts(fileset)
+        diff_analysis.run_analysis_optimisation(fileset)
     else:
         logger.info("Running both Non-Differentiable and Differentiable Analysis")
         # Non-differentiable analysis
@@ -59,11 +59,8 @@ def main():
         # Differentiable analysis
         logger.info("Running Differentiable Analysis")
         diff_analysis = DifferentiableAnalysis(config)
-        diff_analysis.optimize_analysis_cuts(fileset)
+        diff_analysis.run_analysis_optimisation(fileset)
 
-
-    # plot_nominal_histograms("output/histograms/histograms.root")
-    # plot_cms_style(histograms_file="output/histograms/histograms.pkl")
 
 if __name__ == "__main__":
     main()

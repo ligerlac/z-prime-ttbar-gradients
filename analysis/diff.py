@@ -1,29 +1,38 @@
 from __future__ import annotations
 
+# =============================================================================
+# Standard Library Imports
+# =============================================================================
 import glob
+import hashlib
 import logging
 import os
+import pickle
 import warnings
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-import hashlib
-import pickle
-import cloudpickle
 from pathlib import Path
 from pprint import pformat
 from typing import Any, Dict, Literal, List, Tuple, Optional
 
-import awkward as ak
-import optax
+# =============================================================================
+# Third-Party Imports
+# =============================================================================
+import cloudpickle
+import numpy as np
 import jax
 import jax.numpy as jnp
 from jaxopt import OptaxSolver
-import numpy as np
+import optax
+import awkward as ak
 import uproot
 import vector
 from coffea.analysis_tools import PackedSelection
 from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 
+# =============================================================================
+# Project Imports
+# =============================================================================
 from analysis.base import Analysis
 from utils.cuts import lumi_mask
 from utils.mva import JAXNetwork, TFNetwork
@@ -34,27 +43,22 @@ from utils.jax_stats import (
 )
 from utils.plot import plot_cms_histogram, plot_params_per_iter, plot_pval_history
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Backend & Logging Setup
-# -----------------------------------------------------------------------------
-# Register JAX backend for Awkward Arrays and vector operations
+# =============================================================================
 ak.jax.register_and_check()
 vector.register_awkward()
 
-# Configure logging with informative formatting
 logger = logging.getLogger("DiffAnalysis")
 logging.basicConfig(
     level=logging.INFO,
     format="[%(levelname)s: %(name)s - %(lineno)d - %(funcName)20s()] %(message)s"
 )
-# Suppress noisy JAX warnings
 logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 
-# Disable Coffea warnings
 NanoAODSchema.warn_missing_crossrefs = False
 warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
 
-# Console color codes
 GREEN = "\033[92m"
 RESET = "\033[0m"
 
@@ -182,6 +186,119 @@ def nested_defaultdict_to_dict(d) -> dict:
     return d
 
 
+# =============================================================================
+# Optimization Utilities (suggest moving to utils/optim.py)
+# =============================================================================
+def make_apply_param_updates(param_update_rules: dict) -> callable:
+    """
+    Create a function to apply parameter update rules during optimization.
+
+    Parameters
+    ----------
+    param_update_rules : dict
+        Mapping of parameter names to update functions:
+        {param_name: (lambda old_x, delta: new_x), …}
+
+    Returns
+    -------
+    callable
+        Function that applies update rules to parameters
+    """
+    def apply_rules(old_params, tentative_new_params):
+        new_aux = {}
+        aux_old = old_params["aux"]
+        aux_new_temp = tentative_new_params["aux"]
+
+        # Apply rules to each parameter
+        for key, x_temp in aux_new_temp.items():
+            if key in param_update_rules:
+                x_old = aux_old[key]
+                delta = x_temp - x_old
+                new_aux[key] = param_update_rules[key](x_old, delta)
+            else:
+                new_aux[key] = x_temp
+
+        return {"aux": new_aux, "fit": tentative_new_params["fit"]}
+
+    return apply_rules
+
+
+def make_clamp_transform(clamp_fn):
+    """An Optax transform that projects parameters after every update."""
+    def init_fn(params):
+        return None  # no extra state
+
+    def update_fn(updates, state, params=None):
+        # 1) apply the raw updates to get tentative new params
+        new_params = optax.apply_updates(params, updates)
+        # 2) clamp into your allowed region
+        new_params = clamp_fn(params, new_params)
+        # 3) compute “effective” updates = new − old
+        new_updates = jax.tree_util.tree_map(lambda n, o: n - o, new_params, params)
+        return new_updates, state
+
+    return optax.GradientTransformation(init_fn, update_fn)
+
+
+def make_lr_and_clamp_transform(
+    lr_map: dict,
+    default_lr: float,
+    fit_lr: float,
+    nn_lr: dict,
+    clamp_fn: callable,
+    frozen_keys: Optional[set[str]] = set(),
+) -> callable:
+    """
+    Combines your per-parameter LR multi-transform with a clamp-after-step transform.
+    Returns a builder(params) -> (tx, labels) just like before.
+    """
+    # first, your existing sub_transforms and label builder:
+    sub_transforms = {
+        **{f"aux__{k}":     optax.adam(lr) for k, lr in lr_map.items()},
+        **{f"NN__{k}":      optax.adam(lr) for k, lr in nn_lr.items()},
+        "aux__default":     optax.adam(default_lr),
+        "NN__default":      optax.adam(default_lr),
+        "fit__default":     optax.adam(fit_lr),
+        "no_update":        optax.set_to_zero(),  # no-op transform
+    }
+
+    def make_label_pytree(params):
+        labels = {"aux": {}, "fit": {}}
+        for aux_key in params["aux"]:
+            if aux_key in frozen_keys:
+                labels["aux"][aux_key] = "no_update"
+            elif "__NN" in aux_key:
+                for mva_with_lr in nn_lr:
+                    if mva_with_lr in aux_key:
+                        labels["aux"][aux_key] = f"NN__{mva_with_lr}"
+                        break
+                    else:
+                        labels["aux"][aux_key] = "NN__default"
+            elif aux_key in lr_map:
+                labels["aux"][aux_key] = f"aux__{aux_key}"
+            else:
+                labels["aux"][aux_key] = "aux__default"
+
+        for fit_key in params["fit"]:
+            if fit_key in frozen_keys:
+                labels["fit"][fit_key] = "no_update"
+            else:
+                labels["fit"][fit_key] = "fit__default"
+
+        return labels
+
+    # clamp‐after‐update transform
+    clamp_tx = make_clamp_transform(clamp_fn)
+
+    def builder(params):
+        label_pytree = make_label_pytree(params)
+        lr_tx = optax.multi_transform(sub_transforms, label_pytree)
+        # chain them: first do lr updates, then project
+        tx = optax.chain(lr_tx, clamp_tx)
+        return tx, label_pytree
+
+    return builder
+
 # -----------------------------------------------------------------------------
 # DifferentiableAnalysis Class Definition
 # -----------------------------------------------------------------------------
@@ -195,7 +312,7 @@ class DifferentiableAnalysis(Analysis):
         self.histograms: dict[str, dict[str, dict[str, jnp.ndarray]]] = defaultdict(
             lambda: defaultdict(lambda: defaultdict(dict)))
 
-    def set_histograms(
+    def _set_histograms(
         self, histograms: dict[str, dict[str, dict[str, jnp.ndarray]]]
     ) -> None:
         """Set the final histograms after processing."""
@@ -225,7 +342,7 @@ class DifferentiableAnalysis(Analysis):
                 "mva_models":  mva,
             })
 
-    def get_channel_data(
+    def _get_channel_data(
         self,
         object_copies_analysis: dict[str, ak.Array],
         events_analysis: ak.Array,
@@ -371,7 +488,7 @@ class DifferentiableAnalysis(Analysis):
 
         return per_channel
 
-    def run_mva_training(
+    def _run_mva_training(
             self,
             events_per_process: dict[str, list[Tuple[dict, int]]]
         ) -> dict[str, Any]:
@@ -412,7 +529,7 @@ class DifferentiableAnalysis(Analysis):
             return trained, nets
 
 
-    def untraced_process(
+    def _prepare_data_for_tracing(
         self,
         events: ak.Array,
         process: str,
@@ -483,7 +600,7 @@ class DifferentiableAnalysis(Analysis):
         )
 
         # Get nominal channel data
-        channels_data = self.get_channel_data(
+        channels_data = self._get_channel_data(
             obj_copies_corrected_analysis,
             events[mask_analysis],
             obj_copies_corrected_mva,
@@ -523,7 +640,7 @@ class DifferentiableAnalysis(Analysis):
                     )
 
                     # Get channel data for this variation
-                    channels_data = self.get_channel_data(
+                    channels_data = self._get_channel_data(
                         obj_copies_corrected_analysis,
                         events[mask_analysis],
                         obj_copies_corrected_mva,
@@ -539,39 +656,9 @@ class DifferentiableAnalysis(Analysis):
         return processed_data
 
     # -------------------------------------------------------------------------
-    # Significance Calculation
-    # -------------------------------------------------------------------------
-    def _calculate_significance(
-        self,
-        process_histograms: dict,
-        params: dict,
-        recreate_fit_params: bool = False
-    ) -> jnp.ndarray:
-        """
-        Calculate asymptotic significance using evermore with multi-channel modeling.
-
-        Parameters
-        ----------
-        process_histograms : dict
-            Histograms organized by process, variation, region and observable
-        params : dict
-            Fit parameters for significance calculation
-
-        Returns
-        -------
-        jnp.ndarray
-            Asymptotic significance (sqrt(q0)) from profile likelihood ratio
-        """
-        logger.info("📊 Calculating significance from histograms...")
-        histograms = nested_defaultdict_to_dict(process_histograms).copy()
-        significance, mle_pars= calculate_significance_relaxed(histograms, self.channels, params)
-        logger.info(f"✅ Significance calculation complete\n")
-        return significance, mle_pars
-
-    # -------------------------------------------------------------------------
     # Histogramming Logic
     # -------------------------------------------------------------------------
-    def histogramming(
+    def _histogramming(
         self,
         processed_data: dict,
         mva_instances: dict[str, Any],
@@ -711,11 +798,10 @@ class DifferentiableAnalysis(Analysis):
 
         return histograms
 
-
     # -------------------------------------------------------------------------
     # Event Processing Entry Point
     # -------------------------------------------------------------------------
-    def collect_histograms(
+    def _collect_histograms(
         self,
         processed_data: dict[str, dict[str, ak.Array]],
         metadata: dict[str, Any],
@@ -727,7 +813,7 @@ class DifferentiableAnalysis(Analysis):
         Parameters
         ----------
         processed_data : dict
-            Per-variation channel data from `untraced_process`
+            Per-variation channel data from `._prepare_data_for_tracing`
         metadata : dict
             Dataset metadata with keys:
             - 'process': process name
@@ -757,7 +843,7 @@ class DifferentiableAnalysis(Analysis):
 
         # Process nominal variation
         logger.debug(f"Processing nominal variation for {process}")
-        histograms = self.histogramming(
+        histograms = self._histogramming(
             processed_data["nominal"],
             processed_data["mva_nets"],
             process,
@@ -778,7 +864,7 @@ class DifferentiableAnalysis(Analysis):
                     varname = f"{syst['name']}_{direction}"
                     logger.info(f"Processing {varname} for {process}")
 
-                    histograms = self.histogramming(
+                    histograms = self._histogramming(
                         processed_data[varname],
                         processed_data["mva_nets"],
                         process,
@@ -793,9 +879,39 @@ class DifferentiableAnalysis(Analysis):
         return all_histograms
 
     # -------------------------------------------------------------------------
-    # Main Analysis Loop
+    # Significance Calculation
     # -------------------------------------------------------------------------
-    def run_analysis_processing(
+    def _calculate_significance(
+        self,
+        process_histograms: dict,
+        params: dict,
+        recreate_fit_params: bool = False
+    ) -> jnp.ndarray:
+        """
+        Calculate asymptotic significance using evermore with multi-channel modeling.
+
+        Parameters
+        ----------
+        process_histograms : dict
+            Histograms organized by process, variation, region and observable
+        params : dict
+            Fit parameters for significance calculation
+
+        Returns
+        -------
+        jnp.ndarray
+            Asymptotic significance (sqrt(q0)) from profile likelihood ratio
+        """
+        logger.info("📊 Calculating significance from histograms...")
+        histograms = nested_defaultdict_to_dict(process_histograms).copy()
+        significance, mle_pars= calculate_significance_relaxed(histograms, self.channels, params)
+        logger.info(f"✅ Significance calculation complete\n")
+        return significance, mle_pars
+
+    # -------------------------------------------------------------------------
+    # Run the data processing code
+    # -------------------------------------------------------------------------
+    def _prepare_data(
         self,
         params: dict[str, Any],
         fileset: dict[str, Any],
@@ -923,11 +1039,11 @@ class DifferentiableAnalysis(Analysis):
                         ).events()
 
                     # Process events
-                    processed_data = self.untraced_process(events, process_name)
+                    processed_data = self._prepare_data_for_tracing(events, process_name)
                     all_events[f"{dataset}___{process_name}"][f"file__{idx}"][skimmed] = (processed_data, metadata)
 
                     # get nominal objects for MVA training ───
-                    if config.mva and config.general.run_mva_training:
+                    if config.mva and config.general._run_mva_training:
 
                         # --------------------------------------------------------
                         # Determine which MVA class this process should contribute to
@@ -971,9 +1087,9 @@ class DifferentiableAnalysis(Analysis):
             logger.info(f"✅ Finished dataset: {dataset}\n")
 
         # Train any MVAs that need pre-training
-        if self.config.general.run_mva_training and (mva_cfg := self.config.mva) is not None:
+        if self.config.general._run_mva_training and (mva_cfg := self.config.mva) is not None:
             logger.info("Executing MVA pre-training")
-            models, nets = self.run_mva_training(mva_data)
+            models, nets = self._run_mva_training(mva_data)
 
         for model_name in models.keys():
             model = models[model_name]
@@ -995,7 +1111,7 @@ class DifferentiableAnalysis(Analysis):
 
         return all_events, models
 
-    def run_histogram_and_significance(
+    def _run_traced_analysis_chain(
         self,
         params: dict[str, Any],
         processed_data_events: dict,
@@ -1035,7 +1151,7 @@ class DifferentiableAnalysis(Analysis):
                         f"Processing histograms from {file_key} in {dataset}"
                     )
                     # Collect histograms for this file
-                    histograms = self.collect_histograms(processed_data, metadata, params["aux"])
+                    histograms = self._collect_histograms(processed_data, metadata, params["aux"])
                     # Merge with existing histograms
                     process_histograms[process_name] = merge_histograms(
                         process_histograms[process_name], dict(histograms)
@@ -1044,13 +1160,13 @@ class DifferentiableAnalysis(Analysis):
         # Calculate final significance
         logger.info(f"✅ Histogramming complete")
         significance, mle_pars = self._calculate_significance(process_histograms, params["fit"])
-        self.set_histograms(process_histograms)
+        self._set_histograms(process_histograms)
         return significance, mle_pars
 
     # -------------------------------------------------------------------------
     # Cut Optimization via Gradient Ascent
     # -------------------------------------------------------------------------
-    def optimize_analysis_cuts(
+    def run_analysis_optimisation(
         self, fileset: dict[str, dict[str, Any]]
     ) -> Tuple[dict[str, jnp.ndarray], jnp.ndarray]:
         """
@@ -1104,7 +1220,7 @@ class DifferentiableAnalysis(Analysis):
 
         logger.info("✅ Event preprocessing complete\n")
         logger.info(" === Running untraced siginificance calculation to get initial histograms.. ===")
-        init_pval, init_mle_pars = self.run_histogram_and_significance(
+        init_pval, init_mle_pars = self._run_traced_analysis_chain(
             all_params, processed_data_events
         )
         init_histograms = self.histograms
@@ -1121,14 +1237,14 @@ class DifferentiableAnalysis(Analysis):
 
             logger.info(" === Running initial siginificance calculation to get gradients.. ===")
             (_, _), gradients = jax.value_and_grad(
-                self.run_histogram_and_significance,
+                self._run_traced_analysis_chain,
                 has_aux=True,
                 argnums=0,
             )(all_params, processed_data_events)
 
             # Define objective function (negative significance)
             def objective(params):
-                p0, mle_pars = self.run_histogram_and_significance(params, processed_data_events)
+                p0, mle_pars = self._run_traced_analysis_chain(params, processed_data_events)
                 return p0, mle_pars
 
             # Create parameter clamping function
@@ -1215,7 +1331,7 @@ class DifferentiableAnalysis(Analysis):
             logger.info(f"Final parameters: {pars}")
             logger.info(f"Gradients: {gradients}")
 
-            _ = self.run_histogram_and_significance(
+            _ = self._run_traced_analysis_chain(
                 all_params, processed_data_events
             )
             with open(f"{cache_dir}/cached_result.pkl", "wb") as f:
@@ -1337,112 +1453,4 @@ class DifferentiableAnalysis(Analysis):
             )
             fig_postfit.savefig(f"init_postfit_{ch.name}.png", dpi=150)
 
-def make_apply_param_updates(param_update_rules: dict) -> callable:
-    """
-    Create a function to apply parameter update rules during optimization.
 
-    Parameters
-    ----------
-    param_update_rules : dict
-        Mapping of parameter names to update functions:
-        {param_name: (lambda old_x, delta: new_x), …}
-
-    Returns
-    -------
-    callable
-        Function that applies update rules to parameters
-    """
-    def apply_rules(old_params, tentative_new_params):
-        new_aux = {}
-        aux_old = old_params["aux"]
-        aux_new_temp = tentative_new_params["aux"]
-
-        # Apply rules to each parameter
-        for key, x_temp in aux_new_temp.items():
-            if key in param_update_rules:
-                x_old = aux_old[key]
-                delta = x_temp - x_old
-                new_aux[key] = param_update_rules[key](x_old, delta)
-            else:
-                new_aux[key] = x_temp
-
-        return {"aux": new_aux, "fit": tentative_new_params["fit"]}
-
-    return apply_rules
-
-
-def make_clamp_transform(clamp_fn):
-    """An Optax transform that projects parameters after every update."""
-    def init_fn(params):
-        return None  # no extra state
-
-    def update_fn(updates, state, params=None):
-        # 1) apply the raw updates to get tentative new params
-        new_params = optax.apply_updates(params, updates)
-        # 2) clamp into your allowed region
-        new_params = clamp_fn(params, new_params)
-        # 3) compute “effective” updates = new − old
-        new_updates = jax.tree_util.tree_map(lambda n, o: n - o, new_params, params)
-        return new_updates, state
-
-    return optax.GradientTransformation(init_fn, update_fn)
-
-
-def make_lr_and_clamp_transform(
-    lr_map: dict,
-    default_lr: float,
-    fit_lr: float,
-    nn_lr: dict,
-    clamp_fn: callable,
-    frozen_keys: Optional[set[str]] = set(),
-) -> callable:
-    """
-    Combines your per-parameter LR multi-transform with a clamp-after-step transform.
-    Returns a builder(params) -> (tx, labels) just like before.
-    """
-    # first, your existing sub_transforms and label builder:
-    sub_transforms = {
-        **{f"aux__{k}":     optax.adam(lr) for k, lr in lr_map.items()},
-        **{f"NN__{k}":      optax.adam(lr) for k, lr in nn_lr.items()},
-        "aux__default":     optax.adam(default_lr),
-        "NN__default":      optax.adam(default_lr),
-        "fit__default":     optax.adam(fit_lr),
-        "no_update":        optax.set_to_zero(),  # no-op transform
-    }
-
-    def make_label_pytree(params):
-        labels = {"aux": {}, "fit": {}}
-        for aux_key in params["aux"]:
-            if aux_key in frozen_keys:
-                labels["aux"][aux_key] = "no_update"
-            elif "__NN" in aux_key:
-                for mva_with_lr in nn_lr:
-                    if mva_with_lr in aux_key:
-                        labels["aux"][aux_key] = f"NN__{mva_with_lr}"
-                        break
-                    else:
-                        labels["aux"][aux_key] = "NN__default"
-            elif aux_key in lr_map:
-                labels["aux"][aux_key] = f"aux__{aux_key}"
-            else:
-                labels["aux"][aux_key] = "aux__default"
-
-        for fit_key in params["fit"]:
-            if fit_key in frozen_keys:
-                labels["fit"][fit_key] = "no_update"
-            else:
-                labels["fit"][fit_key] = "fit__default"
-
-        return labels
-
-    # clamp‐after‐update transform
-    clamp_tx = make_clamp_transform(clamp_fn)
-
-    def builder(params):
-        label_pytree = make_label_pytree(params)
-        lr_tx = optax.multi_transform(sub_transforms, label_pytree)
-        # chain them: first do lr updates, then project
-        tx = optax.chain(lr_tx, clamp_tx)
-        return tx, label_pytree
-
-    return builder
