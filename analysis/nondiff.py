@@ -19,7 +19,9 @@ import vector
 
 from analysis.base import Analysis
 from utils.cuts import lumi_mask
-from utils.output_files import save_histograms, pkl_histograms, unpkl_histograms
+from utils.output_files import (save_histograms_to_root,
+                                save_histograms_to_pickle,
+                                load_histograms_from_pickle)
 from utils.preproc import pre_process_dak, pre_process_uproot
 from utils.stats import get_cabinetry_rebinning_router
 

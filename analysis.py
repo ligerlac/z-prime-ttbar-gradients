@@ -37,7 +37,7 @@ def main():
     logger.info(f"Luminosity: {config.general.lumi}")
 
     fileset = construct_fileset(
-        n_files_max_per_sample=config.general.max_files
+        max_files_per_sample=config.general.max_files
     )
 
     analysis_mode = config.general.analysis

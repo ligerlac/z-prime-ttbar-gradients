@@ -79,7 +79,7 @@ config = {
                 ("Jet", "btagDeepB"),
                 ("PuppiMET", "pt"),
                 ("Jet", "mass"),
-                ("wjets_vs_ttbar_nn", None),
+                #("wjets_vs_ttbar_nn", None),
             ],
         },
         "params": {
@@ -214,7 +214,7 @@ config = {
             "validation_split": 0.2,
             "random_state": 42,
             "grad_optimisation": {
-                "optimise": True,  # this will add weights to set of optimised parameters
+                "optimise": False,  # this will add weights to set of optimised parameters
                 "learning_rate": 0.0005,  # learning rate for the MVA optimisation
             },
             "classes": ["wjets", {"ttbar": ("ttbar_semilep", "ttbar_had", "ttbar_lep")}],
@@ -348,7 +348,7 @@ config = {
             },
             "fit_param_labels": {
                 "mu": r"$\mu$",
-                "norm_ttbar_semilep": r"$\kappa_{t\bar{t}}$",
+                "scale_ttbar": r"$\kappa_{t\bar{t}}$",
             }
 
         }

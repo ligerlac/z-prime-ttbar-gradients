@@ -38,10 +38,12 @@ from utils.cuts import lumi_mask
 from utils.mva import JAXNetwork, TFNetwork
 from utils.preproc import pre_process_dak, pre_process_uproot
 from utils.jax_stats import (
-    calculate_significance_relaxed,
-    build_allbkg_channel_data_scalar
+    compute_discovery_pvalue,
+    build_channel_data_scalar
 )
-from utils.plot import plot_cms_histogram, plot_params_per_iter, plot_pval_history
+from utils.plot import (create_cms_histogram,
+                        plot_parameters_over_iterations,
+                        plot_pvalue_vs_parameters)
 
 # =============================================================================
 # Backend & Logging Setup
@@ -1020,39 +1022,39 @@ class DifferentiableAnalysis(Analysis):
 
 
     # -------------------------------------------------------------------------
-    # Significance Calculation
+    # pvalue Calculation
     # -------------------------------------------------------------------------
-    def _calculate_significance(
+    def _calculate_pvalue(
         self,
         process_histograms: dict,
         params: dict,
         recreate_fit_params: bool = False
     ) -> jnp.ndarray:
         """
-        Calculate asymptotic significance using evermore with multi-channel modelling.
+        Calculate asymptotic p-value using evermore with multi-channel modelling.
 
         Parameters
         ----------
         process_histograms : dict
             Histograms organised by process, variation, region and observable.
         params : dict
-            Fit parameters for significance calculation.
+            Fit parameters for p-value calculation.
 
         Returns
         -------
         jnp.ndarray
-            Asymptotic significance (sqrt(q0)) from profile likelihood ratio.
+            Asymptotic p-value (sqrt(q0)) from profile likelihood ratio.
         """
-        logger.info("📊 Calculating significance from histograms...")
+        logger.info("📊 Calculating p-value from histograms...")
 
         # Convert histograms to standard Python dictionaries (from nested defaultdicts)
         histograms = nested_defaultdict_to_dict(process_histograms).copy()
 
-        # Use relaxed to compute significance and maximum likelihood estimators
-        significance, mle_pars = calculate_significance_relaxed(histograms, self.channels, params)
+        # Use relaxed to compute p-value and maximum likelihood estimators
+        pval, mle_pars = compute_discovery_pvalue(histograms, self.channels, params)
 
-        logger.info("✅ Significance calculation complete\n")
-        return significance, mle_pars
+        logger.info("✅ p-value calculation complete\n")
+        return pval, mle_pars
 
 
     # -------------------------------------------------------------------------
@@ -1064,10 +1066,10 @@ class DifferentiableAnalysis(Analysis):
         processed_data_events: dict,
     ) -> tuple[jnp.ndarray, dict[str, Any]]:
         """
-        Collect histograms from preprocessed events and compute the final statistical significance.
+        Collect histograms from preprocessed events and compute the final statistical p-value.
 
         This function iterates over the preprocessed events, builds histograms for each dataset
-        and process, merges them, and then computes the overall significance using a profile
+        and process, merges them, and then computes the overall p-value using a profile
         likelihood fit. The resulting histograms are also stored for later access (e.g. plotting).
 
         Parameters
@@ -1093,16 +1095,16 @@ class DifferentiableAnalysis(Analysis):
         Returns
         -------
         tuple
-            significance : jnp.ndarray
-                The computed asymptotic significance value.
+            pvalue : jnp.ndarray
+                The computed asymptotic p-value.
             mle_params : dict
-                The maximum-likelihood estimated fit parameters obtained from the significance fit.
+                The maximum-likelihood estimated fit parameters obtained from the p-value fit.
         """
-        logger.info("📊 Starting histogram collection and significance calculation...")
+        logger.info("📊 Starting histogram collection and p-value calculation...")
         histograms_by_process = defaultdict(dict)
 
         # -------------------------------------------------------------------------
-        # Loop over datasets (e.g. '2018___ttbar', '2018___wjets')
+        # Loop over datasets
         # -------------------------------------------------------------------------
         for dataset_name, dataset_files in processed_data_events.items():
             process_name = dataset_name.split("___")[1]
@@ -1132,15 +1134,15 @@ class DifferentiableAnalysis(Analysis):
                     )
 
         # -------------------------------------------------------------------------
-        # Compute statistical significance from histograms
+        # Compute statistical p-value from histograms
         # -------------------------------------------------------------------------
-        logger.info("✅ Histogram collection complete. Starting significance calculation...")
-        significance, mle_params = self._calculate_significance(histograms_by_process, params["fit"])
+        logger.info("✅ Histogram collection complete. Starting p-value calculation...")
+        pvalue, mle_params = self._calculate_pvalue(histograms_by_process, params["fit"])
 
         # Store histograms for later plotting or debugging
         self._set_histograms(histograms_by_process)
 
-        return significance, mle_params
+        return pvalue, mle_params
 
 
     # -------------------------------------------------------------------------
@@ -1314,22 +1316,29 @@ class DifferentiableAnalysis(Analysis):
             logger.info(f"✅ Finished dataset: {dataset}\n")
 
         # Run MVA training after all datasets are processed
+        models = {}
+        nets = {}
+        # Attach empty dict of MVA nets to each file’s processed data
+        for dataset_files in all_events.values():
+            for file_dict in dataset_files.values():
+                for skim_key, (processed_data, metadata) in file_dict.items():
+                    processed_data['mva_nets'] = nets
         if self.config.general.run_mva_training and (mva_cfg := self.config.mva) is not None:
             logger.info("Executing MVA pre-training")
             models, nets = self._run_mva_training(mva_data)
 
-        # Save trained models and attach to processed data
-        for model_name in models.keys():
-            model = models[model_name]
-            net = nets[model_name]
-            model_path = self.dirs["mva_models"] / f"{model_name}.pkl"
-            net_path = self.dirs["mva_models"] / f"{model_name}_network.pkl"
-            with open(model_path, "wb") as f:
-                cloudpickle.dump(model, f)
-            with open(net_path, "wb") as f:
-                cloudpickle.dump(net, f)
-            logger.info(f"Saved MVA model '{model_name}' to {model_path}")
-            logger.info(f"Saved model network '{model_name}' to {net_path}")
+            # Save trained models and attach to processed data
+            for model_name in models.keys():
+                model = models[model_name]
+                net = nets[model_name]
+                model_path = self.dirs["mva_models"] / f"{model_name}.pkl"
+                net_path = self.dirs["mva_models"] / f"{model_name}_network.pkl"
+                with open(model_path, "wb") as f:
+                    cloudpickle.dump(model, f)
+                with open(net_path, "wb") as f:
+                    cloudpickle.dump(net, f)
+                logger.info(f"Saved MVA model '{model_name}' to {model_path}")
+                logger.info(f"Saved model network '{model_name}' to {net_path}")
 
             # Attach MVA nets to each file’s processed data
             for dataset_files in all_events.values():
@@ -1338,6 +1347,7 @@ class DifferentiableAnalysis(Analysis):
                         processed_data['mva_nets'] = nets
 
         return all_events, models
+
 
 
     # -------------------------------------------------------------------------
@@ -1364,7 +1374,7 @@ class DifferentiableAnalysis(Analysis):
         -------
         tuple
             - Dictionary of final optimised KDE-based histograms
-            - Final JAX scalar significance value
+            - Final JAX scalar p-value
         """
         # ---------------------------------------------------------------------
         # 1. Configure caching and initialise analysis parameters
@@ -1378,7 +1388,7 @@ class DifferentiableAnalysis(Analysis):
 
         all_parameters = {
             "aux": auxiliary_parameters,
-            "fit": {"mu": 1.0, "norm_ttbar_semilep": 1.0},
+            "fit": {"mu": 1.0, "scale_ttbar": 1.0},
         }
 
         # ---------------------------------------------------------------------
@@ -1408,8 +1418,8 @@ class DifferentiableAnalysis(Analysis):
         # ---------------------------------------------------------------------
         # 3. Run initial traced analysis to compute KDE histograms
         # ---------------------------------------------------------------------
-        logger.info("=== Running initial significance computation (traced)... ===")
-        initial_significance, mle_parameters = self._run_traced_analysis_chain(
+        logger.info("=== Running initial p-value computation (traced)... ===")
+        initial_pvalue, mle_parameters = self._run_traced_analysis_chain(
             all_parameters, processed_data
         )
         initial_histograms = self.histograms
@@ -1434,7 +1444,7 @@ class DifferentiableAnalysis(Analysis):
                 argnums=0,
             )(all_parameters, processed_data)
 
-            # Define objective for optimiser (significance to maximise)
+            # Define objective for optimiser (p-value to minimise)
             def objective(params):
                 return self._run_traced_analysis_chain(params, processed_data)
 
@@ -1511,9 +1521,9 @@ class DifferentiableAnalysis(Analysis):
             # Run optimiser and collect result
             final_pval, final_mle_pars, final_params = optimise_and_log(n_steps=self.config.jax.max_iterations)
 
-            logger.info(f"Initial p-value: {initial_significance:.4f}")
+            logger.info(f"Initial p-value: {initial_pvalue:.4f}")
             logger.info(f"Final   p-value: {final_pval:.4f}")
-            logger.info(f"Improvement: {(final_pval - initial_significance) * 100 / initial_significance:.2f}%")
+            logger.info(f"Improvement: {(final_pval - initial_pvalue) * 100 / initial_pvalue:.2f}%")
 
             # Re-run analysis with final parameters to update histograms
             _ = self._run_traced_analysis_chain(final_params, processed_data)
@@ -1523,7 +1533,7 @@ class DifferentiableAnalysis(Analysis):
                 cloudpickle.dump({
                     "params": final_params,
                     "mle_pars": final_mle_pars,
-                    "significance": final_pval,
+                    "pvalue": final_pval,
                     "histograms": self.histograms,
                     "pvals_history": pval_history,
                     "aux_history": aux_history,
@@ -1549,7 +1559,7 @@ class DifferentiableAnalysis(Analysis):
 
         final_params = results["params"]
         mle_pars = results["mle_pars"]
-        final_pval = results["significance"]
+        final_pval = results["pvalue"]
         pval_history = results["pvals_history"]
         aux_history = results["aux_history"]
         mle_history = results["mle_history"]
@@ -1557,36 +1567,52 @@ class DifferentiableAnalysis(Analysis):
         histograms = results["histograms"]
 
         # Generate optimisation progress plots
+# Updated optimization history plots
         if self.config.jax.explicit_optimization:
             lrs = self.config.jax.learning_rates or {k: self.config.jax.learning_rate for k in final_params["aux"]}
-            plot_pval_history(pval_history, aux_history, mle_history, gradients, lrs, plot_settings=self.config.plotting,
-                              fname=f"{self.dirs['optimisation_plots']}/pval_history.pdf")
+            plot_pvalue_vs_parameters(
+                pvalue_history=pval_history,
+                auxiliary_history=aux_history,
+                mle_history=mle_history,
+                gradients=gradients,
+                learning_rates=lrs,
+                plot_settings=self.config.plotting,
+                filename=f"{self.dirs['optimisation_plots']}/pvalue_vs_parameters.pdf"
+            )
 
-            plot_params_per_iter(pval_history, aux_history, mle_history, gradients, lrs, plot_settings=self.config.plotting,
-                                 fname=f"{self.dirs['optimisation_plots']}/params_per_iter.pdf")
+            plot_parameters_over_iterations(
+                pvalue_history=pval_history,
+                auxiliary_history=aux_history,
+                mle_history=mle_history,
+                gradients=gradients,
+                learning_rates=lrs,
+                plot_settings=self.config.plotting,
+                filename=f"{self.dirs['optimisation_plots']}/parameters_vs_iterations.pdf"
+            )
 
         # ---------------------------------------------------------------------
-        # 6. Generate pre- and post-fit plots using significance histograms
+        # 6. Generate pre- and post-fit plots
         # ---------------------------------------------------------------------
-        def make_plots(histograms_dict, label: str, fitted_pars):
-            channel_data_list, _ = build_allbkg_channel_data_scalar(histograms_dict, self.config.channels)
+        def make_pre_and_post_fit_plots(histograms_dict, label: str, fitted_pars):
+            channel_data_list, _ = build_channel_data_scalar(histograms_dict, self.config.channels)
             for channel_data in channel_data_list:
                 channel_cfg = next(c for c in self.config.channels if c.name == channel_data.name)
                 fit_obs = channel_cfg.fit_observable
                 obs_label = next(o["label"] for o in channel_cfg["observables"] if o["name"] == fit_obs)
-                fig = plot_cms_histogram(
-                    bin_edges=channel_data.binning,
-                    data=channel_data.data_counts,
-                    templates=channel_data.processes,
-                    fitted_pars=fitted_pars,
+                fig = create_cms_histogram(
+                    bin_edges=channel_data.bin_edges,
+                    data=channel_data.observed_counts,
+                    templates=channel_data.templates,
+                    fitted_params=fitted_pars,
                     plot_settings=self.config.plotting,
                     xlabel=obs_label,
                 )
                 fig.savefig(f"{self.dirs['fit_plots']}/{label}_{channel_data.name}.pdf", dpi=300)
 
         # Plot post-fit (final) and post-fit (initial) comparison
-        make_plots(histograms, "postopt_postfit", mle_pars)
-        make_plots(initial_histograms, "preopt_postfit", mle_pars)
+        make_pre_and_post_fit_plots(histograms, "postopt_postfit", mle_pars)
+        make_pre_and_post_fit_plots(initial_histograms, "preopt_postfit", mle_pars)
+        make_pre_and_post_fit_plots(initial_histograms, "preopt_prefit", all_parameters["fit"])
 
         return histograms, final_pval
 

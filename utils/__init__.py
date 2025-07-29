@@ -10,6 +10,7 @@ from . import preproc as preproc
 from . import schema as schema
 from . import systematics as systematics
 from . import jax_stats as jax_stats
+#from . import mva as mva
 
 
 __all__ = [
@@ -22,7 +23,8 @@ __all__ = [
     "preproc",
     "schema",
     "systematics",
-    "jax_stats"
+    "jax_stats",
+    "mva",
 ]
 
 

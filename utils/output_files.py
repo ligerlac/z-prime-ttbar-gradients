@@ -1,92 +1,144 @@
-import pickle
 import logging
+import pickle
+from pathlib import Path
+from typing import Any, Dict, Union
 
 import uproot
 
-logger = logging.getLogger(__name__)
+# Configure module-level logger
+typing_logger = logging.getLogger(__name__)
 
-def pkl_histograms(histograms, output_file="outputs/histograms/histogram.pkl"):
+
+def save_histograms_to_pickle(
+    histograms: Dict[str, Dict[str, Any]],
+    pickle_path: Union[str, Path]
+) -> None:
     """
-    Save a histograms dictionary to a specified pickle file.
+    Save a nested dictionary of histograms to a pickle file.
 
     Parameters
     ----------
-    histogram : Dict[str, Dict[str, Hist]]
-        Mapping of region and observable to histograms.
-    output_dir : str
-        pickle file to save the histogram in.
+    histograms : dict
+        Mapping from channel names to observables to histogram objects.
+    pickle_path : str or Path
+        Path to the output pickle file. The directory will be
+        created if it does not exist.
+
+    Raises
+    ------
+    IOError
+        If writing to the pickle file fails.
     """
-    # Save the histogram to a pickle file
-    with open(output_file, "wb") as f:
-        pickle.dump(histograms, f)
+    path = Path(pickle_path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("wb") as file:
+            pickle.dump(histograms, file)
+        typing_logger.info(f"Histograms successfully pickled to {path}")
+    except Exception as exc:
+        typing_logger.error(f"Failed to pickle histograms to {path}: {exc}")
+        raise
 
 
-def unpkl_histograms(pickled_file="outputs/histograms/histogram.pkl"):
+def load_histograms_from_pickle(
+    pickle_path: Union[str, Path]
+) -> Dict[str, Dict[str, Any]]:
     """
-    Save read a histograms dictionary from a specified pickle file.
+    Load a nested dictionary of histograms from a pickle file.
 
     Parameters
     ----------
-    pickled_file : str
-        pickle file to read the histogram from.
+    pickle_path : str or Path
+        Path to the input pickle file.
 
     Returns
     -------
-    histograms : Dict[str, Dict[str, , Hist]]
-        Mapping of region and observable to histograms
+    dict
+        Nested mapping from channel names to observables to histogram objects.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the specified pickle file does not exist.
+    IOError
+        If reading from the pickle file fails.
     """
-    with open(pickled_file, "rb") as f:
-        histograms = pickle.load(f)
-    return histograms
+    path = Path(pickle_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Pickle file not found: {path}")
+
+    try:
+        with path.open("rb") as file:
+            histograms = pickle.load(file)
+        typing_logger.info(f"Histograms successfully loaded from {path}")
+        return histograms
+    except Exception as exc:
+        typing_logger.error(f"Failed to load histograms from {path}: {exc}")
+        raise
 
 
-def save_histograms(
-    hist_dict,
-    output_file="outputs/histograms/histograms.root",
-    add_offset=False,
-):
+def save_histograms_to_root(
+    histograms: Dict[str, Dict[str, Any]],
+    root_path: Union[str, Path],
+    add_offset: bool = False
+) -> None:
     """
-    Save histograms to a specified directory.
+    Save histograms to a ROOT file using uproot.
 
     Parameters
     ----------
-    hist_dict : dict
-        Dictionary of histograms to save.
-    output_dir : str
-        Directory to save the histograms.
+    histograms : dict
+        Nested mapping of channel names to observables to histogram objects.
+    root_path : str or Path
+        Path to the output ROOT (.root) file. The directory will be
+        created if it does not exist.
+    add_offset : bool, optional
+        If True, add a small offset to each bin to avoid empty bins
+        (default is False).
+
+    Notes
+    -----
+    - Histograms with no entries (after optional offset) are skipped.
+    - Filenames in the ROOT file follow the pattern:
+      "<channel>__<observable>__<sample>[__<variation>]".
     """
+    path = Path(root_path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with uproot.recreate(str(path)) as root_file:
+            for channel, obs_dict in histograms.items():
+                for observable, hist in obs_dict.items():
+                    # Optionally add a minimal floating-point offset
+                    if add_offset:
+                        hist = hist + 1e-6
+                        num_bins = hist.axes[0].size
+                        empty_threshold = num_bins * 1e-6 * 1.01
+                    else:
+                        empty_threshold = 0.0
 
-    with uproot.recreate(output_file) as f:
-        # save all available histograms to disk
-        for channel, observables in hist_dict.items():
-            for observable, histogram in observables.items():
-                # optionally add minimal offset to avoid completely empty bins
-                # (useful for the ML validation variables that would need
-                # binning adjustment to avoid those)
-                if add_offset:
-                    histogram += 1e-6
-                    # reference count empty histogram with float-point math tolerance
-                    empty_hist_yield = histogram.axes[0].size * (1e-6) * 1.01
-                else:
-                    empty_hist_yield = 0
+                    # Iterate samples and systematic variations
+                    for sample in hist.axes[1]:
+                        sample_hist = hist[:, sample, :]
+                        for variation in sample_hist.axes[1]:
+                            # Skip non-nominal variations for data
+                            if sample == "data" and variation != "nominal":
+                                continue
 
-                for sample in histogram.axes[1]:
-                    sample_histograms = histogram[:, sample, :]
-                    for variation in sample_histograms.axes[1]:
-                        if sample == "data" and variation != "nominal":
-                            # no systematics for data
-                            continue
+                            # Construct key and histogram slice
+                            suffix = "" if variation == "nominal" else f"__{variation}"
+                            hist_slice = hist[:, sample, variation]
 
-                        variation_string = (
-                            "" if variation == "nominal" else f"__{variation}"
-                        )
-
-                        current_1d_hist = histogram[:, sample, variation]
-                        if sum(current_1d_hist.values()) > empty_hist_yield:
-                            # only save histograms containing events
-                            f[
-                                f"{channel}__{observable}__{sample}{variation_string}"
-                            ] = current_1d_hist
-                        else:
-                            print(current_1d_hist)
-                            logger.warning( f"The {channel}__{observable}__{sample}{variation_string} histogram is empty. It will not be saved.")
+                            # Check for non-empty histogram
+                            total_entries = sum(hist_slice.values())
+                            if total_entries > empty_threshold:
+                                key = f"{channel}__{observable}__{sample}{suffix}"
+                                root_file[key] = hist_slice
+                                typing_logger.debug(f"Saved ROOT histogram: {key}")
+                            else:
+                                typing_logger.warning(
+                                    f"Skipping empty histogram: {channel}__{observable}__{sample}{suffix}"
+                                )
+        typing_logger.info(f"Histograms successfully written to ROOT file {path}")
+    except Exception as exc:
+        typing_logger.error(f"Failed to write ROOT file {path}: {exc}")
+        raise

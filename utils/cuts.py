@@ -325,7 +325,7 @@ def Zprime_softcuts_jax_workshop(
     jets: ak.Array,
     met: ak.Array,
     jet_mass: ak.Array,
-    nn,
+    #nn,
     params: dict
 ) -> jnp.ndarray:
     """
@@ -351,9 +351,9 @@ def Zprime_softcuts_jax_workshop(
         Per-event array of selection weights (range [0, 1]) for gradient flow.
     """
 
-    nn_instance = nn["instance"]
-    nn_features = nn["features"]
-    nn_score = nn_instance.forward_pass(params, nn_features)
+    #nn_instance = nn["instance"]
+    #nn_features = nn["features"]
+    #nn_score = nn_instance.forward_pass(params, nn_features)
 
     # Choose a fixed numebr of jets
     max_jets = 8   # for example
@@ -388,14 +388,14 @@ def Zprime_softcuts_jax_workshop(
         'lep_ht_cut': jax.nn.sigmoid(
             (lep_ht - params['lep_ht_threshold']) / 5.0
         ),
-        'nn_cut': jax.nn.sigmoid(
-            (nn_score - 0.05) * 10.0
-        ),
+        # 'nn_cut': jax.nn.sigmoid(
+        #     (nn_score - 0.05) * 10.0
+        # ),
     }
     # ---------------------
     # Combine cut weights multiplicatively (AND logic)
     # ---------------------
-    cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"], cuts["lep_ht_cut"], cuts["nn_cut"]]) #
+    cut_values = jnp.stack([v for k, v in cuts.items()])
     selection_weight = jnp.prod(cut_values, axis=0)
     return selection_weight
 
