@@ -370,6 +370,7 @@ class DifferentiableAnalysis(Analysis):
         self.histograms: dict[str, dict[str, dict[str, jnp.ndarray]]] = defaultdict(
             lambda: defaultdict(lambda: defaultdict(dict))
         )
+        self._prepare_dirs()
 
 
     def _set_histograms(
@@ -398,7 +399,7 @@ class DifferentiableAnalysis(Analysis):
         - Directories for storing MVA models, optimisation plots, and fit plots
         """
         # Ensure the output/ directory and common structure are prepared
-        super()._prepare_dirs()
+        self.dirs = super()._prepare_dirs()
 
         # Create cache directory for gradient checkpoints and intermediate results
         cache = Path(self.config.general.cache_dir or "/tmp/gradients_analysis/")
@@ -1055,6 +1056,94 @@ class DifferentiableAnalysis(Analysis):
 
 
     # -------------------------------------------------------------------------
+    # The analysis workflow being optimised [histograms + statistics]
+    # -------------------------------------------------------------------------
+    def _run_traced_analysis_chain(
+        self,
+        params: dict[str, Any],
+        processed_data_events: dict,
+    ) -> tuple[jnp.ndarray, dict[str, Any]]:
+        """
+        Collect histograms from preprocessed events and compute the final statistical significance.
+
+        This function iterates over the preprocessed events, builds histograms for each dataset
+        and process, merges them, and then computes the overall significance using a profile
+        likelihood fit. The resulting histograms are also stored for later access (e.g. plotting).
+
+        Parameters
+        ----------
+        params : dict
+            Dictionary of model parameters containing:
+            - 'aux': Auxiliary parameters (e.g. selection thresholds, nuisance parameters)
+            - 'fit': Fit parameters for statistical inference (e.g. normalization factors)
+        processed_data_events : dict
+            Nested dictionary containing preprocessed events produced by `run_analysis_processing`.
+            Structure:
+            {
+                "<dataset>": {
+                    "<file_key>": {
+                        "<variation>": (processed_data, metadata),
+                        ...
+                    },
+                    ...
+                },
+                ...
+            }
+
+        Returns
+        -------
+        tuple
+            significance : jnp.ndarray
+                The computed asymptotic significance value.
+            mle_params : dict
+                The maximum-likelihood estimated fit parameters obtained from the significance fit.
+        """
+        logger.info("📊 Starting histogram collection and significance calculation...")
+        histograms_by_process = defaultdict(dict)
+
+        # -------------------------------------------------------------------------
+        # Loop over datasets (e.g. '2018___ttbar', '2018___wjets')
+        # -------------------------------------------------------------------------
+        for dataset_name, dataset_files in processed_data_events.items():
+            process_name = dataset_name.split("___")[1]
+
+            logger.info(
+                f"🔍 Processing dataset: {dataset_name} "
+                f"(process: {process_name}, files: {len(dataset_files)})"
+            )
+
+            # Ensure process histogram container exists
+            if process_name not in histograms_by_process:
+                histograms_by_process[process_name] = defaultdict(lambda: defaultdict(dict))
+
+            # ---------------------------------------------------------------------
+            # Loop over files in the dataset
+            # ---------------------------------------------------------------------
+            for file_key, variations in dataset_files.items():
+                for variation_name, (processed_data, metadata) in variations.items():
+                    logger.debug(f"  • Collecting histograms for file: {file_key} ({variation_name})")
+
+                    # Build histograms for this file and variation
+                    file_histograms = self._collect_histograms(processed_data, metadata, params["aux"])
+
+                    # Merge file histograms into the global container for this process
+                    histograms_by_process[process_name] = merge_histograms(
+                        histograms_by_process[process_name], dict(file_histograms)
+                    )
+
+        # -------------------------------------------------------------------------
+        # Compute statistical significance from histograms
+        # -------------------------------------------------------------------------
+        logger.info("✅ Histogram collection complete. Starting significance calculation...")
+        significance, mle_params = self._calculate_significance(histograms_by_process, params["fit"])
+
+        # Store histograms for later plotting or debugging
+        self._set_histograms(histograms_by_process)
+
+        return significance, mle_params
+
+
+    # -------------------------------------------------------------------------
     # Run the data processing code
     # -------------------------------------------------------------------------
     def _prepare_data(
@@ -1366,14 +1455,15 @@ class DifferentiableAnalysis(Analysis):
                 else:
                     nn_config_lr[mva_cfg.name] = mva_cfg.grad_optimisation.learning_rate
 
+
             # Construct optimiser with clamping
             tx, _ = make_lr_and_clamp_transform(
                 manual_lrs,
-                default_lr=global_lr,
-                fit_lr=1e-3,
-                nn_lr=nn_config_lr,
-                clamp_fn=clamp_fn,
-                frozen_keys=frozen_keys,
+                default_auxiliary_lr=global_lr,
+                default_fit_lr=1e-3,
+                neural_net_lr_map=nn_config_lr,
+                clamp_function=clamp_fn,
+                frozen_parameter_keys=frozen_keys,
             )(all_parameters)
 
             # Set up optimisation loop

@@ -1,12 +1,12 @@
 import gzip
 import logging
-from typing import Any, Callable, Literal, Optional, Union
 from pathlib import Path
+from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Tuple, Union
 import warnings
 
 import awkward as ak
 from coffea.nanoevents import NanoAODSchema
-from correctionlib import CorrectionSet
+from correctionlib import Correction, CorrectionSet
 import vector
 
 from utils.schema import GoodObjectMasksConfig
@@ -20,8 +20,10 @@ vector.register_awkward()
 # -----------------------------
 # Logging Configuration
 # -----------------------------
-
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s: %(name)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname)s: %(name)s] %(message)s"
+)
 logger = logging.getLogger("BaseAnalysis")
 logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 
@@ -29,343 +31,602 @@ NanoAODSchema.warn_missing_crossrefs = False
 warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
 
 
-def is_jagged(arraylike) -> bool:
+def is_jagged(array_like: ak.Array) -> bool:
+    """
+    Determine if an array is jagged (has variable-length subarrays).
+
+    Parameters
+    ----------
+    array_like : ak.Array
+        Input array to check
+
+    Returns
+    -------
+    bool
+        True if the array is jagged, False otherwise
+    """
     try:
-        return ak.num(arraylike, axis=1) is not None
+        return ak.num(array_like, axis=1) is not None
     except Exception:
         return False
 
-# -----------------------------
-# Base class
-# -----------------------------
+
 class Analysis:
-    def __init__(self, config: dict[str, Any]) -> None:
+    """Base class for physics analysis implementations."""
+
+    def __init__(self, config: Dict[str, Any]) -> None:
         """
-        Initialize ZprimeAnalysis with configuration for systematics, corrections,
-        and channels.
+        Initialize analysis with configuration for systematics, corrections, and channels.
 
         Parameters
         ----------
-        config : dict
-            Configuration dictionary with 'systematics', 'corrections', 'channels',
-            and 'general'.
+        config : Dict[str, Any]
+            Configuration dictionary with keys:
+            - 'systematics': Systematic variations configuration
+            - 'corrections': Correction configurations
+            - 'channels': Analysis channel definitions
+            - 'general': General settings including output directory
         """
         self.config = config
         self.channels = config.channels
         self.systematics = config.systematics
         self.corrections = config.corrections
         self.corrlib_evaluators = self._load_correctionlib()
+        self.dirs = self._prepare_dirs()
 
-        self._prepare_dirs()
+    def _prepare_dirs(self) -> Dict[str, Path]:
+        """
+        Create output directories used by the analysis.
 
-    def _prepare_dirs(self):
-        """Initialise directories used by all analysis classes"""
-        out = Path(self.config.general.output_dir)
-        out.mkdir(parents=True, exist_ok=True)
-        # store for convenience
-        self.dirs = {"output": out}
+        Returns
+        -------
+        Dict[str, Path]
+            Dictionary containing directory paths
+        """
+        output_dir = Path(self.config.general.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return {"output": output_dir}
 
-    def _load_correctionlib(self) -> dict[str, CorrectionSet]:
+    def _load_correctionlib(self) -> Dict[str, CorrectionSet]:
         """
         Load correctionlib JSON files into evaluators.
 
         Returns
         -------
-        dict
-            Dictionary of correction name to CorrectionSet evaluator.
+        Dict[str, CorrectionSet]
+            Mapping of correction name to CorrectionSet evaluator
         """
         evaluators = {}
-        for systematic in self.corrections:
-            if not systematic.get("use_correctionlib"):
+        for correction in self.corrections:
+            if not correction.get("use_correctionlib"):
                 continue
-            name = systematic["name"]
-            path = systematic["file"]
 
-            if path.endswith(".json.gz"):
-                with gzip.open(path, "rt") as f:
-                    evaluators[name] = CorrectionSet.from_string(
-                        f.read().strip()
-                    )
-            elif path.endswith(".json"):
-                evaluators[name] = CorrectionSet.from_file(path)
+            corr_name = correction["name"]
+            file_path = correction["file"]
+
+            if file_path.endswith(".json.gz"):
+                with gzip.open(file_path, "rt") as f:
+                    evaluators[corr_name] = CorrectionSet.from_string(f.read().strip())
+            elif file_path.endswith(".json"):
+                evaluators[corr_name] = CorrectionSet.from_file(file_path)
             else:
-                raise ValueError(f"Unsupported correctionlib format: {path}")
+                raise ValueError(
+                    f"Unsupported correctionlib format: {file_path}. "
+                    "Expected .json or .json.gz"
+                )
 
         return evaluators
 
-    def get_object_copies(self, events: ak.Array) -> dict[str, ak.Array]:
+    def get_object_copies(self, events: ak.Array) -> Dict[str, ak.Array]:
         """
         Extract a dictionary of objects from the NanoEvents array.
 
         Parameters
         ----------
         events : ak.Array
-            Input events.
+            Input event array
 
         Returns
         -------
-        dict
-            Dictionary of field name to awkward array.
+        Dict[str, ak.Array]
+            Dictionary of field names to awkward arrays
         """
         return {field: events[field] for field in events.fields}
 
     def get_good_objects(
-        self, object_copies: dict[str, ak.Array],
-        masks: list[GoodObjectMasksConfig] = []
-    ) -> dict[str, ak.Array]:
+        self,
+        object_copies: Dict[str, ak.Array],
+        masks: Iterable[GoodObjectMasksConfig] = []
+    ) -> Dict[str, ak.Array]:
+        """
+        Apply selection masks to objects.
 
+        Parameters
+        ----------
+        object_copies : Dict[str, ak.Array]
+            Original objects dictionary
+        masks : Iterable[GoodObjectMasksConfig], optional
+            List of mask configurations
+
+        Returns
+        -------
+        Dict[str, ak.Array]
+            Dictionary of filtered objects
+        """
         good_objects = {}
-        for obj_mask in masks:
+        for mask_config in masks:
             mask_args = self._get_function_arguments(
-                obj_mask.use, object_copies
-            )
-            mask = obj_mask.function(*mask_args)
-            if not isinstance(mask, ak.Array):
-                raise TypeError(
-                    f"Expected mask to be an awkward array, got {type(mask)}"
-                )
+                mask_config.use, object_copies)
 
-            good_objects[obj_mask.object] = object_copies[obj_mask.object][mask]
+            selection_mask = mask_config.function(*mask_args)
+            if not isinstance(selection_mask, ak.Array):
+                raise TypeError(f"Mask must be an awkward array. Got {type(selection_mask)}")
+
+            obj_name = mask_config.object
+            good_objects[obj_name] = object_copies[obj_name][selection_mask]
 
         return good_objects
 
-    def apply_object_masks(self, obj_copies, mask_set="analysis"):
-        if (obj_masks := self.config.good_object_masks.get(mask_set, [])) == []:
-            return obj_copies
-        filtered = self.get_good_objects(obj_copies, obj_masks)
-        for k in filtered:
-            if k not in obj_copies:
-                logger.error(f"Object {k} not found in original object copies")
-                raise KeyError
-            obj_copies[k] = filtered[k]
-        return obj_copies
+    def apply_object_masks(
+        self,
+        object_copies: Dict[str, ak.Array],
+        mask_set: str = "analysis"
+    ) -> Dict[str, ak.Array]:
+        """
+        Apply predefined object masks to object copies.
+
+        Parameters
+        ----------
+        object_copies : Dict[str, ak.Array]
+            Objects to filter
+        mask_set : str, optional
+            Key for mask configuration (default: "analysis")
+
+        Returns
+        -------
+        Dict[str, ak.Array]
+            Updated objects with masks applied
+        """
+        mask_configs = self.config.good_object_masks.get(mask_set, [])
+        if not mask_configs:
+            return object_copies
+
+        filtered_objects = self.get_good_objects(object_copies, mask_configs)
+        for obj_name in filtered_objects:
+            if obj_name not in object_copies:
+                logger.error(f"Object {obj_name} not found in object copies")
+                raise KeyError(f"Missing object: {obj_name}")
+            object_copies[obj_name] = filtered_objects[obj_name]
+
+        return object_copies
 
     def apply_correctionlib(
         self,
-        name: str,
-        key: str,
+        correction_name: str,
+        correction_key: str,
         direction: Literal["up", "down", "nominal"],
-        correction_arguments: list[ak.Array],
-        target: Optional[Union[ak.Array, list[ak.Array]]] = None,
-        op: Optional[str] = None,
+        correction_args: List[ak.Array],
+        target: Optional[Union[ak.Array, List[ak.Array]]] = None,
+        operation: Optional[str] = None,
         transform: Optional[Callable[..., Any]] = None,
-    ) -> Union[ak.Array, list[ak.Array]]:
+    ) -> Union[ak.Array, List[ak.Array]]:
         """
-        Apply a correction using correctionlib.
+        Apply correction using correctionlib.
+
+        Parameters
+        ----------
+        correction_name : str
+            Name of the correction in evaluators
+        correction_key : str
+            Specific correction key
+        direction : Literal["up", "down", "nominal"]
+            Systematic direction
+        correction_args : List[ak.Array]
+            Input arguments for correction
+        target : Optional[Union[ak.Array, List[ak.Array]]], optional
+            Target array(s) to modify
+        operation : Optional[str], optional
+            Operation to apply ('add' or 'mult')
+        transform : Optional[Callable[..., Any]], optional
+            Transformation function for arguments
+
+        Returns
+        -------
+        Union[ak.Array, List[ak.Array]]
+            Corrected value(s)
         """
         logger.info(
-            f"Applying correctionlib correction: name={name}, "
-            f"key={key}, direction={direction}"
+            "Applying correction: %s/%s (%s)",
+            correction_name,
+            correction_key,
+            direction
         )
-        if transform is not None:
-            correction_arguments = transform(*correction_arguments)
 
-        flat_args, counts_to_unflatten = [], []
-        for arg in correction_arguments:
+        # Apply argument transformation if provided
+        if transform is not None:
+            correction_args = transform(*correction_args)
+
+        # Flatten jagged arrays
+        flat_args, counts = [], []
+        for arg in correction_args:
             if is_jagged(arg):
                 flat_args.append(ak.flatten(arg))
-                counts_to_unflatten.append(ak.num(arg))
+                counts.append(ak.num(arg))
             else:
                 flat_args.append(arg)
 
-        correction = self.corrlib_evaluators[name][key].evaluate(
-            *flat_args, direction
-        )
+        # Evaluate correction
+        correction_evaluator: Correction = self.corrlib_evaluators[correction_name][correction_key]
+        correction_values = correction_evaluator.evaluate(*flat_args, direction)
 
-        if counts_to_unflatten:
-            correction = ak.unflatten(correction, counts_to_unflatten[0])
+        # Restore jagged structure if needed
+        if counts:
+            correction_values = ak.unflatten(correction_values, counts[0])
 
-        if target is not None and op is not None:
+        # Apply to target if specified
+            transform = corr.get("transform", lambda *x: x)
             if isinstance(target, list):
-                correction = ak.to_backend(correction, ak.backend(target[0]))
-                return [self.apply_op(op, t, correction) for t in target]
+                backend = ak.backend(target[0])
+                correction_values = ak.to_backend(correction_values, backend)
+                return [self._apply_operation(operation, t, correction_values) for t in target]
             else:
-                correction = ak.to_backend(correction, ak.backend(target))
-                return self.apply_op(op, target, correction)
+                backend = ak.backend(target)
+                correction_values = ak.to_backend(correction_values, backend)
+                return self._apply_operation(operation, target, correction_values)
 
-        return correction
+        return correction_values
 
-    def apply_syst_fn(
+    def apply_syst_function(
         self,
-        name: str,
-        fn: Callable[..., ak.Array],
-        args: list[ak.Array],
-        affects: Union[ak.Array, list[ak.Array]],
-        op: str,
-    ) -> Union[ak.Array, list[ak.Array]]:
+        syst_name: str,
+        syst_function: Callable[..., ak.Array],
+        function_args: List[ak.Array],
+        affected_arrays: Union[ak.Array, List[ak.Array]],
+        operation: str,
+    ) -> Union[ak.Array, List[ak.Array]]:
         """
         Apply function-based systematic variation.
-        """
-        logger.debug(f"Applying function-based systematic: {name}")
-        correction = fn(*args)
-        if isinstance(affects, list):
-            return [self.apply_op(op, a, correction) for a in affects]
-        else:
-            return self.apply_op(op, affects, correction)
 
-    def apply_op(self, op: str, lhs: ak.Array, rhs: ak.Array) -> ak.Array:
+        Parameters
+        ----------
+        syst_name : str
+            Systematic name
+        syst_function : Callable[..., ak.Array]
+            Variation function
+        function_args : List[ak.Array]
+            Function arguments
+        affected_arrays : Union[ak.Array, List[ak.Array]]
+            Array(s) to modify
+        operation : str
+            Operation to apply ('add' or 'mult')
+
+        Returns
+        -------
+        Union[ak.Array, List[ak.Array]]
+            Modified array(s)
         """
-        Apply a binary operation.
+        transform = systematic.get("transform", lambda *x: x)
+        logger.debug("Applying function-based systematic: %s", syst_name)
+        variation = syst_function(*function_args)
+
+        if isinstance(affected_arrays, list):
+            return [self._apply_operation(operation, arr, variation) for arr in affected_arrays]
+        return self._apply_operation(operation, affected_arrays, variation)
+
+    def _apply_operation(
+        self,
+        operation: str,
+        left_operand: ak.Array,
+        right_operand: ak.Array,
+    ) -> ak.Array:
         """
-        if op == "add":
-            return lhs + rhs
-        elif op == "mult":
-            return lhs * rhs
+        Apply binary operation between two arrays.
+
+        Parameters
+        ----------
+        operation : str
+            Operation type ('add' or 'mult')
+        left_operand : ak.Array
+            Left operand array
+        right_operand : ak.Array
+            Right operand array
+
+        Returns
+        -------
+        ak.Array
+            Result of operation
+
+        Raises
+        ------
+        ValueError
+            For unsupported operations
+        """
+        if operation == "add":
+            return left_operand + right_operand
+        elif operation == "mult":
+            return left_operand * right_operand
         else:
-            raise ValueError(f"Unsupported operation: {op}")
+            raise ValueError(f"Unsupported operation: '{operation}'")
 
     def _get_function_arguments(
         self,
-        use: list[tuple[str, Optional[str]]],
-        object_copies: dict[str, ak.Array],
-    ) -> list[ak.Array]:
+        arg_spec: List[Tuple[str, Optional[str]]],
+        objects: Dict[str, ak.Array],
+    ) -> List[ak.Array]:
         """
-        Extract correction arguments from object_copies.
-        """
-        return [
-            object_copies[obj][var] if var is not None else object_copies[obj]
-            for obj, var in use
-        ]
+        Prepare function arguments from object dictionary.
 
-    def _get_targets(
-        self,
-        target: Union[tuple[str, str], list[tuple[str, str]]],
-        object_copies: dict[str, ak.Array],
-    ) -> list[ak.Array]:
-        """
-        Extract one or more target arrays from object_copies.
-        """
-        targets = target if isinstance(target, list) else [target]
-        return [object_copies[obj][var] for obj, var in targets]
+        Parameters
+        ----------
+        arg_spec : List[Tuple[str, Optional[str]]]
+            List of (object, field) specifications
+        objects : Dict[str, ak.Array]
+            Object dictionary
 
-    def _set_targets(
+        Returns
+        -------
+        List[ak.Array]
+            Prepared arguments
+        """
+        args = []
+        for obj_name, field_name in arg_spec:
+            if field_name:
+                args.append(objects[obj_name][field_name])
+            else:
+                args.append(objects[obj_name])
+        return args
+
+    def _get_target_arrays(
         self,
-        target: Union[tuple[str, str], list[tuple[str, str]]],
-        object_copies: dict[str, ak.Array],
-        new_values: Union[ak.Array, list[ak.Array]],
+        target_spec: Union[Tuple[str, str], List[Tuple[str, str]]],
+        objects: Dict[str, ak.Array],
+    ) -> List[ak.Array]:
+        """
+        Extract target arrays from object dictionary.
+
+        Parameters
+        ----------
+        target_spec : Union[Tuple[str, str], List[Tuple[str, str]]]
+            Single or multiple (object, field) specifications
+        objects : Dict[str, ak.Array]
+            Object dictionary
+
+        Returns
+        -------
+        List[ak.Array]
+            Target arrays
+        """
+        specs = target_spec if isinstance(target_spec, list) else [target_spec]
+        return [objects[obj][field] for obj, field in specs]
+
+    def _set_target_arrays(
+        self,
+        target_spec: Union[Tuple[str, str], List[Tuple[str, str]]],
+        objects: Dict[str, ak.Array],
+        new_values: Union[ak.Array, List[ak.Array]],
     ) -> None:
         """
-        Set corrected values in object_copies.
+        Update target arrays in object dictionary.
+
+        Parameters
+        ----------
+        target_spec : Union[Tuple[str, str], List[Tuple[str, str]]]
+            Single or multiple (object, field) specifications
+        objects : Dict[str, ak.Array]
+            Object dictionary to update
+        new_values : Union[ak.Array, List[ak.Array]]
+            New values to assign
         """
-        targets = target if isinstance(target, list) else [target]
-        for (obj, var), val in zip(targets, new_values):
-            object_copies[obj][var] = val
+        specs = target_spec if isinstance(target_spec, list) else [target_spec]
+        values = new_values if isinstance(new_values, list) else [new_values]
+
+        for (obj_name, field_name), value in zip(specs, values):
+            objects[obj_name][field_name] = value
 
     def apply_object_corrections(
         self,
-        object_copies: dict[str, ak.Array],
-        corrections: list[dict[str, Any]],
+        object_copies: Dict[str, ak.Array],
+        corrections: List[Dict[str, Any]],
         direction: Literal["up", "down", "nominal"] = "nominal",
-    ) -> dict[str, ak.Array]:
+    ) -> Dict[str, ak.Array]:
         """
-        Apply object-level corrections to input object copies.
+        Apply object-level corrections.
+
+        Parameters
+        ----------
+        object_copies : Dict[str, ak.Array]
+            Objects to correct
+        corrections : List[Dict[str, Any]]
+            Correction configurations
+        direction : Literal["up", "down", "nominal"], optional
+            Systematic direction (default: "nominal")
+
+        Returns
+        -------
+        Dict[str, ak.Array]
+            Corrected objects
         """
-        for corr in corrections:
-            if corr["type"] != "object":
+        for correction in corrections:
+            if correction["type"] != "object":
                 continue
-            args = self._get_function_arguments(corr["use"], object_copies)
-            targets = self._get_targets(corr["target"], object_copies)
-            op = corr["op"]
-            key = corr.get("key")
-            transform = corr.get("transform", lambda *x: x)
-            dir_map = corr.get("up_and_down_idx", ["up", "down"])
-            corr_dir = (
-                dir_map[0 if direction == "up" else 1]
-                if direction in ["up", "down"]
-                else "nominal"
+
+            # Prepare arguments and targets
+            args = self._get_function_arguments(
+                correction["use"], object_copies
+            )
+            targets = self._get_target_arrays(
+                correction["target"], object_copies
+            )
+            operation = correction["op"]
+            transform = correction.get("transform", lambda *x: x)
+            key = correction.get("key")
+
+            # Determine direction mapping
+            dir_map = correction.get("up_and_down_idx", ["up", "down"])
+            corr_direction = (
+                dir_map[0] if direction == "up" else dir_map[1]
+                if direction in ["up", "down"] else "nominal"
             )
 
-            if corr.get("use_correctionlib", False):
-                corrected = self.apply_correctionlib(
-                    corr["name"], key, corr_dir, args, targets, op, transform
+            # Apply correction
+            if correction.get("use_correctionlib", False):
+                corrected_values = self.apply_correctionlib(
+                    correction_name=correction["name"],
+                    correction_key=key,
+                    direction=corr_direction,
+                    correction_args=args,
+                    target=targets,
+                    operation=operation,
+                    transform=transform,
                 )
             else:
-                fn = corr.get(f"{direction}_function")
-                corrected = (
-                    self.apply_syst_fn(corr["name"], fn, args, targets, op)
-                    if fn
-                    else targets
-                )
+                syst_func = correction.get(f"{direction}_function")
+                if syst_func:
+                    corrected_values = self.apply_syst_function(
+                        syst_name=correction["name"],
+                        syst_function=syst_func,
+                        function_args=args,
+                        affected_arrays=targets,
+                        operation=operation,
+                    )
+                else:
+                    corrected_values = targets
 
-            self._set_targets(corr["target"], object_copies, corrected)
+            # Update objects
+            self._set_target_arrays(
+                correction["target"], object_copies, corrected_values
+            )
 
         return object_copies
 
     def apply_event_weight_correction(
         self,
         weights: ak.Array,
-        systematic: dict[str, Any],
+        systematic: Dict[str, Any],
         direction: Literal["up", "down"],
-        object_copies: dict[str, ak.Array],
+        object_copies: Dict[str, ak.Array],
     ) -> ak.Array:
         """
-        Apply event-level correction to weights.
+        Apply event-level weight correction.
+
+        Parameters
+        ----------
+        weights : ak.Array
+            Original event weights
+        systematic : Dict[str, Any]
+            Systematic configuration
+        direction : Literal["up", "down"]
+            Systematic direction
+        object_copies : Dict[str, ak.Array]
+            Current object copies
+
+        Returns
+        -------
+        ak.Array
+            Corrected weights
         """
         if systematic["type"] != "event":
             return weights
 
+        # Prepare arguments
         args = self._get_function_arguments(systematic["use"], object_copies)
-        op = systematic["op"]
+        operation = systematic["op"]
         key = systematic.get("key")
         transform = systematic.get("transform", lambda *x: x)
         dir_map = systematic.get("up_and_down_idx", ["up", "down"])
-        corr_dir = dir_map[0 if direction == "up" else 1]
+        corr_direction = dir_map[0] if direction == "up" else dir_map[1]
 
+        # Apply correction
         if systematic.get("use_correctionlib", False):
             return self.apply_correctionlib(
-                systematic["name"], key, corr_dir, args, weights, op, transform
+                correction_name=systematic["name"],
+                correction_key=key,
+                direction=corr_direction,
+                correction_args=args,
+                target=weights,
+                operation=operation,
+                transform=transform,
             )
         else:
-            fn = systematic.get(f"{direction}_function")
-            return (
-                self.apply_syst_fn(systematic["name"], fn, args, weights, op)
-                if fn
-                else weights
-            )
-
+            syst_func = systematic.get(f"{direction}_function")
+            if syst_func:
+                return self.apply_syst_function(
+                    syst_name=systematic["name"],
+                    syst_function=syst_func,
+                    function_args=args,
+                    affected_arrays=weights,
+                    operation=operation,
+                )
+            return weights
 
     def compute_ghost_observables(
-        self, obj_copies: dict[str, ak.Array], jax=False,
-    ) -> dict[str, ak.Array]:
+        self,
+        object_copies: Dict[str, ak.Array],
+        use_jax: bool = False,
+    ) -> Dict[str, ak.Array]:
+        """
+        Compute derived observables not present in the original dataset.
+
+        Parameters
+        ----------
+        object_copies : Dict[str, ak.Array]
+            Current object copies
+        use_jax : bool, optional
+            Whether JAX is being used (default: False)
+
+        Returns
+        -------
+        Dict[str, ak.Array]
+            Updated object copies with new observables
+        """
         for ghost in self.config.ghost_observables:
-            if not ghost.works_with_jax and jax:
+            # Skip JAX-incompatible ghosts
+            if not ghost.works_with_jax and use_jax:
                 logger.warning(
-                    f"Ghost observable {ghost.names} does not work with JAX, skipping."
+                    "Skipping JAX-incompatible ghost observable: %s",
+                    ghost.names
                 )
                 continue
 
-            logger.info(f"Computing ghost observables {ghost.names}")
-            ghost_args = self._get_function_arguments(ghost["use"], obj_copies)
-            ghost_outputs = ghost["function"](*ghost_args)
+            logger.info("Computing ghost observables: %s", ghost.names)
+            args = self._get_function_arguments(ghost["use"], object_copies)
+            outputs = ghost["function"](*args)
 
-            if not isinstance(ghost_outputs, (list, tuple)):
-                ghost_outputs = [ghost_outputs]
+            # Normalize outputs to list
+            if not isinstance(outputs, (list, tuple)):
+                outputs = [outputs]
 
-            names = (
-                ghost.names if isinstance(ghost.names, list) else [ghost.names]
+            # Normalize names and collections
+            names = [ghost.names] if isinstance(ghost.names, str) else ghost.names
+            collections = (
+                [ghost.collections] * len(names)
+                if isinstance(ghost.collections, str)
+                else ghost.collections
             )
-            colls = (
-                ghost.collections
-                if isinstance(ghost.collections, list)
-                else [ghost.collections] * len(names)
-            )
-            # update object_copies with ghost outputs
-            for out, name, coll in zip(ghost_outputs, names, colls):
+
+            # Update object copies
+            for value, name, collection in zip(outputs, names, collections):
+                # Handle single-field records
                 if (
-                    isinstance(out, ak.Array)
-                    and len(ak.fields(out)) == 1
-                    and name in out.fields
+                    isinstance(value, ak.Array) and
+                    len(ak.fields(value)) == 1 and
+                    name in ak.fields(value)
                 ):
-                    out = out[name]
-                if coll in obj_copies:
+                    value = value[name]
+
+                # Update existing collection
+                if collection in object_copies:
                     try:
-                        # add new field to existing awkward array
-                        obj_copies[coll][name] = out
-                    # happens if we are adding a field to an awkward
-                    # array with no fields (scalar fields)
+                        object_copies[collection][name] = value
                     except ValueError as e:
+                        logger.exception(
+                            "Failed to add field '%s' to collection '%s'",
+                            name,
+                            collection
+                        )
                         raise e
+                # Create new collection
                 else:
-                    # create new awkward array with single field
-                    obj_copies[coll] = ak.Array({name: out})
-        return obj_copies
+                    object_copies[collection] = ak.Array({name: value})
+
+        return object_copies
