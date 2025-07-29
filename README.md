@@ -1,8 +1,81 @@
 # Differentiable Z' → tt̄ Analysis Framework
 
-This project is a framework for High-Energy Physics (HEP) analysis that leverages automatic differentiation to optimize analysis selections for maximal statistical significance. It is built on top of the scientific Python ecosystem, including `coffea`, `awkward-array`, and `uproot` for data handling, and `JAX` for gradient-based optimisation.
+This project is a framework for High-Energy Physics (HEP) analysis that leverages automatic differentiation to optimise analysis selections for maximal statistical significance. It is built on top of the scientific Python ecosystem, including `coffea`, `awkward-array`, and `uproot` for data handling, and `JAX` for gradient-based optimisation.
 
 The example analysis implemented here searches for a Z' boson decaying to a top-antitop quark pair (tt̄).
+
+## Quick Start
+
+This section guides you through running the default analysis configuration provided in the repository.
+
+### 1. Prerequisites
+
+#### Environment Setup
+
+Before running, you must set up the Python environment and install the required dependencies. The recommended method is to use `conda`.
+
+**Using `conda` (Recommended)**
+
+The `environment.yml` file contains all the necessary packages. Create and activate the conda environment with the following commands:
+
+```bash
+conda env create -f environment.yml
+conda activate zprime_diff_analysis
+```
+
+**Using `pip`**
+
+We also provide a `requirements.txt` file, you can still leverage `conda` for environment management:
+
+```bash
+# Create a new environment with Python 3.10 (or adjust version as needed)
+conda create -n zprime_diff_analysis python=3.10
+
+# Activate the environment
+conda activate zprime_diff_analysis
+
+# Install all dependencies from requirements.txt
+pip install -r requirements.txt
+```
+Alternatively, you can use Python’s built-in virtual environment module:
+
+```bash
+# Create a virtual environment in a folder named .venv
+python3 -m venv .venv
+
+# Activate the virtual environment
+# On macOS/Linux:
+source .venv/bin/activate
+
+# Install dependencies
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+#### Data Pre-processing
+
+The analysis expects pre-processed data files. If you do not have them, you can generate them by running the pre-processing step. This will download the necessary data from the CERN Open Data Portal and skim it according to the configuration.
+
+```bash
+# This command overrides the default config to run only the pre-processing step.
+# It may take a while to download and process the data.
+python run.py general.run_preprocessing=True general.run_mva_training=False general.analysis=nondiff general.run_histogramming=False general.run_statistics=False
+```
+
+### 2. Run the Differentiable Analysis
+
+Once the pre-processed data is available, you can run the main analysis with a single command:
+
+```bash
+python run.py
+```
+
+### 3. What is Happening?
+
+The default configuration (`utils/configuration.py`) is set up to perform a differentiable analysis. The command above will:
+1.  **MVA Pre-training**: First, it trains a small, JAX-based neural network to distinguish between `W+jets` and `ttbar` background events. The trained model parameters are saved to disk.
+2.  **Differentiable Optimisation**: It then runs the main analysis optimisation loop. The goal is to find the selection cuts that maximise the statistical significance of the Z' signal. At each step, it calculates the gradient of the significance with respect to the cut thresholds (e.g., `met_threshold`, `btag_threshold`) and uses the `optax` optimiser to update them.
+3.  **Outputs**: The analysis will produce plots in the `outputs/` directory showing the evolution of the parameters and significance during optimisation, along with the final histograms. The final optimised significance will be printed to the console.
 
 ## Table of Contents
 
@@ -430,6 +503,34 @@ This class provides a wrapper around a standard `tf.keras.Sequential` model.
 *   **Leverage Keras**: It allows you to use the rich and mature Keras API for building and training models.
 *   **Pre-training Only**: The primary use case is to pre-train a powerful discriminator. The trained model is then used to compute a score for each event, which is used as a static input feature in the main analysis. The weights of a TF/Keras model are **not** part of the global significance optimisation.
 *   **Configuration**: The architecture is defined in the configuration file, with activations specified as strings (e.g., `"relu"`, `"tanh"`).
+
+### The MVA Workflow: Pre-training and In-situ Optimisation
+
+The framework handles MVAs in a two-stage process: an initial, one-off pre-training phase, followed by an optional, continuous optimisation phase that happens alongside the main analysis optimisation.
+
+#### Stage 1: Pre-training
+
+*   **When**: This happens once at the start of the analysis if `general.run_mva_training` is `True`.
+*   **Data**: The framework allows for a completely separate object definition for MVA training. In `config.good_object_masks`, you can define an `mva` key with different object selection criteria than the `analysis` key. This is useful for training on a broader, less-biased dataset.
+*   **Process**:
+    1.  During event processing (`_prepare_data`), two parallel sets of object collections are created: one for the main analysis and one for MVA training, each with its own "good object" masks applied.
+    2.  After all files are processed, the MVA-specific data is passed to `_run_mva_training`.
+    3.  The models (both JAX and Keras) are trained on this dedicated dataset.
+    4.  The resulting trained model (for Keras) or parameters (for JAX) are saved to disk.
+
+#### Stage 2: Inference and In-situ Optimisation (Fine-tuning)
+
+*   **When**: This happens at every step of the main gradient-based optimisation loop.
+*   **Inference (On-the-fly)**:
+    *   The MVA *instance* (containing the forward pass logic) and its input *features* are attached to a special collection in the event record.
+    *   The differentiable selection function (e.g., `Zprime_softcuts_jax_workshop`) must be designed to accept this collection and the global `params` dictionary as inputs.
+    *   Inside this traced function, the MVA's `forward_pass` is called on-the-fly, using the current state of the MVA's weights from the `params` dictionary. This ensures that the entire calculation, from MVA inputs to score, is part of the JAX computation graph.
+*   **In-situ Optimisation (JAX only)**:
+    *   If an MVA is configured with `framework: "jax"` and `grad_optimisation.optimise: True`, its pre-trained parameters are included in the set of globally optimisable parameters.
+    *   Because the MVA's forward pass is executed on-the-fly within the main traced function, its output (the MVA score) is fully differentiable with respect to its weights and biases.
+    *   The gradient of the final statistical significance is therefore also calculated with respect to these MVA parameters.
+    *   The `optax` optimiser updates the MVA weights at each step, effectively "fine-tuning" the MVA to directly maximise the analysis significance, alongside all other selection cuts.
+    *   Keras models are used for inference only; their weights are not optimised during this stage.
 
 ### Extending and Adding a New MVA
 
