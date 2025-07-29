@@ -1,0 +1,598 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>analysis.nondiff &mdash; Differentiable Z&#39; → tt̄ Analysis Framework 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            Differentiable Z' → tt̄ Analysis Framework
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../usage.html">Usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../configuration.html">Configuration Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../concepts.html">Core Concepts</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../mva.html">Multi-Variate Analysis (MVA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../extending.html">Extending the Analysis</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../api/modules.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">Differentiable Z' → tt̄ Analysis Framework</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">analysis.nondiff</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for analysis.nondiff</h1><div class="highlight"><pre>
+<span></span><span class="kn">from</span> <span class="nn">collections</span> <span class="kn">import</span> <span class="n">defaultdict</span>
+<span class="kn">from</span> <span class="nn">functools</span> <span class="kn">import</span> <span class="n">reduce</span>
+<span class="kn">import</span> <span class="nn">glob</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">from</span> <span class="nn">pathlib</span> <span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Literal</span><span class="p">,</span> <span class="n">Optional</span>
+<span class="kn">import</span> <span class="nn">warnings</span>
+
+<span class="kn">import</span> <span class="nn">awkward</span> <span class="k">as</span> <span class="nn">ak</span>
+<span class="kn">import</span> <span class="nn">cabinetry</span>
+<span class="kn">from</span> <span class="nn">coffea.analysis_tools</span> <span class="kn">import</span> <span class="n">PackedSelection</span>
+<span class="kn">from</span> <span class="nn">coffea.nanoevents</span> <span class="kn">import</span> <span class="n">NanoAODSchema</span><span class="p">,</span> <span class="n">NanoEventsFactory</span>
+<span class="kn">import</span> <span class="nn">hist</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="kn">import</span> <span class="nn">uproot</span>
+<span class="kn">import</span> <span class="nn">vector</span>
+
+
+<span class="kn">from</span> <span class="nn">analysis.base</span> <span class="kn">import</span> <span class="n">Analysis</span>
+<span class="kn">from</span> <span class="nn">utils.cuts</span> <span class="kn">import</span> <span class="n">lumi_mask</span>
+<span class="kn">from</span> <span class="nn">utils.output_files</span> <span class="kn">import</span> <span class="n">save_histograms</span><span class="p">,</span> <span class="n">pkl_histograms</span><span class="p">,</span> <span class="n">unpkl_histograms</span>
+<span class="kn">from</span> <span class="nn">utils.preproc</span> <span class="kn">import</span> <span class="n">pre_process_dak</span><span class="p">,</span> <span class="n">pre_process_uproot</span>
+<span class="kn">from</span> <span class="nn">utils.stats</span> <span class="kn">import</span> <span class="n">get_cabinetry_rebinning_router</span>
+
+<span class="c1"># -----------------------------</span>
+<span class="c1"># Register backends</span>
+<span class="c1"># -----------------------------</span>
+<span class="n">ak</span><span class="o">.</span><span class="n">jax</span><span class="o">.</span><span class="n">register_and_check</span><span class="p">()</span>
+<span class="n">vector</span><span class="o">.</span><span class="n">register_awkward</span><span class="p">()</span>
+
+<span class="c1"># -----------------------------</span>
+<span class="c1"># Logging Configuration</span>
+<span class="c1"># -----------------------------</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">&quot;[</span><span class="si">%(levelname)s</span><span class="s2">: </span><span class="si">%(name)s</span><span class="s2">] </span><span class="si">%(message)s</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;NonDiffAnalysis&quot;</span><span class="p">)</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;jax._src.xla_bridge&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">ERROR</span><span class="p">)</span>
+
+<span class="n">NanoAODSchema</span><span class="o">.</span><span class="n">warn_missing_crossrefs</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="n">warnings</span><span class="o">.</span><span class="n">filterwarnings</span><span class="p">(</span><span class="s2">&quot;ignore&quot;</span><span class="p">,</span> <span class="n">category</span><span class="o">=</span><span class="ne">FutureWarning</span><span class="p">,</span> <span class="n">module</span><span class="o">=</span><span class="s2">&quot;coffea.*&quot;</span><span class="p">)</span>
+
+<span class="c1"># -----------------------------</span>
+<span class="c1"># ZprimeAnalysis Class Definition</span>
+<span class="c1"># -----------------------------</span>
+<div class="viewcode-block" id="NonDiffAnalysis">
+<a class="viewcode-back" href="../../api/analysis.html#analysis.nondiff.NonDiffAnalysis">[docs]</a>
+<span class="k">class</span> <span class="nc">NonDiffAnalysis</span><span class="p">(</span><span class="n">Analysis</span><span class="p">):</span>
+
+<div class="viewcode-block" id="NonDiffAnalysis.__init__">
+<a class="viewcode-back" href="../../api/analysis.html#analysis.nondiff.NonDiffAnalysis.__init__">[docs]</a>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Initialize ZprimeAnalysis with configuration for systematics, corrections,</span>
+<span class="sd">        and channels.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        config : dict</span>
+<span class="sd">            Configuration dictionary with &#39;systematics&#39;, &#39;corrections&#39;, &#39;channels&#39;,</span>
+<span class="sd">            and &#39;general&#39;.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">nD_hists_per_region</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_init_histograms</span><span class="p">()</span></div>
+
+
+    <span class="k">def</span> <span class="nf">_prepare_dirs</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+            <span class="c1"># 1) create top-level output</span>
+            <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">_prepare_dirs</span><span class="p">()</span>
+
+            <span class="n">out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dirs</span><span class="p">[</span><span class="s2">&quot;output&quot;</span><span class="p">]</span>
+
+            <span class="c1"># 2) histograms lives under &lt;output&gt;/histograms</span>
+            <span class="p">(</span><span class="n">out</span> <span class="o">/</span> <span class="s2">&quot;histograms&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+            <span class="c1"># 3) cabinetry workspaces &amp; stats</span>
+            <span class="p">(</span><span class="n">out</span> <span class="o">/</span> <span class="s2">&quot;statistics&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+            <span class="bp">self</span><span class="o">.</span><span class="n">dirs</span><span class="o">.</span><span class="n">update</span><span class="p">({</span>
+                <span class="s2">&quot;histograms&quot;</span><span class="p">:</span>  <span class="n">out</span> <span class="o">/</span> <span class="s2">&quot;histograms&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;statistics&quot;</span><span class="p">:</span>  <span class="n">out</span> <span class="o">/</span> <span class="s2">&quot;statistics&quot;</span><span class="p">,</span>
+            <span class="p">})</span>
+
+    <span class="k">def</span> <span class="nf">_init_histograms</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">hist</span><span class="o">.</span><span class="n">Hist</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Initialize histograms for each analysis channel based on configuration.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        dict</span>
+<span class="sd">            Dictionary of channel name to hist.Hist object.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">histograms</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">dict</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">channel</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">channels</span><span class="p">:</span>
+            <span class="n">chname</span> <span class="o">=</span> <span class="n">channel</span><span class="o">.</span><span class="n">name</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">req_channels</span> <span class="o">:=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">channels</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">chname</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">req_channels</span><span class="p">:</span>
+                    <span class="k">continue</span>
+
+            <span class="k">for</span> <span class="n">observable</span> <span class="ow">in</span> <span class="n">channel</span><span class="p">[</span><span class="s2">&quot;observables&quot;</span><span class="p">]:</span>
+
+                <span class="n">observable_label</span> <span class="o">=</span> <span class="n">observable</span><span class="p">[</span><span class="s2">&quot;label&quot;</span><span class="p">]</span>
+                <span class="n">observable_binning</span> <span class="o">=</span> <span class="n">observable</span><span class="p">[</span><span class="s2">&quot;binning&quot;</span><span class="p">]</span>
+                <span class="n">observable_name</span> <span class="o">=</span> <span class="n">observable</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]</span>
+
+                <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">observable_binning</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+                    <span class="n">low</span><span class="p">,</span> <span class="n">high</span><span class="p">,</span> <span class="n">nbins</span> <span class="o">=</span> <span class="nb">map</span><span class="p">(</span>
+                        <span class="nb">float</span><span class="p">,</span> <span class="n">observable_binning</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">)</span>
+                    <span class="p">)</span>
+                    <span class="n">axis</span> <span class="o">=</span> <span class="n">hist</span><span class="o">.</span><span class="n">axis</span><span class="o">.</span><span class="n">Regular</span><span class="p">(</span>
+                        <span class="nb">int</span><span class="p">(</span><span class="n">nbins</span><span class="p">),</span>
+                        <span class="n">low</span><span class="p">,</span>
+                        <span class="n">high</span><span class="p">,</span>
+                        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;observable&quot;</span><span class="p">,</span>
+                        <span class="n">label</span><span class="o">=</span><span class="n">observable_label</span><span class="p">,</span>
+                    <span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">axis</span> <span class="o">=</span> <span class="n">hist</span><span class="o">.</span><span class="n">axis</span><span class="o">.</span><span class="n">Variable</span><span class="p">(</span>
+                        <span class="n">observable_binning</span><span class="p">,</span>
+                        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;observable&quot;</span><span class="p">,</span>
+                        <span class="n">label</span><span class="o">=</span><span class="n">observable_label</span><span class="p">,</span>
+                    <span class="p">)</span>
+
+                <span class="n">histograms</span><span class="p">[</span><span class="n">chname</span><span class="p">][</span><span class="n">observable_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">hist</span><span class="o">.</span><span class="n">Hist</span><span class="p">(</span>
+                    <span class="n">axis</span><span class="p">,</span>
+                    <span class="n">hist</span><span class="o">.</span><span class="n">axis</span><span class="o">.</span><span class="n">StrCategory</span><span class="p">([],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;process&quot;</span><span class="p">,</span> <span class="n">growth</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
+                    <span class="n">hist</span><span class="o">.</span><span class="n">axis</span><span class="o">.</span><span class="n">StrCategory</span><span class="p">([],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;variation&quot;</span><span class="p">,</span> <span class="n">growth</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
+                    <span class="n">storage</span><span class="o">=</span><span class="n">hist</span><span class="o">.</span><span class="n">storage</span><span class="o">.</span><span class="n">Weight</span><span class="p">(),</span>
+                <span class="p">)</span>
+        <span class="k">return</span> <span class="n">histograms</span>
+
+
+<div class="viewcode-block" id="NonDiffAnalysis.histogramming">
+<a class="viewcode-back" href="../../api/analysis.html#analysis.nondiff.NonDiffAnalysis.histogramming">[docs]</a>
+    <span class="k">def</span> <span class="nf">histogramming</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">object_copies</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ak</span><span class="o">.</span><span class="n">Array</span><span class="p">],</span>
+        <span class="n">events</span><span class="p">:</span> <span class="n">ak</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+        <span class="n">process</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">variation</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">xsec_weight</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">analysis</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">event_syst</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">direction</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;up&quot;</span><span class="p">,</span> <span class="s2">&quot;down&quot;</span><span class="p">,</span> <span class="s2">&quot;nominal&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;nominal&quot;</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">ak</span><span class="o">.</span><span class="n">Array</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Apply physics selections and fill histograms.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        object_copies : dict</span>
+<span class="sd">            Corrected event-level objects.</span>
+<span class="sd">        events : ak.Array</span>
+<span class="sd">            Original NanoAOD event collection.</span>
+<span class="sd">        process : str</span>
+<span class="sd">            Sample name.</span>
+<span class="sd">        variation : str</span>
+<span class="sd">            Systematic variation label.</span>
+<span class="sd">        xsec_weight : float</span>
+<span class="sd">            Normalization weight.</span>
+<span class="sd">        analysis : str</span>
+<span class="sd">            Analysis name string.</span>
+<span class="sd">        event_syst : dict, optional</span>
+<span class="sd">            Event-level systematic to apply.</span>
+<span class="sd">        direction : str, optional</span>
+<span class="sd">            Systematic direction: &#39;up&#39;, &#39;down&#39;, or &#39;nominal&#39;.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        dict</span>
+<span class="sd">            Updated histogram dictionary.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">process</span> <span class="o">==</span> <span class="s2">&quot;data&quot;</span> <span class="ow">and</span> <span class="n">variation</span> <span class="o">!=</span> <span class="s2">&quot;nominal&quot;</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="k">for</span> <span class="n">channel</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">channels</span><span class="p">:</span>
+            <span class="n">chname</span> <span class="o">=</span> <span class="n">channel</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">req_channels</span> <span class="o">:=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">channels</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">chname</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">req_channels</span><span class="p">:</span>
+                    <span class="k">continue</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Applying selection for </span><span class="si">{</span><span class="n">chname</span><span class="si">}</span><span class="s2"> in </span><span class="si">{</span><span class="n">process</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">mask</span> <span class="o">=</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="p">(</span>
+                <span class="n">selection_funciton</span> <span class="o">:=</span> <span class="n">channel</span><span class="o">.</span><span class="n">selection</span><span class="o">.</span><span class="n">function</span>
+            <span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">selection_args</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_function_arguments</span><span class="p">(</span>
+                    <span class="n">channel</span><span class="o">.</span><span class="n">selection</span><span class="o">.</span><span class="n">use</span><span class="p">,</span> <span class="n">object_copies</span>
+                <span class="p">)</span>
+                <span class="n">packed_selection</span> <span class="o">=</span> <span class="n">selection_funciton</span><span class="p">(</span><span class="o">*</span><span class="n">selection_args</span><span class="p">)</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">packed_selection</span><span class="p">,</span> <span class="n">PackedSelection</span><span class="p">):</span>
+                    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">&quot;PackedSelection expected, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">packed_selection</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+                    <span class="p">)</span>
+                <span class="n">mask</span> <span class="o">=</span> <span class="n">ak</span><span class="o">.</span><span class="n">Array</span><span class="p">(</span>
+                    <span class="n">packed_selection</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="n">packed_selection</span><span class="o">.</span><span class="n">names</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+                <span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">process</span> <span class="o">==</span> <span class="s2">&quot;data&quot;</span><span class="p">:</span>
+                <span class="n">mask</span> <span class="o">=</span> <span class="n">mask</span> <span class="o">&amp;</span> <span class="n">lumi_mask</span><span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">lumifile</span><span class="p">,</span>
+                    <span class="n">object_copies</span><span class="p">[</span><span class="s2">&quot;run&quot;</span><span class="p">],</span>
+                    <span class="n">object_copies</span><span class="p">[</span><span class="s2">&quot;luminosityBlock&quot;</span><span class="p">],</span>
+                <span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">ak</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">mask</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">analysis</span><span class="si">}</span><span class="s2">:: No events left in </span><span class="si">{</span><span class="n">chname</span><span class="si">}</span><span class="s2"> for </span><span class="si">{</span><span class="n">process</span><span class="si">}</span><span class="s2"> with &quot;</span>
+                    <span class="o">+</span> <span class="s2">&quot;variation </span><span class="si">{variation}</span><span class="s2">&quot;</span>
+                <span class="p">)</span>
+                <span class="k">continue</span>
+
+            <span class="n">object_copies_channel</span> <span class="o">=</span> <span class="p">{</span>
+                                <span class="n">collection</span><span class="p">:</span> <span class="n">variable</span><span class="p">[</span><span class="n">mask</span><span class="p">]</span>
+                                <span class="k">for</span> <span class="n">collection</span><span class="p">,</span> <span class="n">variable</span> <span class="ow">in</span> <span class="n">object_copies</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+                            <span class="p">}</span>
+
+            <span class="k">if</span> <span class="n">process</span> <span class="o">!=</span> <span class="s2">&quot;data&quot;</span><span class="p">:</span>
+                <span class="n">weights</span> <span class="o">=</span> <span class="p">(</span>
+                    <span class="n">events</span><span class="p">[</span><span class="n">mask</span><span class="p">]</span><span class="o">.</span><span class="n">genWeight</span>
+                    <span class="o">*</span> <span class="n">xsec_weight</span>
+                    <span class="o">/</span> <span class="nb">abs</span><span class="p">(</span><span class="n">events</span><span class="p">[</span><span class="n">mask</span><span class="p">]</span><span class="o">.</span><span class="n">genWeight</span><span class="p">)</span>
+                <span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">weights</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">ak</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">mask</span><span class="p">))</span>
+
+            <span class="k">if</span> <span class="n">event_syst</span> <span class="ow">and</span> <span class="n">process</span> <span class="o">!=</span> <span class="s2">&quot;data&quot;</span><span class="p">:</span>
+                <span class="n">weights</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">apply_event_weight_correction</span><span class="p">(</span>
+                    <span class="n">weights</span><span class="p">,</span> <span class="n">event_syst</span><span class="p">,</span> <span class="n">direction</span><span class="p">,</span> <span class="n">object_copies_channel</span>
+                <span class="p">)</span>
+
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Number of weighted events in </span><span class="si">{</span><span class="n">chname</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">ak</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">weights</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Number of raw events in </span><span class="si">{</span><span class="n">chname</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">ak</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">mask</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">observable</span> <span class="ow">in</span> <span class="n">channel</span><span class="p">[</span><span class="s2">&quot;observables&quot;</span><span class="p">]:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Computing observable </span><span class="si">{</span><span class="n">observable</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="n">observable_name</span> <span class="o">=</span> <span class="n">observable</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]</span>
+                <span class="n">observable_args</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_function_arguments</span><span class="p">(</span>
+                    <span class="n">observable</span><span class="p">[</span><span class="s2">&quot;use&quot;</span><span class="p">],</span> <span class="n">object_copies_channel</span>
+                <span class="p">)</span>
+                <span class="n">observable_vals</span> <span class="o">=</span> <span class="n">observable</span><span class="p">[</span><span class="s2">&quot;function&quot;</span><span class="p">](</span><span class="o">*</span><span class="n">observable_args</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">nD_hists_per_region</span><span class="p">[</span><span class="n">chname</span><span class="p">][</span><span class="n">observable_name</span><span class="p">]</span><span class="o">.</span><span class="n">fill</span><span class="p">(</span>
+                    <span class="n">observable</span><span class="o">=</span><span class="n">observable_vals</span><span class="p">,</span>
+                    <span class="n">process</span><span class="o">=</span><span class="n">process</span><span class="p">,</span>
+                    <span class="n">variation</span><span class="o">=</span><span class="n">variation</span><span class="p">,</span>
+                    <span class="n">weight</span><span class="o">=</span><span class="n">weights</span><span class="p">,</span>
+                <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="NonDiffAnalysis.process">
+<a class="viewcode-back" href="../../api/analysis.html#analysis.nondiff.NonDiffAnalysis.process">[docs]</a>
+    <span class="k">def</span> <span class="nf">process</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">events</span><span class="p">:</span> <span class="n">ak</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">metadata</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Run the full analysis logic on a batch of events.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        events : ak.Array</span>
+<span class="sd">            Input NanoAOD events.</span>
+<span class="sd">        metadata : dict</span>
+<span class="sd">            Metadata with keys &#39;process&#39;, &#39;xsec&#39;, &#39;nevts&#39;, and &#39;dataset&#39;.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        dict</span>
+<span class="sd">            Histogram dictionary after processing.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">analysis</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span>
+
+        <span class="n">process</span> <span class="o">=</span> <span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;process&quot;</span><span class="p">]</span>
+        <span class="n">variation</span> <span class="o">=</span> <span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;variation&quot;</span><span class="p">,</span> <span class="s2">&quot;nominal&quot;</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Processing </span><span class="si">{</span><span class="n">process</span><span class="si">}</span><span class="s2"> with variation </span><span class="si">{</span><span class="n">variation</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">xsec</span> <span class="o">=</span> <span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;xsec&quot;</span><span class="p">]</span>
+        <span class="n">n_gen</span> <span class="o">=</span> <span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;nevts&quot;</span><span class="p">]</span>
+
+        <span class="n">lumi</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;general&quot;</span><span class="p">][</span><span class="s2">&quot;lumi&quot;</span><span class="p">]</span>
+        <span class="n">xsec_weight</span> <span class="o">=</span> <span class="p">(</span><span class="n">xsec</span> <span class="o">*</span> <span class="n">lumi</span> <span class="o">/</span> <span class="n">n_gen</span><span class="p">)</span> <span class="k">if</span> <span class="n">process</span> <span class="o">!=</span> <span class="s2">&quot;data&quot;</span> <span class="k">else</span> <span class="mf">1.0</span>
+
+        <span class="c1"># Nominal processing</span>
+        <span class="n">obj_copies</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_object_copies</span><span class="p">(</span><span class="n">events</span><span class="p">)</span>
+        <span class="c1"># Filter objects</span>
+        <span class="n">obj_copies</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">apply_object_masks</span><span class="p">(</span><span class="n">obj_copies</span><span class="p">)</span>
+
+        <span class="c1"># Apply baseline selection</span>
+        <span class="n">baseline_args</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_function_arguments</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">baseline_selection</span><span class="p">[</span><span class="s2">&quot;use&quot;</span><span class="p">],</span> <span class="n">obj_copies</span>
+        <span class="p">)</span>
+
+        <span class="n">packed_selection</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">baseline_selection</span><span class="p">[</span><span class="s2">&quot;function&quot;</span><span class="p">](</span>
+            <span class="o">*</span><span class="n">baseline_args</span>
+        <span class="p">)</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="n">ak</span><span class="o">.</span><span class="n">Array</span><span class="p">(</span><span class="n">packed_selection</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="n">packed_selection</span><span class="o">.</span><span class="n">names</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]))</span>
+        <span class="n">obj_copies</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="n">collection</span><span class="p">:</span> <span class="n">variable</span><span class="p">[</span><span class="n">mask</span><span class="p">]</span>
+            <span class="k">for</span> <span class="n">collection</span><span class="p">,</span> <span class="n">variable</span> <span class="ow">in</span> <span class="n">obj_copies</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+        <span class="p">}</span>
+        <span class="c1"># apply ghost observables</span>
+        <span class="n">obj_copies</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">compute_ghost_observables</span><span class="p">(</span>
+            <span class="n">obj_copies</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="c1"># apply event-level corrections</span>
+        <span class="c1"># apply nominal corrections</span>
+        <span class="n">obj_copies_corrected</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">apply_object_corrections</span><span class="p">(</span>
+            <span class="n">obj_copies</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">corrections</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="s2">&quot;nominal&quot;</span>
+        <span class="p">)</span>
+
+        <span class="c1"># apply selection and fill histograms</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">histogramming</span><span class="p">(</span>
+            <span class="n">obj_copies_corrected</span><span class="p">,</span>
+            <span class="n">events</span><span class="p">,</span>
+            <span class="n">process</span><span class="p">,</span>
+            <span class="s2">&quot;nominal&quot;</span><span class="p">,</span>
+            <span class="n">xsec_weight</span><span class="p">,</span>
+            <span class="n">analysis</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">run_systematics</span><span class="p">:</span>
+            <span class="c1"># Systematic variations</span>
+            <span class="k">for</span> <span class="n">syst</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">systematics</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">corrections</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">syst</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;nominal&quot;</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="k">for</span> <span class="n">direction</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;up&quot;</span><span class="p">,</span> <span class="s2">&quot;down&quot;</span><span class="p">]:</span>
+                    <span class="c1"># Filter objects</span>
+                    <span class="n">obj_copies</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">apply_object_masks</span><span class="p">(</span><span class="n">obj_copies</span><span class="p">)</span>
+
+                    <span class="c1"># apply corrections</span>
+                    <span class="n">obj_copies_corrected</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">apply_object_corrections</span><span class="p">(</span>
+                        <span class="n">obj_copies</span><span class="p">,</span> <span class="p">[</span><span class="n">syst</span><span class="p">],</span> <span class="n">direction</span><span class="o">=</span><span class="n">direction</span>
+                    <span class="p">)</span>
+                    <span class="n">varname</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">syst</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">direction</span><span class="si">}</span><span class="s2">&quot;</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">histogramming</span><span class="p">(</span>
+                        <span class="n">obj_copies_corrected</span><span class="p">,</span>
+                        <span class="n">events</span><span class="p">,</span>
+                        <span class="n">process</span><span class="p">,</span>
+                        <span class="n">varname</span><span class="p">,</span>
+                        <span class="n">xsec_weight</span><span class="p">,</span>
+                        <span class="n">analysis</span><span class="p">,</span>
+                        <span class="n">event_syst</span><span class="o">=</span><span class="n">syst</span><span class="p">,</span>
+                        <span class="n">direction</span><span class="o">=</span><span class="n">direction</span><span class="p">,</span>
+                    <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="NonDiffAnalysis.run_fit">
+<a class="viewcode-back" href="../../api/analysis.html#analysis.nondiff.NonDiffAnalysis.run_fit">[docs]</a>
+    <span class="k">def</span> <span class="nf">run_fit</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">cabinetry_config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Run the fit using cabinetry.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        cabinetry_config : dict</span>
+<span class="sd">            Configuration for cabinetry.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+
+        <span class="c1"># what do we do with this</span>
+        <span class="n">rebinning_router</span> <span class="o">=</span> <span class="n">get_cabinetry_rebinning_router</span><span class="p">(</span>
+            <span class="n">cabinetry_config</span><span class="p">,</span> <span class="n">rebinning</span><span class="o">=</span><span class="nb">slice</span><span class="p">(</span><span class="mi">110</span><span class="n">j</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">hist</span><span class="o">.</span><span class="n">rebin</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span>
+        <span class="p">)</span>
+        <span class="c1"># build the templates</span>
+        <span class="n">cabinetry</span><span class="o">.</span><span class="n">templates</span><span class="o">.</span><span class="n">build</span><span class="p">(</span><span class="n">cabinetry_config</span><span class="p">,</span> <span class="n">router</span><span class="o">=</span><span class="n">rebinning_router</span><span class="p">)</span>
+        <span class="c1"># optional post-processing (e.g. smoothing, symmetrise)</span>
+        <span class="n">cabinetry</span><span class="o">.</span><span class="n">templates</span><span class="o">.</span><span class="n">postprocess</span><span class="p">(</span><span class="n">cabinetry_config</span><span class="p">)</span>
+        <span class="c1"># build the workspace</span>
+        <span class="n">ws</span> <span class="o">=</span> <span class="n">cabinetry</span><span class="o">.</span><span class="n">workspace</span><span class="o">.</span><span class="n">build</span><span class="p">(</span><span class="n">cabinetry_config</span><span class="p">)</span>
+        <span class="c1"># save the workspace</span>
+        <span class="n">workspace_path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">output_dir</span> <span class="o">+</span> <span class="s2">&quot;/statistics/&quot;</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">workspace_path</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">workspace_path</span> <span class="o">+=</span> <span class="s2">&quot;workspace.json&quot;</span>
+        <span class="n">cabinetry</span><span class="o">.</span><span class="n">workspace</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">ws</span><span class="p">,</span> <span class="n">workspace_path</span><span class="p">)</span>
+        <span class="c1"># build the model and data</span>
+        <span class="n">model</span><span class="p">,</span> <span class="n">data</span> <span class="o">=</span> <span class="n">cabinetry</span><span class="o">.</span><span class="n">model_utils</span><span class="o">.</span><span class="n">model_and_data</span><span class="p">(</span><span class="n">ws</span><span class="p">)</span>
+        <span class="c1"># get pre-fit predictions</span>
+        <span class="n">prefit_prediction</span> <span class="o">=</span> <span class="n">cabinetry</span><span class="o">.</span><span class="n">model_utils</span><span class="o">.</span><span class="n">prediction</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>
+        <span class="c1"># perform the fit</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="n">cabinetry</span><span class="o">.</span><span class="n">fit</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+            <span class="n">model</span><span class="p">,</span>
+            <span class="n">data</span><span class="p">,</span>
+        <span class="p">)</span>  <span class="c1"># perform the fit</span>
+        <span class="n">postfit_prediction</span> <span class="o">=</span> <span class="n">cabinetry</span><span class="o">.</span><span class="n">model_utils</span><span class="o">.</span><span class="n">prediction</span><span class="p">(</span>
+            <span class="n">model</span><span class="p">,</span> <span class="n">fit_results</span><span class="o">=</span><span class="n">results</span>
+        <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">data</span><span class="p">,</span> <span class="n">results</span><span class="p">,</span> <span class="n">prefit_prediction</span><span class="p">,</span> <span class="n">postfit_prediction</span></div>
+
+
+<div class="viewcode-block" id="NonDiffAnalysis.run_analysis_chain">
+<a class="viewcode-back" href="../../api/analysis.html#analysis.nondiff.NonDiffAnalysis.run_analysis_chain">[docs]</a>
+    <span class="k">def</span> <span class="nf">run_analysis_chain</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fileset</span><span class="p">):</span>
+        <span class="n">config</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span>
+        <span class="k">for</span> <span class="n">dataset</span><span class="p">,</span> <span class="n">content</span> <span class="ow">in</span> <span class="n">fileset</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">metadata</span> <span class="o">=</span> <span class="n">content</span><span class="p">[</span><span class="s2">&quot;metadata&quot;</span><span class="p">]</span>
+            <span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;dataset&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">dataset</span>
+            <span class="n">process_name</span> <span class="o">=</span> <span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;process&quot;</span><span class="p">]</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">req_processes</span> <span class="o">:=</span> <span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">processes</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">process_name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">req_processes</span><span class="p">:</span>
+                    <span class="k">continue</span>
+
+            <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">output_dir</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">dataset</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;========================================&quot;</span><span class="p">)</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;🚀 Processing dataset: </span><span class="si">{</span><span class="n">dataset</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+            <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="p">(</span><span class="n">file_path</span><span class="p">,</span> <span class="n">tree</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">content</span><span class="p">[</span><span class="s2">&quot;files&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">items</span><span class="p">()):</span>
+                <span class="n">output_dir</span> <span class="o">=</span> <span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;output/</span><span class="si">{</span><span class="n">dataset</span><span class="si">}</span><span class="s2">/file__</span><span class="si">{</span><span class="n">idx</span><span class="si">}</span><span class="s2">/&quot;</span>
+                    <span class="k">if</span> <span class="ow">not</span> <span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">preprocessed_dir</span>
+                    <span class="k">else</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">preprocessed_dir</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">dataset</span><span class="si">}</span><span class="s2">/file__</span><span class="si">{</span><span class="n">idx</span><span class="si">}</span><span class="s2">/&quot;</span>
+                <span class="p">)</span>
+                <span class="k">if</span> <span class="p">(</span>
+                    <span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">max_files</span> <span class="o">!=</span> <span class="o">-</span><span class="mi">1</span>
+                    <span class="ow">and</span> <span class="n">idx</span> <span class="o">&gt;=</span> <span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">max_files</span>
+                <span class="p">):</span>
+                    <span class="k">continue</span>
+                <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">run_preprocessing</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;🔍 Preprocessing input file: </span><span class="si">{</span><span class="n">file_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;➡️  Writing to: </span><span class="si">{</span><span class="n">output_dir</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">preprocessor</span> <span class="o">==</span> <span class="s2">&quot;uproot&quot;</span><span class="p">:</span>
+                        <span class="n">pre_process_uproot</span><span class="p">(</span>
+                            <span class="n">file_path</span><span class="p">,</span>
+                            <span class="n">tree</span><span class="p">,</span>
+                            <span class="n">output_dir</span><span class="p">,</span>
+                            <span class="n">config</span><span class="p">,</span>
+                            <span class="n">is_mc</span><span class="o">=</span><span class="p">(</span><span class="n">dataset</span> <span class="o">!=</span> <span class="s2">&quot;data&quot;</span><span class="p">),</span>
+                        <span class="p">)</span>
+                    <span class="k">elif</span> <span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">preprocessor</span> <span class="o">==</span> <span class="s2">&quot;dask&quot;</span><span class="p">:</span>
+                        <span class="n">pre_process_dak</span><span class="p">(</span>
+                            <span class="n">file_path</span><span class="p">,</span>
+                            <span class="n">tree</span><span class="p">,</span>
+                            <span class="n">output_dir</span> <span class="o">+</span> <span class="sa">f</span><span class="s2">&quot;/part</span><span class="si">{</span><span class="n">idx</span><span class="si">}</span><span class="s2">.root&quot;</span><span class="p">,</span>
+                            <span class="n">config</span><span class="p">,</span>
+                            <span class="n">is_mc</span><span class="o">=</span><span class="p">(</span><span class="n">dataset</span> <span class="o">!=</span> <span class="s2">&quot;data&quot;</span><span class="p">),</span>
+                        <span class="p">)</span>
+
+                <span class="n">skimmed_files</span> <span class="o">=</span> <span class="n">glob</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">output_dir</span><span class="si">}</span><span class="s2">/part*.root&quot;</span><span class="p">)</span>
+                <span class="n">skimmed_files</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">f</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">tree</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">skimmed_files</span><span class="p">]</span>
+                <span class="n">remaining</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">uproot</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">f</span><span class="p">)</span><span class="o">.</span><span class="n">num_entries</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">skimmed_files</span><span class="p">)</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;✅ Events retained after filtering: </span><span class="si">{</span><span class="n">remaining</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">run_histogramming</span><span class="p">:</span>
+                    <span class="k">for</span> <span class="n">skimmed</span> <span class="ow">in</span> <span class="n">skimmed_files</span><span class="p">:</span>
+                        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;📘 Processing skimmed file: </span><span class="si">{</span><span class="n">skimmed</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;📈 Processing for non-differentiable analysis&quot;</span><span class="p">)</span>
+                        <span class="n">events</span> <span class="o">=</span> <span class="n">NanoEventsFactory</span><span class="o">.</span><span class="n">from_root</span><span class="p">(</span>
+                            <span class="n">skimmed</span><span class="p">,</span> <span class="n">schemaclass</span><span class="o">=</span><span class="n">NanoAODSchema</span><span class="p">,</span> <span class="n">delayed</span><span class="o">=</span><span class="kc">False</span>
+                        <span class="p">)</span><span class="o">.</span><span class="n">events</span><span class="p">()</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">process</span><span class="p">(</span><span class="n">events</span><span class="p">,</span> <span class="n">metadata</span><span class="p">)</span>
+                        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;📈 Non-differentiable histogram-filling complete.&quot;</span><span class="p">)</span>
+
+
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;🏁 Finished dataset: </span><span class="si">{</span><span class="n">dataset</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="c1"># Report end of processing</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;✅ All datasets processed.&quot;</span><span class="p">)</span>
+
+        <span class="c1"># Save histograms for non-differentiable analysis</span>
+        <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">run_histogramming</span><span class="p">:</span>
+            <span class="n">save_histograms</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">nD_hists_per_region</span><span class="p">,</span>
+                <span class="n">output_file</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">output_dir</span><span class="si">}</span><span class="s2">/histograms/histograms.root&quot;</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">pkl_histograms</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">nD_hists_per_region</span><span class="p">,</span>
+                <span class="n">output_file</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">output_dir</span><span class="si">}</span><span class="s2">/histograms/histograms.pkl&quot;</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="c1"># Run statistics for non-differentiable analysis</span>
+        <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">run_statistics</span><span class="p">:</span>
+            <span class="n">cabinetry_config</span> <span class="o">=</span> <span class="n">cabinetry</span><span class="o">.</span><span class="n">configuration</span><span class="o">.</span><span class="n">load</span><span class="p">(</span>
+                <span class="n">config</span><span class="o">.</span><span class="n">statistics</span><span class="o">.</span><span class="n">cabinetry_config</span>
+            <span class="p">)</span>
+            <span class="n">data</span><span class="p">,</span> <span class="n">fit_results</span><span class="p">,</span> <span class="n">pre_fit_predictions</span><span class="p">,</span> <span class="n">postfit_predictions</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">run_fit</span><span class="p">(</span><span class="n">cabinetry_config</span><span class="o">=</span><span class="n">cabinetry_config</span><span class="p">)</span>
+            <span class="p">)</span>
+            <span class="n">cabinetry</span><span class="o">.</span><span class="n">visualize</span><span class="o">.</span><span class="n">data_mc</span><span class="p">(</span>
+                <span class="n">pre_fit_predictions</span><span class="p">,</span>
+                <span class="n">data</span><span class="p">,</span>
+                <span class="n">close_figure</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                <span class="n">config</span><span class="o">=</span><span class="n">cabinetry_config</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">cabinetry</span><span class="o">.</span><span class="n">visualize</span><span class="o">.</span><span class="n">data_mc</span><span class="p">(</span>
+                <span class="n">postfit_predictions</span><span class="p">,</span>
+                <span class="n">data</span><span class="p">,</span>
+                <span class="n">close_figure</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                <span class="n">config</span><span class="o">=</span><span class="n">cabinetry_config</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">cabinetry</span><span class="o">.</span><span class="n">visualize</span><span class="o">.</span><span class="n">pulls</span><span class="p">(</span><span class="n">fit_results</span><span class="p">,</span> <span class="n">close_figure</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></div>
+</div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright .</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

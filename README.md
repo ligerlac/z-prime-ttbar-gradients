@@ -100,6 +100,7 @@ The default configuration (`utils/configuration.py`) is set up to perform a diff
 - [Extending the Analysis](#extending-the-analysis)
 - [Non-Differentiable Analysis](#non-differentiable-analysis)
 - [Directory Structure](#directory-structure)
+- [[Developer] Building the Documentation](#building-the-documentation)
 
 ## Core Concepts
 
@@ -608,4 +609,42 @@ Alongside the differentiable path, the framework fully supports a traditional, n
 ├── corrections/
 │   └── ...             # Correction files (e.g., from `correctionlib`)
 └── README.md
+```
+
+---
+
+## Building the Documentation
+
+This project uses Sphinx to generate documentation from the source code's docstrings and other reStructuredText files. The documentation is hosted on Read the Docs.
+
+### Building Locally
+
+To build and view the documentation on your local machine, follow these steps:
+
+1.  **Install Dependencies**:
+    The documentation dependencies are listed in `docs/requirements.txt`. You can install them using `pip`. It is recommended to do this within the project's conda environment to keep dependencies organized.
+    ```bash
+    pip install -r docs/requirements.txt
+    ```
+
+2.  **Build the HTML pages**:
+    Navigate to the `docs/` directory and use the provided `Makefile` to build the documentation.
+    ```bash
+    cd docs
+    make html
+    ```
+
+3.  **View the Documentation**:
+    The generated HTML files will be in the `docs/build/html/` directory. You can open the main page in your browser (e.g., by navigating to the file path in your browser's address bar or using a command like `open` on macOS or `xdg-open` on Linux).
+
+### Deploying to Read the Docs
+
+The repository is configured to automatically build and deploy the documentation to Read the Docs on every push to the main branch. This process is controlled by the `.readthedocs.yaml` file at the root of the repository.
+
+If you have forked this repository and wish to set up your own Read the Docs deployment:
+
+1.  **Sign up/in to Read the Docs**: Go to readthedocs.org and create an account or log in. Make sure your GitHub account is connected.
+2.  **Import the Repository**: From your Read the Docs dashboard, click on "Import a Project" and select your GitHub repository fork.
+3.  **Configuration**: Read the Docs will automatically detect the `.readthedocs.yaml` file and configure the build process. You should not need to change any settings in the Read the Docs project configuration page.
+4.  **Trigger a Build**: The first build should trigger automatically after importing. Subsequent builds will be triggered by pushing new commits to your repository's default branch. You can monitor the build status and logs in your Read the Docs project dashboard.
 ```

@@ -1,0 +1,361 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>utils.jax_stats &mdash; Differentiable Z&#39; → tt̄ Analysis Framework 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            Differentiable Z' → tt̄ Analysis Framework
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../usage.html">Usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../configuration.html">Configuration Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../concepts.html">Core Concepts</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../mva.html">Multi-Variate Analysis (MVA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../extending.html">Extending the Analysis</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../api/modules.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">Differentiable Z' → tt̄ Analysis Framework</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">utils.jax_stats</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for utils.jax_stats</h1><div class="highlight"><pre>
+<span></span><span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span> <span class="nn">jax</span>
+<span class="kn">import</span> <span class="nn">jax.numpy</span> <span class="k">as</span> <span class="nn">jnp</span>
+<span class="kn">import</span> <span class="nn">jax.scipy</span> <span class="k">as</span> <span class="nn">jsp</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="kn">import</span> <span class="nn">equinox</span> <span class="k">as</span> <span class="nn">eqx</span>
+<span class="kn">import</span> <span class="nn">relaxed</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Tuple</span>
+
+<span class="c1"># ----------------------------------------------------------------------</span>
+<span class="c1"># 1) A JAX‐compatible Poisson log‐PDF</span>
+<span class="c1"># ----------------------------------------------------------------------</span>
+<div class="viewcode-block" id="poisson_logpdf">
+<a class="viewcode-back" href="../../api/utils/jax_stats.html#utils.jax_stats.poisson_logpdf">[docs]</a>
+<span class="nd">@jax</span><span class="o">.</span><span class="n">jit</span>
+<span class="k">def</span> <span class="nf">poisson_logpdf</span><span class="p">(</span><span class="n">counts</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">lam</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Per‐bin Poisson log‐likelihood:</span>
+<span class="sd">       log P(n | λ) = n·log(λ) − λ − log(n!).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">counts</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">lam</span> <span class="o">+</span> <span class="mf">1e-12</span><span class="p">)</span> <span class="o">-</span> <span class="n">lam</span> <span class="o">-</span> <span class="n">jsp</span><span class="o">.</span><span class="n">special</span><span class="o">.</span><span class="n">gammaln</span><span class="p">(</span><span class="n">counts</span> <span class="o">+</span> <span class="mf">1.0</span><span class="p">)</span></div>
+
+
+
+<span class="c1"># ----------------------------------------------------------------------</span>
+<span class="c1"># 2) ChannelData holds what we need for each channel:</span>
+<span class="c1">#       - data_counts: observed data histogram (1D)</span>
+<span class="c1">#       - processes: dict of {process_name: nominal_histogram} for that channel</span>
+<span class="c1"># ----------------------------------------------------------------------</span>
+<div class="viewcode-block" id="ChannelData">
+<a class="viewcode-back" href="../../api/utils/jax_stats.html#utils.jax_stats.ChannelData">[docs]</a>
+<span class="k">class</span> <span class="nc">ChannelData</span><span class="p">(</span><span class="n">eqx</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="n">data_counts</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span>
+    <span class="n">processes</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span>
+    <span class="n">binning</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">eqx</span><span class="o">.</span><span class="n">static_field</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data_counts</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+                 <span class="n">processes</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
+                 <span class="n">binning</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+                 <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="c1"># Both `data_counts` and each `processes[...]` are assumed to be jnp.ndarray already.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data_counts</span> <span class="o">=</span> <span class="n">data_counts</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">processes</span> <span class="o">=</span> <span class="n">processes</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">binning</span> <span class="o">=</span> <span class="n">binning</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span></div>
+
+
+
+<span class="c1"># ----------------------------------------------------------------------</span>
+<span class="c1"># 3) Pure‐JAX “AllBkg” model with two scalar parameters:</span>
+<span class="c1">#       - &quot;mu&quot;: global signal strength</span>
+<span class="c1">#       - &quot;norm_ttbar_semilep&quot;: global ttbar_semilep normalization factor</span>
+<span class="c1"># ----------------------------------------------------------------------</span>
+<div class="viewcode-block" id="AllBkgRelaxedModelScalar">
+<a class="viewcode-back" href="../../api/utils/jax_stats.html#utils.jax_stats.AllBkgRelaxedModelScalar">[docs]</a>
+<span class="k">class</span> <span class="nc">AllBkgRelaxedModelScalar</span><span class="p">(</span><span class="n">eqx</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A relaxed model that has exactly two free parameters:</span>
+<span class="sd">      * &quot;mu&quot;                 — a scalar (signal strength)</span>
+<span class="sd">      * &quot;norm_ttbar_semilep&quot; — a scalar (uniformly scales ttbar_semilep across all channels)</span>
+<span class="sd">    All other backgrounds remain fixed.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">channels</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">ChannelData</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">channels</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">ChannelData</span><span class="p">]):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">channels</span> <span class="o">=</span> <span class="n">channels</span>
+
+<div class="viewcode-block" id="AllBkgRelaxedModelScalar.expected_data">
+<a class="viewcode-back" href="../../api/utils/jax_stats.html#utils.jax_stats.AllBkgRelaxedModelScalar.expected_data">[docs]</a>
+    <span class="k">def</span> <span class="nf">expected_data</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">pars</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="n">List</span><span class="p">[</span><span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Returns (main_expectations, aux_expectations). Because we have no auxiliary Poisson</span>
+<span class="sd">        constraints in this setup, aux_expectations is a list of zero‐length arrays.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">mu</span> <span class="o">=</span> <span class="n">pars</span><span class="p">[</span><span class="s2">&quot;mu&quot;</span><span class="p">]</span>                           <span class="c1"># scalar</span>
+        <span class="n">norm_ttbar</span> <span class="o">=</span> <span class="n">pars</span><span class="p">[</span><span class="s2">&quot;norm_ttbar_semilep&quot;</span><span class="p">]</span>   <span class="c1"># scalar</span>
+
+        <span class="n">main_list</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">aux_list</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>  <span class="c1"># no shape constraints here</span>
+
+        <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="n">ch</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">channels</span><span class="p">):</span>
+            <span class="c1"># Start from zero, then add each process:</span>
+            <span class="n">total</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">ch</span><span class="o">.</span><span class="n">data_counts</span><span class="p">)</span>
+
+            <span class="k">for</span> <span class="n">pname</span><span class="p">,</span> <span class="n">nominal_hist</span> <span class="ow">in</span> <span class="n">ch</span><span class="o">.</span><span class="n">processes</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="k">if</span> <span class="n">pname</span> <span class="o">==</span> <span class="s2">&quot;signal&quot;</span><span class="p">:</span>
+                    <span class="c1"># scale entire signal histogram by mu</span>
+                    <span class="n">total</span> <span class="o">=</span> <span class="n">total</span> <span class="o">+</span> <span class="n">mu</span> <span class="o">*</span> <span class="n">nominal_hist</span>
+                <span class="k">elif</span> <span class="n">pname</span> <span class="o">==</span> <span class="s2">&quot;ttbar_semilep&quot;</span><span class="p">:</span>
+                    <span class="c1"># scale entire ttbar_semilep histogram by a single factor</span>
+                    <span class="n">total</span> <span class="o">=</span> <span class="n">total</span> <span class="o">+</span> <span class="n">norm_ttbar</span> <span class="o">*</span> <span class="n">nominal_hist</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="c1"># all other backgrounds are fixed at nominal</span>
+                    <span class="n">total</span> <span class="o">=</span> <span class="n">total</span> <span class="o">+</span> <span class="n">nominal_hist</span>
+
+            <span class="n">main_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">total</span><span class="p">)</span>
+            <span class="n">aux_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">0</span><span class="p">,)))</span>  <span class="c1"># empty, since no aux constraints</span>
+
+        <span class="k">return</span> <span class="n">main_list</span><span class="p">,</span> <span class="n">aux_list</span></div>
+
+
+<div class="viewcode-block" id="AllBkgRelaxedModelScalar.logpdf">
+<a class="viewcode-back" href="../../api/utils/jax_stats.html#utils.jax_stats.AllBkgRelaxedModelScalar.logpdf">[docs]</a>
+    <span class="k">def</span> <span class="nf">logpdf</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">data</span><span class="p">:</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="n">List</span><span class="p">[</span><span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]],</span>
+        <span class="n">pars</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        data = (obs_main_list, obs_aux_list).  We ignore obs_aux_list (no constraints).</span>
+<span class="sd">        Return total log‐probability over all channels.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">obs_main_list</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">data</span>
+        <span class="n">main_exp_list</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">expected_data</span><span class="p">(</span><span class="n">pars</span><span class="p">)</span>
+
+        <span class="n">total_logp</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">channels</span><span class="p">)):</span>
+            <span class="n">total_logp</span> <span class="o">+=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">poisson_logpdf</span><span class="p">(</span><span class="n">obs_main_list</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">main_exp_list</span><span class="p">[</span><span class="n">i</span><span class="p">]))</span>
+        <span class="k">return</span> <span class="n">total_logp</span></div>
+</div>
+
+
+
+<span class="c1"># ----------------------------------------------------------------------</span>
+<span class="c1"># 4) Convert nested‐dict histograms → a list of ChannelData + observed data arrays</span>
+<span class="c1"># ----------------------------------------------------------------------</span>
+<div class="viewcode-block" id="build_allbkg_channel_data_scalar">
+<a class="viewcode-back" href="../../api/utils/jax_stats.html#utils.jax_stats.build_allbkg_channel_data_scalar">[docs]</a>
+<span class="k">def</span> <span class="nf">build_allbkg_channel_data_scalar</span><span class="p">(</span>
+    <span class="n">histograms</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]]],</span>
+    <span class="n">channels</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Any</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="n">ChannelData</span><span class="p">],</span> <span class="n">List</span><span class="p">[</span><span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Inputs:</span>
+<span class="sd">      - histograms:</span>
+<span class="sd">          {</span>
+<span class="sd">            &quot;process_name&quot;: {</span>
+<span class="sd">                &quot;nominal&quot;: {</span>
+<span class="sd">                    &quot;channel_name&quot;: {</span>
+<span class="sd">                        &quot;observable_name&quot;: &lt;jnp.ndarray&gt;</span>
+<span class="sd">                    }</span>
+<span class="sd">                }</span>
+<span class="sd">            }</span>
+<span class="sd">          }</span>
+<span class="sd">        (We assume only the &quot;nominal&quot; variation is used for building the model.)</span>
+
+<span class="sd">      - channels: list of your channel‐config objects, each has:</span>
+<span class="sd">          .name           (string, e.g. &quot;mu+jets&quot;)</span>
+<span class="sd">          .fit_observable (string, e.g. &quot;m_tt&quot;)</span>
+<span class="sd">          .use_in_diff    (bool)</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">      - channel_data_list: List[ChannelData]   (one per valid channel)</span>
+<span class="sd">      - obs_main_list:      List[jnp.ndarray]  (observed data histogram per channel)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">channel_data_list</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">ChannelData</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">obs_main_list</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">ch</span> <span class="ow">in</span> <span class="n">channels</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">ch</span><span class="o">.</span><span class="n">use_in_diff</span> <span class="ow">or</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">ch</span><span class="p">,</span> <span class="s2">&quot;fit_observable&quot;</span><span class="p">):</span>
+            <span class="k">continue</span>
+
+        <span class="n">chname</span> <span class="o">=</span> <span class="n">ch</span><span class="o">.</span><span class="n">name</span>
+        <span class="n">obsname</span> <span class="o">=</span> <span class="n">ch</span><span class="o">.</span><span class="n">fit_observable</span>
+
+        <span class="c1"># 1) Observed data histogram for this channel</span>
+        <span class="n">main_obs</span><span class="p">,</span> <span class="n">binning</span> <span class="o">=</span> <span class="n">histograms</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;data&quot;</span><span class="p">,</span> <span class="p">{})</span> \
+                              <span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;nominal&quot;</span><span class="p">,</span> <span class="p">{})</span> \
+                              <span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">chname</span><span class="p">,</span> <span class="p">{})</span> \
+                              <span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">obsname</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">main_obs</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">continue</span>  <span class="c1"># skip channels with no data</span>
+
+        <span class="c1"># 2) Collect **all** nominal templates for this channel</span>
+        <span class="n">proc_dict</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">pname</span><span class="p">,</span> <span class="n">variations</span> <span class="ow">in</span> <span class="n">histograms</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">pname</span> <span class="o">==</span> <span class="s2">&quot;data&quot;</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">nom</span> <span class="o">=</span> <span class="n">variations</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;nominal&quot;</span><span class="p">,</span> <span class="p">{})</span> \
+                            <span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">chname</span><span class="p">,</span> <span class="p">{})</span> \
+                            <span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">obsname</span><span class="p">,</span> <span class="kc">None</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">nom</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">proc_dict</span><span class="p">[</span><span class="n">pname</span><span class="p">]</span> <span class="o">=</span> <span class="n">nom</span>
+
+        <span class="c1"># If “signal” is missing, treat it as zeros:</span>
+        <span class="k">if</span> <span class="s2">&quot;signal&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">proc_dict</span><span class="p">:</span>
+            <span class="n">proc_dict</span><span class="p">[</span><span class="s2">&quot;signal&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">main_obs</span><span class="p">)</span>
+
+        <span class="c1"># If “ttbar_semilep” is missing, treat it as zeros:</span>
+        <span class="k">if</span> <span class="s2">&quot;ttbar_semilep&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">proc_dict</span><span class="p">:</span>
+            <span class="n">proc_dict</span><span class="p">[</span><span class="s2">&quot;ttbar_semilep&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">main_obs</span><span class="p">)</span>
+
+        <span class="c1"># Now create ChannelData</span>
+        <span class="n">channel_data_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ChannelData</span><span class="p">(</span>
+            <span class="n">name</span> <span class="o">=</span> <span class="n">chname</span><span class="p">,</span>
+            <span class="n">data_counts</span> <span class="o">=</span> <span class="n">main_obs</span><span class="p">,</span>
+            <span class="n">processes</span>  <span class="o">=</span> <span class="n">proc_dict</span><span class="p">,</span>
+            <span class="n">binning</span> <span class="o">=</span> <span class="n">binning</span><span class="p">,</span>
+        <span class="p">))</span>
+        <span class="n">obs_main_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">main_obs</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">channel_data_list</span><span class="p">,</span> <span class="n">obs_main_list</span></div>
+
+
+
+<span class="c1"># ----------------------------------------------------------------------</span>
+<span class="c1"># 5) A pure‐JAX calculate_significance_relaxed that uses scalars for ttbar_norm</span>
+<span class="c1"># ----------------------------------------------------------------------</span>
+<div class="viewcode-block" id="calculate_significance_relaxed">
+<a class="viewcode-back" href="../../api/utils/jax_stats.html#utils.jax_stats.calculate_significance_relaxed">[docs]</a>
+<span class="k">def</span> <span class="nf">calculate_significance_relaxed</span><span class="p">(</span>
+    <span class="n">histograms</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]]],</span>
+    <span class="n">channels</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Any</span><span class="p">],</span>
+    <span class="n">params</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">{},</span>
+    <span class="n">test_mu</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    1) Build ChannelData for each channel + observed data list.</span>
+<span class="sd">    2) Construct AllBkgRelaxedModelScalar.</span>
+<span class="sd">    3) Build init_pars = {&quot;mu&quot;: test_mu, &quot;norm_ttbar_semilep&quot;: 1.0}.</span>
+<span class="sd">    4) Call relaxed.infer.hypotest purely in JAX.</span>
+<span class="sd">    5) Return the JAX array p0.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># (a) Build channel data and obs_main_list:</span>
+    <span class="n">channel_data_list</span><span class="p">,</span> <span class="n">obs_main_list</span> <span class="o">=</span> <span class="n">build_allbkg_channel_data_scalar</span><span class="p">(</span><span class="n">histograms</span><span class="p">,</span> <span class="n">channels</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">channel_data_list</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="c1"># no valid channels → zero significance</span>
+        <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+
+    <span class="c1"># (b) Prepare “data_for_hypotest”: (obs_main_list, obs_aux_list)</span>
+    <span class="c1">#     We have no auxiliary constraints → pass empty list for second</span>
+    <span class="n">data_for_hypotest</span> <span class="o">=</span> <span class="p">(</span><span class="n">obs_main_list</span><span class="p">,</span> <span class="p">[])</span>
+
+    <span class="c1"># (c) Build our model</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">AllBkgRelaxedModelScalar</span><span class="p">(</span><span class="n">channels</span><span class="o">=</span><span class="n">channel_data_list</span><span class="p">)</span>
+
+    <span class="c1"># (d) Call relaxed.infer.hypotest entirely in JAX:</span>
+    <span class="n">p0</span><span class="p">,</span> <span class="n">mle_pars</span> <span class="o">=</span> <span class="n">relaxed</span><span class="o">.</span><span class="n">infer</span><span class="o">.</span><span class="n">hypotest</span><span class="p">(</span>
+        <span class="n">test_mu</span><span class="p">,</span>
+        <span class="n">data_for_hypotest</span><span class="p">,</span>
+        <span class="n">model</span><span class="p">,</span>
+        <span class="n">init_pars</span> <span class="o">=</span> <span class="n">params</span><span class="p">,</span>
+        <span class="n">return_mle_pars</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">test_stat</span> <span class="o">=</span> <span class="s2">&quot;q0&quot;</span><span class="p">,</span>   <span class="c1"># discovery test</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">p0</span><span class="p">,</span> <span class="n">mle_pars</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright .</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

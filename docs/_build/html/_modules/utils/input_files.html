@@ -1,0 +1,200 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>utils.input_files &mdash; Differentiable Z&#39; → tt̄ Analysis Framework 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            Differentiable Z' → tt̄ Analysis Framework
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../usage.html">Usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../configuration.html">Configuration Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../concepts.html">Core Concepts</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../mva.html">Multi-Variate Analysis (MVA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../extending.html">Extending the Analysis</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../api/modules.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">Differentiable Z' → tt̄ Analysis Framework</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">utils.input_files</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for utils.input_files</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Utilities for downloading and managing input files.</span>
+
+<span class="sd">Taken from the AGC project:</span>
+<span class="sd">https://github.com/MoAly98/analysis-grand-challenge/blob/main/analyses/cms-open-data-ttbar/utils/file_input.py</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span> <span class="nn">json</span>
+
+
+<div class="viewcode-block" id="construct_fileset">
+<a class="viewcode-back" href="../../api/utils/input_files.html#utils.input_files.construct_fileset">[docs]</a>
+<span class="k">def</span> <span class="nf">construct_fileset</span><span class="p">(</span><span class="n">n_files_max_per_sample</span><span class="p">,</span> <span class="n">preprocessor</span><span class="o">=</span><span class="s2">&quot;uproot&quot;</span><span class="p">):</span>
+
+    <span class="c1"># x-secs are in pb</span>
+    <span class="n">xsec_info</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;signal&quot;</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">,</span>
+        <span class="s2">&quot;ttbar_semilep&quot;</span><span class="p">:</span> <span class="mf">831.76</span> <span class="o">*</span> <span class="mf">0.438</span><span class="p">,</span>
+        <span class="s2">&quot;ttbar_had&quot;</span><span class="p">:</span> <span class="mf">831.76</span> <span class="o">*</span> <span class="mf">0.457</span><span class="p">,</span>
+        <span class="s2">&quot;ttbar_lep&quot;</span><span class="p">:</span> <span class="mf">831.76</span> <span class="o">*</span> <span class="mf">0.105</span><span class="p">,</span>
+        <span class="s2">&quot;wjets&quot;</span><span class="p">:</span> <span class="mf">61526.7</span><span class="p">,</span>
+        <span class="s2">&quot;data&quot;</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">,</span>
+    <span class="p">}</span>
+
+    <span class="c1"># list of files</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;datasets/nanoaods.json&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">file_info</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+
+    <span class="c1"># process into &quot;fileset&quot; summarizing all info</span>
+    <span class="n">fileset</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">process</span> <span class="ow">in</span> <span class="n">file_info</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
+
+        <span class="c1"># if process == &quot;data&quot;:   continue  # skip data</span>
+
+        <span class="k">for</span> <span class="n">variation</span> <span class="ow">in</span> <span class="n">file_info</span><span class="p">[</span><span class="n">process</span><span class="p">]</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
+            <span class="n">file_list</span> <span class="o">=</span> <span class="n">file_info</span><span class="p">[</span><span class="n">process</span><span class="p">][</span><span class="n">variation</span><span class="p">][</span><span class="s2">&quot;files&quot;</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">n_files_max_per_sample</span> <span class="o">!=</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+                <span class="n">file_list</span> <span class="o">=</span> <span class="n">file_list</span><span class="p">[</span>
+                    <span class="p">:</span><span class="n">n_files_max_per_sample</span>
+                <span class="p">]</span>  <span class="c1"># use partial set of samples</span>
+
+            <span class="n">file_paths</span> <span class="o">=</span> <span class="p">{</span><span class="n">f</span><span class="p">[</span><span class="s2">&quot;path&quot;</span><span class="p">]:</span> <span class="s2">&quot;Events&quot;</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">file_list</span><span class="p">}</span>
+            <span class="n">nevts_total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">([</span><span class="n">f</span><span class="p">[</span><span class="s2">&quot;nevts&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">file_list</span><span class="p">])</span>
+            <span class="n">nevts_wt_total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">([</span><span class="n">f</span><span class="p">[</span><span class="s2">&quot;nevts_wt&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">file_list</span><span class="p">])</span>
+
+            <span class="n">metadata</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">&quot;process&quot;</span><span class="p">:</span> <span class="n">process</span><span class="p">,</span>
+                <span class="s2">&quot;variation&quot;</span><span class="p">:</span> <span class="n">variation</span><span class="p">,</span>
+                <span class="s2">&quot;nevts&quot;</span><span class="p">:</span> <span class="n">nevts_total</span><span class="p">,</span>
+                <span class="s2">&quot;nevts_wt&quot;</span><span class="p">:</span> <span class="n">nevts_wt_total</span><span class="p">,</span>
+                <span class="s2">&quot;xsec&quot;</span><span class="p">:</span> <span class="n">xsec_info</span><span class="p">[</span><span class="n">process</span><span class="p">],</span>
+            <span class="p">}</span>
+            <span class="n">fileset</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
+                <span class="p">{</span>
+                    <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">process</span><span class="si">}</span><span class="s2">__</span><span class="si">{</span><span class="n">variation</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">:</span> <span class="p">{</span>
+                        <span class="s2">&quot;files&quot;</span><span class="p">:</span> <span class="n">file_paths</span><span class="p">,</span>
+                        <span class="s2">&quot;metadata&quot;</span><span class="p">:</span> <span class="n">metadata</span><span class="p">,</span>
+                    <span class="p">}</span>
+                <span class="p">}</span>
+            <span class="p">)</span>
+        <span class="k">if</span> <span class="n">preprocessor</span> <span class="o">==</span> <span class="s2">&quot;uproot&quot;</span><span class="p">:</span>
+            <span class="c1"># this is dangerous, assumes all files are in the same directory structure</span>
+            <span class="c1"># also, removing individual files from the .json will have no effect.</span>
+            <span class="c1"># n_max_per_sample has no effect, either.</span>
+            <span class="c1"># Hardcoding the glob path for data here makes it at least obvious.</span>
+            <span class="k">if</span> <span class="n">process</span> <span class="o">==</span> <span class="s2">&quot;data&quot;</span><span class="p">:</span>
+                <span class="n">process_root_path</span> <span class="o">=</span> <span class="s2">&quot;root://eospublic.cern.ch//eos/opendata/cms/Run2016*/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1&quot;</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">file_list</span> <span class="o">=</span> <span class="n">file_info</span><span class="p">[</span><span class="n">process</span><span class="p">][</span><span class="n">variation</span><span class="p">][</span><span class="s2">&quot;files&quot;</span><span class="p">]</span>
+                <span class="n">a_file</span> <span class="o">=</span> <span class="n">file_list</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+                <span class="n">process_root_path</span> <span class="o">=</span> <span class="s2">&quot;/&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">a_file</span><span class="p">[</span><span class="s2">&quot;path&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="p">)[:</span><span class="o">-</span><span class="mi">2</span><span class="p">])</span>
+            <span class="n">process_all_files</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">process_root_path</span><span class="si">}</span><span class="s2">/*/*.root&quot;</span>
+            <span class="n">nevts_total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">([</span><span class="n">f</span><span class="p">[</span><span class="s2">&quot;nevts&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">file_list</span><span class="p">])</span>
+            <span class="n">nevts_wt_total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">([</span><span class="n">f</span><span class="p">[</span><span class="s2">&quot;nevts_wt&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">file_list</span><span class="p">])</span>
+            <span class="n">metadata</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">&quot;process&quot;</span><span class="p">:</span> <span class="n">process</span><span class="p">,</span>
+                <span class="s2">&quot;variation&quot;</span><span class="p">:</span> <span class="n">variation</span><span class="p">,</span>
+                <span class="s2">&quot;nevts&quot;</span><span class="p">:</span> <span class="n">nevts_total</span><span class="p">,</span>
+                <span class="s2">&quot;nevts_wt&quot;</span><span class="p">:</span> <span class="n">nevts_wt_total</span><span class="p">,</span>
+                <span class="s2">&quot;xsec&quot;</span><span class="p">:</span> <span class="n">xsec_info</span><span class="p">[</span><span class="n">process</span><span class="p">],</span>
+            <span class="p">}</span>
+            <span class="n">file_paths</span> <span class="o">=</span> <span class="p">{</span><span class="n">process_all_files</span><span class="p">:</span> <span class="s2">&quot;Events&quot;</span><span class="p">}</span>
+            <span class="n">fileset</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
+                <span class="p">{</span>
+                    <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">process</span><span class="si">}</span><span class="s2">__</span><span class="si">{</span><span class="n">variation</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">:</span> <span class="p">{</span>
+                        <span class="s2">&quot;files&quot;</span><span class="p">:</span> <span class="n">file_paths</span><span class="p">,</span>
+                        <span class="s2">&quot;metadata&quot;</span><span class="p">:</span> <span class="n">metadata</span><span class="p">,</span>
+                    <span class="p">}</span>
+                <span class="p">}</span>
+            <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fileset</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright .</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
