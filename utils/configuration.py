@@ -79,7 +79,7 @@ config = {
                 ("Jet", "btagDeepB"),
                 ("PuppiMET", "pt"),
                 ("Jet", "mass"),
-                #("wjets_vs_ttbar_nn", None),
+                ("wjets_vs_ttbar_nn", None),
             ],
         },
         "params": {
