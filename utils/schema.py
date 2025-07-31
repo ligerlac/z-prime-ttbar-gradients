@@ -709,6 +709,13 @@ class GradOptimConfig(SubscriptableModel):
             description="Learning rate for this MVA when optimise=True"
         ),
     ]
+    log_param_changes: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="If True, log the mean of weight/bias changes during optimisation."
+        )
+    ]
 
 # ========
 # Network layers configuration

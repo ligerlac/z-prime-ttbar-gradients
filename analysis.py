@@ -14,12 +14,19 @@ from analysis.diff import DifferentiableAnalysis
 from utils.configuration import config as ZprimeConfig
 from utils.input_files import construct_fileset
 from utils.schema import Config, load_config_with_restricted_cli
-
+from utils.logging import ColoredFormatter
 
 # -----------------------------
 # Logging Configuration
 # -----------------------------
-logging.basicConfig(level=logging.INFO, format="[%(name)s::%(levelname)s] %(message)s")
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(ColoredFormatter())
+if root_logger.hasHandlers():
+    root_logger.handlers.clear()
+root_logger.addHandler(handler)
+
 logger = logging.getLogger("AnalysisDriver")
 logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 

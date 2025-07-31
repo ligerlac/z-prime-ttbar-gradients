@@ -13,7 +13,7 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from pprint import pformat
-from typing import Any, Dict, Literal, List, Tuple, Optional
+from typing import Any, Dict, Literal, List, Tuple, Optional, Union
 
 # =============================================================================
 # Third-Party Imports
@@ -23,6 +23,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jaxopt import OptaxSolver
+from tabulate import tabulate
 import optax
 import awkward as ak
 import uproot
@@ -52,16 +53,14 @@ ak.jax.register_and_check()
 vector.register_awkward()
 
 logger = logging.getLogger("DiffAnalysis")
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(levelname)s: %(name)s - %(lineno)d - %(funcName)20s()] %(message)s"
-)
 logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 
 NanoAODSchema.warn_missing_crossrefs = False
 warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
 
+BLUE = "\033[94m"
 GREEN = "\033[92m"
+RED = "\033[91m"
 RESET = "\033[0m"
 
 
@@ -188,6 +187,108 @@ def nested_defaultdict_to_dict(nested_structure: Any) -> dict:
     elif isinstance(nested_structure, dict):
         return {key: nested_defaultdict_to_dict(value) for key, value in nested_structure.items()}
     return nested_structure
+
+def _log_parameter_update(
+    step: Union[int, str],
+    old_p_value: float,
+    new_p_value: float,
+    old_params: dict,
+    new_params: dict,
+    mva_configs: list,
+):
+    """
+    Logs a formatted and colored table of parameter updates for a single step.
+
+    Parameters
+    ----------
+    step : int
+        The current optimisation step number or a descriptive string (e.g., "Initial").
+    old_p_value : float
+        The p-value from the last logged step.
+    new_p_value : float
+        The p-value at the current step.
+    old_params : dict
+        The dictionary of parameters from a previous state to compare against (e.g., from the last logged step).
+    new_params : dict
+        The dictionary of parameters after the update.
+    mva_configs : list
+        A list of MVA configuration objects to check for logging flags.
+    """
+    # --- P-value Table ---
+    p_value_headers = ["Old p-value", "New p-value", "% Change"]
+    if old_p_value and old_p_value != 0:
+        p_value_change = ((new_p_value - old_p_value) / old_p_value) * 100
+    else:
+        p_value_change = float("inf") if new_p_value != 0 else 0.0
+
+    p_value_row = [f"{old_p_value:.4f}", f"{new_p_value:.4f}", f"{p_value_change:+.2f}%"]
+
+    # Color green for improvement (decrease), red for worsening (increase)
+    if new_p_value < old_p_value:
+        p_value_row_colored = [f"{GREEN}{item}{RESET}" for item in p_value_row]
+    elif new_p_value > old_p_value:
+        p_value_row_colored = [f"{RED}{item}{RESET}" for item in p_value_row]
+    else:
+        p_value_row_colored = p_value_row
+    p_value_table = tabulate(
+        [p_value_row_colored], headers=p_value_headers, tablefmt="grid"
+    )
+
+    # --- Parameter Table ---
+    table_data = []
+    headers = ["Parameter", "Old Value", "New Value", "% Change"]
+
+    # Create a map from MVA name to its config for easy lookup
+    mva_config_map = {mva.name: mva for mva in mva_configs or []}
+
+    # Combine all parameters for easier iteration
+    all_old_params = {**old_params.get("aux", {}), **old_params.get("fit", {})}
+    all_new_params = {**new_params.get("aux", {}), **new_params.get("fit", {})}
+
+    for name, old_val in sorted(all_old_params.items()):
+        new_val = all_new_params[name]
+
+        # Handle NN parameters
+        if name.startswith("__NN"):
+            mva_name = next((mva.name for mva in (mva_configs or []) if mva.name in name), None)
+
+            # Check if logging is enabled for this MVA
+            if mva_name and mva_config_map[mva_name].grad_optimisation.log_param_changes:
+                old_val_display, new_val_display = jnp.mean(old_val), jnp.mean(new_val)
+                name_display = f"{name} (mean)"
+            else:
+                continue  # Skip NN params if logging is not enabled
+        else:
+            old_val_display, new_val_display = old_val, new_val
+            name_display = name
+
+        # Calculate percentage change
+        old_np, new_np = jax.device_get([old_val_display, new_val_display])
+        if old_np != 0:
+            percent_change = ((new_np - old_np) / old_np) * 100
+        else:
+            percent_change = float("inf") if new_np != 0 else 0.0
+
+        # Format for table
+        row = [name_display, f"{old_np:.4f}", f"{new_np:.4f}", f"{percent_change:+.2f}%"]
+
+        # Color the row blue if the parameter value has changed
+        if not np.allclose(old_np, new_np, atol=1e-6, rtol=1e-5):
+            row = [f"{BLUE}{item}{RESET}" for item in row]
+
+        table_data.append(row)
+
+    if isinstance(step, int):
+        header = f"Step {step:3d}"
+    else:
+        header = f"State: {step}"
+
+    if not table_data:
+        logger.info(f"\n{header}\n{p_value_table}\n(No parameters to log)")
+        return
+
+    table_str = tabulate(table_data, headers=headers, tablefmt="grid")
+    logger.info(f"\n{header}\n{p_value_table}\n{table_str}")
 
 # -----------------------------------------------------------------------------
 # Optimisation helper functions
@@ -1421,7 +1522,6 @@ class DifferentiableAnalysis(Analysis):
         # Ensure all parameters are JAX arrays
         all_parameters["aux"] = {k: jnp.array(v) for k, v in all_parameters["aux"].items()}
         all_parameters["fit"] = {k: jnp.array(v) for k, v in all_parameters["fit"].items()}
-        logger.info(f"Initial parameters: {pformat(all_parameters)}")
 
         logger.info("✅ Event preprocessing complete\n")
 
@@ -1434,11 +1534,21 @@ class DifferentiableAnalysis(Analysis):
         )
         initial_histograms = self.histograms
 
+        # Log initial state before optimisation
+        _log_parameter_update(
+            step="Initial",
+            old_p_value=float(initial_pvalue),
+            new_p_value=float(initial_pvalue),
+            old_params=all_parameters,
+            new_params=all_parameters,
+            mva_configs=self.config.mva,
+        )
+
         # ---------------------------------------------------------------------
         # 4. If not just plotting, begin gradient-based optimisation
         # ---------------------------------------------------------------------
         if not self.config.general.run_plots_only:
-            logger.info("=== Beginning cut and NN parameter optimisation ===")
+            logger.info("=== Beginning parameter optimisation ===")
 
             # Collect relevant processes and systematics
             processes, systematics = infer_processes_and_systematics(
@@ -1495,6 +1605,8 @@ class DifferentiableAnalysis(Analysis):
 
             def optimise_and_log(n_steps: int = 100):
                 parameters = initial_params
+                last_logged_params = initial_params
+                last_logged_pvalue = initial_pvalue
                 solver = OptaxSolver(
                     fun=objective,
                     opt=tx,
@@ -1509,7 +1621,6 @@ class DifferentiableAnalysis(Analysis):
 
                 for step in range(n_steps):
                     new_parameters, state = solver.update(parameters, state)
-                    parameters = new_parameters
 
                     # Record progress
                     pval = state.value
@@ -1522,9 +1633,18 @@ class DifferentiableAnalysis(Analysis):
                         mle_history[name].append(float(value))
 
                     if step % 10 == 0:
-                        jax.debug.print("\nStep {:3d}: p = {:.4f}", step, pval)
-                        logger.info(f"  Aux: {parameters['aux']}")
-                        logger.info(f"  MLE: {mle}")
+                        _log_parameter_update(
+                            step=step+1,
+                            old_p_value=last_logged_pvalue,
+                            new_p_value=pval,
+                            old_params=last_logged_params,
+                            new_params=new_parameters,
+                            mva_configs=self.config.mva,
+                        )
+                        # Update the baseline for the next log
+                        last_logged_params = new_parameters
+                        last_logged_pvalue = pval
+                    parameters = new_parameters  # Update for the next iteration
 
                 return state.value, state.aux, parameters
 
@@ -1534,6 +1654,18 @@ class DifferentiableAnalysis(Analysis):
             logger.info(f"Initial p-value: {initial_pvalue:.4f}")
             logger.info(f"Final   p-value: {final_pval:.4f}")
             logger.info(f"Improvement: {(final_pval - initial_pvalue) * 100 / initial_pvalue:.2f}%")
+
+            # Log final summary table comparing initial and final states
+            logger.info("=" * 80)
+            _log_parameter_update(
+                step="Final Summary",
+                old_p_value=float(initial_pvalue),
+                new_p_value=float(final_pval),
+                old_params=all_parameters,
+                new_params=final_params,
+                mva_configs=self.config.mva,
+            )
+            logger.info("=" * 80)
 
             # Re-run analysis with final parameters to update histograms
             _ = self._run_traced_analysis_chain(final_params, processed_data)
@@ -1628,5 +1760,3 @@ class DifferentiableAnalysis(Analysis):
         make_pre_and_post_fit_plots(initial_histograms, "preopt_prefit", all_parameters["fit"])
 
         return histograms, final_pval
-
-
