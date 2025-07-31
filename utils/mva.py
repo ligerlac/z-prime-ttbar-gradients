@@ -148,7 +148,8 @@ class BaseNetwork(ABC, Analysis):
         for feature_cfg in feature_configs:
             # Extract input arguments from object collections
             args = self._get_function_arguments(
-                feature_cfg.use, object_collections
+                feature_cfg.use, object_collections,
+                function_name=feature_cfg.function.__name__
             )
 
             # Compute raw feature values

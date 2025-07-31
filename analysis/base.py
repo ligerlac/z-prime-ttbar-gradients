@@ -98,15 +98,15 @@ class Analysis:
         """
         evaluators = {}
         for correction in self.corrections:
-            if not correction.get("use_correctionlib"):
+            if not correction.use_correctionlib:
                 continue
 
-            corr_name = correction["name"]
-            file_path = correction["file"]
+            corr_name = correction.name
+            file_path = correction.file
 
             if file_path.endswith(".json.gz"):
-                with gzip.open(file_path, "rt") as f:
-                    evaluators[corr_name] = CorrectionSet.from_string(f.read().strip())
+                with gzip.open(file_path, "rt") as file_handle:
+                    evaluators[corr_name] = CorrectionSet.from_string(file_handle.read().strip())
             elif file_path.endswith(".json"):
                 evaluators[corr_name] = CorrectionSet.from_file(file_path)
             else:
@@ -156,7 +156,10 @@ class Analysis:
         good_objects = {}
         for mask_config in masks:
             mask_args = self._get_function_arguments(
-                mask_config.use, object_copies)
+                                            mask_config.use,
+                                            object_copies,
+                                            function_name=mask_config.function.__name__
+                                        )
 
             selection_mask = mask_config.function(*mask_args)
             if not isinstance(selection_mask, ak.Array):
@@ -243,8 +246,7 @@ class Analysis:
         )
 
         # Apply argument transformation if provided
-        if transform is not None:
-            correction_args = transform(*correction_args)
+        correction_args = transform(*correction_args)
 
         # Flatten jagged arrays
         flat_args, counts = [], []
@@ -263,12 +265,14 @@ class Analysis:
         if counts:
             correction_values = ak.unflatten(correction_values, counts[0])
 
-        # Apply to target if specified
-            transform = corr.get("transform", lambda *x: x)
+            # Apply to target
             if isinstance(target, list):
                 backend = ak.backend(target[0])
                 correction_values = ak.to_backend(correction_values, backend)
-                return [self._apply_operation(operation, t, correction_values) for t in target]
+                return [
+                    self._apply_operation(operation, target_array, correction_values)
+                    for target_array in target
+                ]
             else:
                 backend = ak.backend(target)
                 correction_values = ak.to_backend(correction_values, backend)
@@ -305,7 +309,6 @@ class Analysis:
         Union[ak.Array, List[ak.Array]]
             Modified array(s)
         """
-        transform = systematic.get("transform", lambda *x: x)
         logger.debug("Applying function-based systematic: %s", syst_name)
         variation = syst_function(*function_args)
 
@@ -352,6 +355,7 @@ class Analysis:
         self,
         arg_spec: List[Tuple[str, Optional[str]]],
         objects: Dict[str, ak.Array],
+        function_name: Optional[str] = "generic_function"
     ) -> List[ak.Array]:
         """
         Prepare function arguments from object dictionary.
@@ -368,18 +372,41 @@ class Analysis:
         List[ak.Array]
             Prepared arguments
         """
+        def raise_error(field_name: str) -> None:
+            """
+            Raise KeyError if object is missing in objects dictionary.
+
+            Parameters
+            ----------
+            field_name : str
+                Missing field name
+            """
+            logger.error(
+                f"Field '{field_name}' needed for {function_name} \
+                  is not found in objects dictionary"
+            )
+            raise KeyError(f"Missing field: {field_name}, function: {function_name}")
+
         args = []
         for obj_name, field_name in arg_spec:
             if field_name:
-                args.append(objects[obj_name][field_name])
+                try:
+                    args.append(objects[obj_name][field_name])
+                except KeyError:
+                    raise_error(f"{obj_name}.{field_name}")
             else:
-                args.append(objects[obj_name])
+                try:
+                    args.append(objects[obj_name])
+                except KeyError:
+                    raise_error(obj_name)
+
         return args
 
     def _get_target_arrays(
         self,
         target_spec: Union[Tuple[str, str], List[Tuple[str, str]]],
         objects: Dict[str, ak.Array],
+        function_name: Optional[str] = "generic_target_function"
     ) -> List[ak.Array]:
         """
         Extract target arrays from object dictionary.
@@ -397,7 +424,20 @@ class Analysis:
             Target arrays
         """
         specs = target_spec if isinstance(target_spec, list) else [target_spec]
-        return [objects[obj][field] for obj, field in specs]
+
+        targets = []
+        for object_name, field_name in specs:
+            try:
+                targets.append(objects[object_name][field_name])
+            except KeyError:
+                logger.error(
+                    f"Field {object_name}.{field_name} needed for {function_name} "
+                    "is not found in objects dictionary"
+                )
+                raise KeyError(f"Missing target field: {object_name}.{field_name}, "
+                               f"function: {function_name}")
+
+        return targets
 
     def _set_target_arrays(
         self,
@@ -447,22 +487,24 @@ class Analysis:
             Corrected objects
         """
         for correction in corrections:
-            if correction["type"] != "object":
+            if correction.type != "object":
                 continue
 
             # Prepare arguments and targets
             args = self._get_function_arguments(
-                correction["use"], object_copies
+                correction.use, object_copies,
+                function_name=f"correction::{correction.name}"
             )
             targets = self._get_target_arrays(
-                correction["target"], object_copies
+                correction.target, object_copies,
+                function_name=f"correction::{correction.name}"
             )
-            operation = correction["op"]
-            transform = correction.get("transform", lambda *x: x)
-            key = correction.get("key")
+            operation = correction.op
+            transform = correction.transform
+            key = correction.key
 
             # Determine direction mapping
-            dir_map = correction.get("up_and_down_idx", ["up", "down"])
+            dir_map = correction.up_and_down_idx
             corr_direction = (
                 dir_map[0] if direction == "up" else dir_map[1]
                 if direction in ["up", "down"] else "nominal"
@@ -471,7 +513,7 @@ class Analysis:
             # Apply correction
             if correction.get("use_correctionlib", False):
                 corrected_values = self.apply_correctionlib(
-                    correction_name=correction["name"],
+                    correction_name=correction.name,
                     correction_key=key,
                     direction=corr_direction,
                     correction_args=args,
@@ -483,7 +525,7 @@ class Analysis:
                 syst_func = correction.get(f"{direction}_function")
                 if syst_func:
                     corrected_values = self.apply_syst_function(
-                        syst_name=correction["name"],
+                        syst_name=correction.name,
                         syst_function=syst_func,
                         function_args=args,
                         affected_arrays=targets,
@@ -494,7 +536,7 @@ class Analysis:
 
             # Update objects
             self._set_target_arrays(
-                correction["target"], object_copies, corrected_values
+                correction.target, object_copies, corrected_values
             )
 
         return object_copies
@@ -525,21 +567,25 @@ class Analysis:
         ak.Array
             Corrected weights
         """
-        if systematic["type"] != "event":
+        if systematic.type != "event":
             return weights
 
         # Prepare arguments
-        args = self._get_function_arguments(systematic["use"], object_copies)
-        operation = systematic["op"]
-        key = systematic.get("key")
-        transform = systematic.get("transform", lambda *x: x)
-        dir_map = systematic.get("up_and_down_idx", ["up", "down"])
+        args = self._get_function_arguments(
+                                        systematic.use,
+                                        object_copies,
+                                        function_name=f"systematic::{systematic.name}"
+                                    )
+        operation = systematic.op
+        key = systematic.key
+        transform = systematic.transform
+        dir_map = systematic.up_and_down_idx
         corr_direction = dir_map[0] if direction == "up" else dir_map[1]
 
         # Apply correction
         if systematic.get("use_correctionlib", False):
             return self.apply_correctionlib(
-                correction_name=systematic["name"],
+                correction_name=systematic.name,
                 correction_key=key,
                 direction=corr_direction,
                 correction_args=args,
@@ -551,7 +597,7 @@ class Analysis:
             syst_func = systematic.get(f"{direction}_function")
             if syst_func:
                 return self.apply_syst_function(
-                    syst_name=systematic["name"],
+                    syst_name=systematic.name,
                     syst_function=syst_func,
                     function_args=args,
                     affected_arrays=weights,
@@ -589,8 +635,10 @@ class Analysis:
                 continue
 
             logger.info("Computing ghost observables: %s", ghost.names)
-            args = self._get_function_arguments(ghost["use"], object_copies)
-            outputs = ghost["function"](*args)
+            args = self._get_function_arguments(ghost.use,
+                                                object_copies,
+                                                function_name=ghost.function.__name__)
+            outputs = ghost.function(*args)
 
             # Normalize outputs to list
             if not isinstance(outputs, (list, tuple)):
@@ -618,13 +666,11 @@ class Analysis:
                 if collection in object_copies:
                     try:
                         object_copies[collection][name] = value
-                    except ValueError as e:
+                    except ValueError as error:
                         logger.exception(
-                            "Failed to add field '%s' to collection '%s'",
-                            name,
-                            collection
+                            f"Failed to add field '{name}' to collection '{collection}'"
                         )
-                        raise e
+                        raise error
                 # Create new collection
                 else:
                     object_copies[collection] = ak.Array({name: value})

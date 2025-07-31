@@ -16,6 +16,11 @@ from utils.systematics import (
     jet_pt_scale
 )
 
+
+# ==============================================================================
+#  Observables Definition
+# ==============================================================================
+
 LIST_OF_VARS = [
                 {
                     "name": "workshop_mtt",
@@ -32,8 +37,11 @@ LIST_OF_VARS = [
                 },
 ]
 
-config = {
-    "general": {
+# ==============================================================================
+#  General Configuration
+# ==============================================================================
+
+general_config = {
         "lumi": 16400,
         "weights_branch": "genWeight",
         "max_files": -1,
@@ -50,8 +58,13 @@ config = {
         "processor": "uproot",
         "lumifile": "./corrections/Cert_271036-284044_13TeV_Legacy2016_Collisions16_JSON.txt",
         "cache_dir": "/tmp/gradients_analysis/",
-    },
-    "preprocess": {
+}
+
+# ==============================================================================
+#  Preprocessing Configuration
+# ==============================================================================
+
+preprocess_config = {
         "branches": {
             "Muon": ["pt", "eta", "phi", "mass", "miniIsoId", "tightId", "charge"],
             "FatJet": ["particleNet_TvsQCD", "pt", "eta", "phi", "mass"],
@@ -66,12 +79,17 @@ config = {
             "event": ["genWeight", "luminosityBlock"],
             "Pileup": ["nTrueInt"],
         },
-    },
-    "jax": {
-        "optimize": True,
+}
+
+# ==============================================================================
+#  JAX / Differentiable Analysis Configuration
+# ==============================================================================
+
+jax_config = {
+        "optimise": True,
         "learning_rate": 0.01, # default learning rate
         "max_iterations": 50,
-        'explicit_optimization': True,
+        'explicit_optimisation': True,
         "soft_selection": {
             "function": Zprime_softcuts_jax_workshop,
             "use": [
@@ -103,15 +121,21 @@ config = {
             'kde_bandwidth': 0.1,
             'nn': 0.0005,
         }
-    },
-    "baseline_selection": {
+}
+
+# ==============================================================================
+#  Baseline Selections & Masks
+# ==============================================================================
+
+baseline_selection_config = {
         "function": Zprime_hardcuts_no_fj,
         "use": [
             ("Muon", None),
             ("Jet", None),
         ],
-    },
-    "good_object_masks": {
+}
+
+good_object_masks_config = {
         "analysis": [
         {
             "object": "Muon",
@@ -149,8 +173,13 @@ config = {
             "use": [("FatJet", None)],
         },
     ],
-    },
-    "channels": [
+}
+
+# ==============================================================================
+#  Analysis Channels
+# ==============================================================================
+
+channels_config = [
         {
             "name": "CMS_WORKSHOP_JAX",
             "fit_observable": "workshop_mtt",
@@ -180,8 +209,13 @@ config = {
             },
             "use_in_diff": False,
         },
-    ],
-    "ghost_observables": [
+]
+
+# ==============================================================================
+#  Ghost Observables
+# ==============================================================================
+
+ghost_observables_config = [
         {
             "names": (
                 "n_jet",
@@ -203,8 +237,13 @@ config = {
             ],
             "works_with_jax": True,
         },
-    ],
-    "mva":[
+]
+
+# ==============================================================================
+#  MVA Configuration
+# ==============================================================================
+
+mva_config = [
         {
             "name": "wjets_vs_ttbar_nn",
             "use_in_diff": True,
@@ -213,6 +252,7 @@ config = {
             "learning_rate": 0.02,
             "validation_split": 0.2,
             "random_state": 42,
+            "batch_size": None,
             "grad_optimisation": {
                 "optimise": False,  # this will add weights to set of optimised parameters
                 "learning_rate": 0.0005,  # learning rate for the MVA optimisation
@@ -271,8 +311,13 @@ config = {
                 }
             ],
         }
-    ],
-    "corrections": [
+]
+
+# ==============================================================================
+#  Corrections & Systematics
+# ==============================================================================
+
+corrections_config = [
         {
             "name": "pu_weight",
             "file": "corrections/puWeights.json.gz",
@@ -293,8 +338,9 @@ config = {
             "op": "mult",
             "up_and_down_idx": ["systup", "systdown"],
         },
-    ],
-    "systematics": [
+]
+
+systematics_config = [
         {
             "name": "jet_pt_resolution",
             "up_function": jet_pt_resolution,
@@ -312,11 +358,21 @@ config = {
             "op": "mult",  # or add or subtract
             "type": "object",
         },
-    ],
-    "statistics": {
+]
+
+# ==============================================================================
+#  Statistics Configuration
+# ==============================================================================
+
+statistics_config = {
         "cabinetry_config": "cabinetry/cabinetry_config.yaml"
-    },
-    "plotting": {
+}
+
+# ==============================================================================
+#  Plotting Configuration
+# ==============================================================================
+
+plotting_config = {
         "output_dir": "plots/",
         "process_colors": {
             "ttbar_semilep": "#907AD6",
@@ -352,7 +408,23 @@ config = {
             }
 
         }
+}
 
+# ==============================================================================
+#  Final Configuration Assembly
+# ==============================================================================
 
-    }
+config = {
+    "general": general_config,
+    "preprocess": preprocess_config,
+    "jax": jax_config,
+    "baseline_selection": baseline_selection_config,
+    "good_object_masks": good_object_masks_config,
+    "channels": channels_config,
+    "ghost_observables": ghost_observables_config,
+    "mva": mva_config,
+    "corrections": corrections_config,
+    "systematics": systematics_config,
+    "statistics": statistics_config,
+    "plotting": plotting_config,
 }

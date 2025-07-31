@@ -503,7 +503,9 @@ class DifferentiableAnalysis(Analysis):
                 return object_copies, events, ak.ones_like(events, dtype=bool)
 
             # Extract arguments used by selection function
-            sel_args = self._get_function_arguments(channel.selection.use, object_copies)
+            sel_args = self._get_function_arguments(channel.selection.use,
+                                                    object_copies,
+                                                    function_name=channel.selection.function.__name__)
             packed = channel.selection.function(*sel_args)
 
             if not isinstance(packed, PackedSelection):
@@ -537,18 +539,19 @@ class DifferentiableAnalysis(Analysis):
 
         # Iterate over all channels defined in configuration
         for channel in self.channels:
-            if not channel.use_in_diff:
-                logger.info(f"Skipping channel {channel.name} in diff analysis")
-                continue
 
-            chname = channel["name"]
+            channel_name = channel.name
+
+            if not channel.use_in_diff:
+                logger.info(f"Skipping channel {channel_name} in diff analysis")
+                continue
 
             # If a subset of channels is requested, skip the rest
-            if (req := self.config.general.channels) and chname not in req:
-                logger.debug(f"Skipping channel {chname} (not in requested channels)")
+            if (req := self.config.general.channels) and channel_name not in req:
+                logger.debug(f"Skipping channel {channel_name} (not in requested channels)")
                 continue
 
-            logger.info(f"Applying selection for {chname} in {process}")
+            logger.info(f"Applying selection for {channel_name} in {process}")
 
             # Run selection and get event-level mask
             _, events_analysis_cpu, mask = apply_selection(
@@ -558,10 +561,10 @@ class DifferentiableAnalysis(Analysis):
             # Count number of events passing selection
             n_events = ak.sum(mask)
             if n_events == 0:
-                logger.warning(f"No events left in {chname} for {process} after selection")
+                logger.warning(f"No events left in {channel_name} for {process} after selection")
                 continue
 
-            logger.info(f"Events in {chname}: before={len(mask)}, after={n_events}")
+            logger.info(f"Events in {channel_name}: before={len(mask)}, after={n_events}")
 
             # Apply mask to objects and events for both branches
             obj_analysis = {k: v[mask] for k, v in object_copies_analysis.items()}
@@ -570,7 +573,7 @@ class DifferentiableAnalysis(Analysis):
             evt_mva = events_mva[mask]
 
             # Save results to output structure
-            per_channel[chname] = {
+            per_channel[channel_name] = {
                 "objects": obj_analysis,
                 "events": evt_analysis,
                 "nevents": n_events,
@@ -697,7 +700,8 @@ class DifferentiableAnalysis(Analysis):
 
             # Apply baseline selection mask
             baseline_args = self._get_function_arguments(
-                self.config.baseline_selection["use"], obj_copies
+                self.config.baseline_selection["use"], obj_copies,
+                function_name=self.config.baseline_selection["function"].__name__
             )
             packed = self.config.baseline_selection["function"](*baseline_args)
             mask = ak.Array(packed.all(packed.names[-1]))
@@ -749,13 +753,13 @@ class DifferentiableAnalysis(Analysis):
         if self.config.general.run_systematics:
             logger.info("Processing systematic variations...")
             for syst in self.systematics + self.corrections:
-                if syst["name"] == "nominal":
+                if syst.name == "nominal":
                     continue
 
-                logger.info(f"Processing {syst['name']} systematics")
+                logger.info(f"Processing {syst.name} systematics")
                 for direction in ["up", "down"]:
-                    varname = f"{syst['name']}_{direction}"
-                    logger.debug(f"Processing variation: {varname}")
+                    variation_name = f"{syst.name}_{direction}"
+                    logger.debug(f"Processing variation: {variation_name}")
 
                     # Apply systematic correction to object copies
                     obj_copies_corrected_analysis = self.apply_object_corrections(
@@ -772,12 +776,12 @@ class DifferentiableAnalysis(Analysis):
                         obj_copies_corrected_mva,
                         events[mask_mva],
                         process,
-                        varname,
+                        variation_name,
                     )
                     channels_data["__presel"]["nevents"] = ak.sum(mask_analysis)
                     channels_data["__presel"]["mva_nevents"] = ak.sum(mask_mva)
-                    processed_data[varname] = channels_data
-                    logger.info(f"Prepared channel data for {varname}")
+                    processed_data[variation_name] = channels_data
+                    logger.info(f"Prepared channel data for {variation_name}")
 
         return processed_data
 
@@ -837,19 +841,19 @@ class DifferentiableAnalysis(Analysis):
                 logger.info(f"Skipping channel {channel.name} (use_in_diff=False)")
                 continue
 
-            chname = channel["name"]
+            channel_name = channel.name
 
             # Skip if channel is not listed in requested channels
-            if (req := self.config.general.channels) and chname not in req:
-                logger.debug(f"Skipping channel {chname} (not in requested channels)")
+            if (req := self.config.general.channels) and channel_name not in req:
+                logger.debug(f"Skipping channel {channel_name} (not in requested channels)")
                 continue
 
-            logger.debug(f"Processing channel: {chname}")
+            logger.debug(f"Processing channel: {channel_name}")
 
             # Extract object and event data for this channel
-            obj_copies_ch = processed_data[chname]["objects"]
-            events_ch = processed_data[chname]["events"]
-            nevents = processed_data[chname]["nevents"]
+            obj_copies_ch = processed_data[channel_name]["objects"]
+            events_ch = processed_data[channel_name]["events"]
+            nevents = processed_data[channel_name]["nevents"]
 
             # Compute MVA features for this channel
             for mva_name, mva_instance in mva_instances.items():
@@ -865,11 +869,12 @@ class DifferentiableAnalysis(Analysis):
             # Move data to JAX backend
             obj_copies_ch = recursive_to_backend(obj_copies_ch, "jax")
             events_ch = recursive_to_backend(events_ch, "jax")
-            logger.debug(f"Channel {chname} has {nevents} events")
+            logger.debug(f"Channel {channel_name} has {nevents} events")
 
             # Compute differentiable selection weights using soft cut function
             diff_args = self._get_function_arguments(
-                jax_config.soft_selection.use, obj_copies_ch
+                jax_config.soft_selection.use, obj_copies_ch,
+                function_name=jax_config.soft_selection.function.__name__
             )
             diff_weights = jax_config.soft_selection.function(*diff_args, params)
             logger.debug("Computed differentiable weights")
@@ -887,16 +892,16 @@ class DifferentiableAnalysis(Analysis):
                 weights = self.apply_event_weight_correction(
                     weights, event_syst, direction, obj_copies_ch
                 )
-                logger.debug(f"Applied {event_syst['name']} {direction} correction")
+                logger.debug(f"Applied {event_syst.name} {direction} correction")
 
             weights = jnp.asarray(ak.to_jax(weights))
             logger.info(
-                f"Events in {chname}: raw={nevents}, weighted={ak.sum(weights):.2f}"
+                f"Events in {channel_name}: raw={nevents}, weighted={ak.sum(weights):.2f}"
             )
 
             # Loop over observables and compute KDE-based histograms
-            for observable in channel["observables"]:
-                obs_name = observable["name"]
+            for observable in channel.observables:
+                obs_name = observable.name
 
                 # Skip observables that are not JAX-compatible
                 if not observable.works_with_jax:
@@ -906,12 +911,17 @@ class DifferentiableAnalysis(Analysis):
                 logger.info(f"Processing observable: {obs_name}")
 
                 # Evaluate observable function
-                obs_args = self._get_function_arguments(observable["use"], obj_copies_ch)
-                values = jnp.asarray(ak.to_jax(observable["function"](*obs_args)))
+                obs_args = self._get_function_arguments(
+                                            observable.use,
+                                            obj_copies_ch,
+                                            function_name=observable.function.__name__
+                            )
+
+                values = jnp.asarray(ak.to_jax(observable.function(*obs_args)))
                 logger.debug(f"Computed {obs_name} values")
 
                 # Parse binning specification
-                binning = observable["binning"]
+                binning = observable.binning
                 if isinstance(binning, str):
                     low, high, nbins = map(float, binning.split(","))
                     binning = jnp.linspace(low, high, int(nbins))
@@ -934,8 +944,8 @@ class DifferentiableAnalysis(Analysis):
                 histogram = jnp.sum(bin_weights, axis=1)
 
                 # Store histogram and binning
-                histograms[chname][obs_name] = (jnp.asarray(histogram), binning)
-                logger.info(f"Filled histogram for {obs_name} in {chname}")
+                histograms[channel_name][obs_name] = (jnp.asarray(histogram), binning)
+                logger.info(f"Filled histogram for {obs_name} in {channel_name}")
 
         return histograms
 
@@ -999,24 +1009,24 @@ class DifferentiableAnalysis(Analysis):
         if self.config.general.run_systematics:
             logger.info(f"Processing systematics for {process}")
             for syst in self.systematics + self.corrections:
-                if syst["name"] == "nominal":
+                if syst.name == "nominal":
                     continue
 
                 for direction in ["up", "down"]:
-                    varname = f"{syst['name']}_{direction}"
-                    logger.info(f"Processing {varname} for {process}")
+                    variation_name = f"{syst.name}_{direction}"
+                    logger.info(f"Processing {variation_name} for {process}")
 
                     histograms = self._histogramming(
-                        processed_data[varname],
+                        processed_data[variation_name],
                         processed_data["mva_nets"],
                         process,
-                        varname,
+                        variation_name,
                         xsec_weight,
                         params,
                         event_syst=syst,
                         direction=direction,
                     )
-                    all_histograms[varname] = histograms
+                    all_histograms[variation_name] = histograms
 
         return all_histograms
 
@@ -1077,7 +1087,7 @@ class DifferentiableAnalysis(Analysis):
         params : dict
             Dictionary of model parameters containing:
             - 'aux': Auxiliary parameters (e.g. selection thresholds, nuisance parameters)
-            - 'fit': Fit parameters for statistical inference (e.g. normalization factors)
+            - 'fit': Fit parameters for statistical inference (e.g. normalisation factors)
         processed_data_events : dict
             Nested dictionary containing preprocessed events produced by `run_analysis_processing`.
             Structure:
@@ -1567,8 +1577,8 @@ class DifferentiableAnalysis(Analysis):
         histograms = results["histograms"]
 
         # Generate optimisation progress plots
-# Updated optimization history plots
-        if self.config.jax.explicit_optimization:
+# Updated optimisation history plots
+        if self.config.jax.explicit_optimisation:
             lrs = self.config.jax.learning_rates or {k: self.config.jax.learning_rate for k in final_params["aux"]}
             plot_pvalue_vs_parameters(
                 pvalue_history=pval_history,
@@ -1598,7 +1608,10 @@ class DifferentiableAnalysis(Analysis):
             for channel_data in channel_data_list:
                 channel_cfg = next(c for c in self.config.channels if c.name == channel_data.name)
                 fit_obs = channel_cfg.fit_observable
-                obs_label = next(o["label"] for o in channel_cfg["observables"] if o["name"] == fit_obs)
+                obs_label = next(observable.label
+                                 for observable in channel_cfg.observables
+                                 if observable.name == fit_obs
+                                )
                 fig = create_cms_histogram(
                     bin_edges=channel_data.bin_edges,
                     data=channel_data.observed_counts,

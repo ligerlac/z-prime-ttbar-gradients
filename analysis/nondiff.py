@@ -88,16 +88,16 @@ class NonDiffAnalysis(Analysis):
         """
         histograms = defaultdict(dict)
         for channel in self.channels:
-            chname = channel.name
+            channel_name = channel.name
             if (req_channels := self.config.general.channels) is not None:
-                if chname not in req_channels:
+                if channel_name not in req_channels:
                     continue
 
-            for observable in channel["observables"]:
+            for observable in channel.observables:
 
-                observable_label = observable["label"]
-                observable_binning = observable["binning"]
-                observable_name = observable["name"]
+                observable_label = observable.label
+                observable_binning = observable.binning
+                observable_name = observable.name
 
                 if isinstance(observable_binning, str):
                     low, high, nbins = map(
@@ -117,7 +117,7 @@ class NonDiffAnalysis(Analysis):
                         label=observable_label,
                     )
 
-                histograms[chname][observable_name] = hist.Hist(
+                histograms[channel_name][observable_name] = hist.Hist(
                     axis,
                     hist.axis.StrCategory([], name="process", growth=True),
                     hist.axis.StrCategory([], name="variation", growth=True),
@@ -168,18 +168,19 @@ class NonDiffAnalysis(Analysis):
             return
 
         for channel in self.channels:
-            chname = channel["name"]
+            channel_name = channel.name
             if (req_channels := self.config.general.channels) is not None:
-                if chname not in req_channels:
+                if channel_name not in req_channels:
                     continue
             logger.info(
-                f"Applying selection for {chname} in {process}")
+                f"Applying selection for {channel_name} in {process}")
             mask = 1
             if (
                 selection_funciton := channel.selection.function
             ) is not None:
                 selection_args = self._get_function_arguments(
-                    channel.selection.use, object_copies
+                    channel.selection.use, object_copies,
+                    function_name=channel.selection.function.__name__
                 )
                 packed_selection = selection_funciton(*selection_args)
                 if not isinstance(packed_selection, PackedSelection):
@@ -199,7 +200,7 @@ class NonDiffAnalysis(Analysis):
 
             if ak.sum(mask) == 0:
                 logger.warning(
-                    f"{analysis}:: No events left in {chname} for {process} with "
+                    f"{analysis}:: No events left in {channel_name} for {process} with "
                     + "variation {variation}"
                 )
                 continue
@@ -223,16 +224,17 @@ class NonDiffAnalysis(Analysis):
                     weights, event_syst, direction, object_copies_channel
                 )
 
-            logger.info(f"Number of weighted events in {chname}: {ak.sum(weights):.2f}")
-            logger.info(f"Number of raw events in {chname}: {ak.sum(mask)}")
-            for observable in channel["observables"]:
-                logger.info(f"Computing observable {observable['name']}")
-                observable_name = observable["name"]
+            logger.info(f"Number of weighted events in {channel_name}: {ak.sum(weights):.2f}")
+            logger.info(f"Number of raw events in {channel_name}: {ak.sum(mask)}")
+            for observable in channel.observables:
+                observable_name = observable.name
+                logger.info(f"Computing observable {observable_name}")
                 observable_args = self._get_function_arguments(
-                    observable["use"], object_copies_channel
+                    observable.use, object_copies_channel,
+                    function_name=observable.function.__name__
                 )
-                observable_vals = observable["function"](*observable_args)
-                self.nD_hists_per_region[chname][observable_name].fill(
+                observable_vals = observable.function(*observable_args)
+                self.nD_hists_per_region[channel_name][observable_name].fill(
                     observable=observable_vals,
                     process=process,
                     variation=variation,
@@ -266,7 +268,7 @@ class NonDiffAnalysis(Analysis):
         xsec = metadata["xsec"]
         n_gen = metadata["nevts"]
 
-        lumi = self.config["general"]["lumi"]
+        lumi = self.config.general.lumi
         xsec_weight = (xsec * lumi / n_gen) if process != "data" else 1.0
 
         # Nominal processing
@@ -276,10 +278,11 @@ class NonDiffAnalysis(Analysis):
 
         # Apply baseline selection
         baseline_args = self._get_function_arguments(
-            self.config.baseline_selection["use"], obj_copies
+            self.config.baseline_selection.use, obj_copies,
+            function_name=self.config.baseline_selection.function.__name__
         )
 
-        packed_selection = self.config.baseline_selection["function"](
+        packed_selection = self.config.baseline_selection.function(
             *baseline_args
         )
         mask = ak.Array(packed_selection.all(packed_selection.names[-1]))
@@ -311,7 +314,7 @@ class NonDiffAnalysis(Analysis):
         if self.config.general.run_systematics:
             # Systematic variations
             for syst in self.systematics + self.corrections:
-                if syst["name"] == "nominal":
+                if syst.name == "nominal":
                     continue
                 for direction in ["up", "down"]:
                     # Filter objects
@@ -321,7 +324,7 @@ class NonDiffAnalysis(Analysis):
                     obj_copies_corrected = self.apply_object_corrections(
                         obj_copies, [syst], direction=direction
                     )
-                    varname = f"{syst['name']}_{direction}"
+                    varname = f"{syst.name}_{direction}"
                     self.histogramming(
                         obj_copies_corrected,
                         events,
