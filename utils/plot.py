@@ -1,4 +1,5 @@
 import math
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import jax
@@ -39,7 +40,7 @@ def format_scientific_latex(value: float, significant_digits: int = 2) -> str:
     Examples
     --------
     >>> format_scientific_latex(2.487e-5)
-    '2.487\\\\times10^{-5}'
+    '2.487\times10^{-5}'
     """
     formatted = f"{value:.{significant_digits}e}"
     mantissa, exponent_part = formatted.split("e")
@@ -512,3 +513,161 @@ def plot_parameters_over_iterations(
     plt.tight_layout()
     fig.savefig(filename, dpi=300, bbox_inches="tight")
     plt.close(fig)
+
+
+def plot_mva_feature_distributions(
+    feature_data: Dict[str, Dict[str, ArrayLike]],
+    mva_config: Dict[str, Any],
+    plot_config: Dict[str, Any],
+    output_dir: str,
+    title: str = "MVA Feature Distributions",
+    file_name: str = "mva_feature_dist",
+) -> None:
+    """
+    Plot distributions of MVA input features for different processes.
+
+    Parameters
+    ----------
+    feature_data : Dict[str, Dict[str, ArrayLike]]
+        Nested dictionary mapping process name to feature name to data array.
+        Example: {"ttbar": {"n_jet": [1,2,3]}, "wjets": {"n_jet": [4,5,6]}}
+    mva_config : Dict[str, Any]
+        Configuration for the MVA model, containing feature definitions.
+    plot_config : Dict[str, Any]
+        Plotting configuration with colors, labels, and process order.
+    output_dir : str
+        Directory to save the plots.
+    title : str, optional
+        Title prefix for the plot, by default "MVA Feature Distributions".
+    file_name : str, optional
+        File name prefix for the plot, by default "mva_feature_dist".
+    """
+    output_path = Path(output_dir) / "mva" / "features"
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    process_colors = plot_config.get("process_colors", {})
+    process_labels = plot_config.get("process_labels", {})
+    process_order = plot_config.get("process_order", list(feature_data.keys()))
+
+    for feature in mva_config.get("features", []):
+        feature_name = feature["name"]
+        feature_label = feature.get("label", feature_name)
+        binning_str = feature.get("binning")
+
+        if binning_str:
+            parts = binning_str.split(',')
+            bins = np.linspace(float(parts[1]), float(parts[2]), int(parts[0]) + 1)
+        else:
+            # Determine binning from data if not specified
+            all_values = np.concatenate([data[feature_name] for proc, data in feature_data.items() if feature_name in data])
+            bins = np.linspace(np.min(all_values), np.max(all_values), 50)
+
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+        hep.style.use("CMS")
+
+        for process_name in process_order:
+            if process_name not in feature_data or feature_name not in feature_data[process_name]:
+                continue
+
+            values = convert_to_numpy(feature_data[process_name][feature_name])
+
+            ax.hist(
+                values,
+                bins=bins,
+                color=process_colors.get(process_name, "gray"),
+                label=process_labels.get(process_name, process_name),
+                alpha=0.7,
+                density=True,
+                histtype="stepfilled",
+                linewidth=1.5,
+            )
+
+        ax.set_title(f"{title} - {feature_label}")
+        ax.set_xlabel(feature_label, fontsize=14)
+        ax.set_ylabel("a.u.", fontsize=14)
+        ax.legend(frameon=False, fontsize=12)
+        ax.tick_params(axis="both", labelsize=12)
+        fig.tight_layout()
+
+        plot_filename = output_path / f"{file_name}_{feature_name}.pdf"
+        fig.savefig(plot_filename)
+        plt.close(fig)
+        print(f"Saved MVA feature plot to {plot_filename}")
+
+
+def plot_mva_scores(
+    scores: Dict[str, ArrayLike],
+    plot_config: Dict[str, Any],
+    output_dir: str,
+    file_name: str = "mva_scores.pdf",
+    title: str = "MVA Scores",
+    bins: int = 50,
+    score_range: Tuple[float, float] = (0, 1),
+) -> None:
+    """
+    Plot MVA scores for different processes.
+
+    Parameters
+    ----------
+    scores : Dict[str, ArrayLike]
+        Dictionary mapping process name to an array of MVA scores.
+    plot_config : Dict[str, Any]
+        Plotting configuration with colors, labels, and process order.
+    output_dir : str
+        Directory to save the plot.
+    file_name : str, optional
+        Name for the output plot file, by default "mva_scores.pdf".
+    title : str, optional
+        Title for the plot, by default "MVA Scores".
+    bins : int, optional
+        Number of bins for the histogram, by default 50.
+    score_range : Tuple[float, float], optional
+        The range of scores to plot, by default (0, 1).
+    """
+    output_path = Path(output_dir) / "mva"
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    process_colors = plot_config.get("process_colors", {})
+    process_labels = plot_config.get("process_labels", {})
+    process_order = plot_config.get("process_order", list(scores.keys()))
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    hep.style.use("CMS")
+
+    bin_edges = np.linspace(score_range[0], score_range[1], bins + 1)
+    max_height = 0
+
+    for process_name in process_order:
+        if process_name not in scores:
+            continue
+
+        process_scores = convert_to_numpy(scores[process_name])
+        counts, _ = np.histogram(process_scores, bins=bin_edges, density=True)
+        if len(counts) > 0:
+            max_height = max(max_height, counts.max())
+
+        hep.histplot(
+            process_scores,
+            bins=bin_edges,
+            ax=ax,
+            color=process_colors.get(process_name, "gray"),
+            label=process_labels.get(process_name, process_name),
+            alpha=0.7,
+            density=True,
+            histtype="stepfilled",
+            linewidth=1.5,
+        )
+
+    ax.set_title(title, fontsize=16, loc="left")
+    ax.set_xlabel("MVA Score", fontsize=14)
+    ax.set_ylabel("a.u.", fontsize=14)
+    ax.set_ylim(0, max_height * 1.15)
+    ax.legend(frameon=False, fontsize=12)
+    ax.tick_params(axis="both", labelsize=12)
+    fig.tight_layout()
+
+    plot_filename = output_path / file_name
+    fig.savefig(plot_filename)
+    plt.close(fig)
+    print(f"Saved MVA score plot to {plot_filename}")

@@ -1,14 +1,33 @@
 import logging
 
+# ANSI escape codes for colors
+BLUE = "\033[0;34m"
+YELLOW = "\033[1;33m"
+RED = "\033[0;31m"
+MAGENTA = "\033[95m"
+RESET = "\033[0m"
+
+def _banner(text: str) -> str:
+    """
+    Creates a magenta-colored banner for logging.
+
+    Parameters
+    ----------
+    text : str
+        The text to display in the banner.
+    Returns
+    -------
+    str
+        A formatted string with ANSI escape codes for coloring.
+    """
+    return (
+        f"\n{MAGENTA}\n{'=' * 80}\n"
+        f"{' ' * ((80 - len(text)) // 2)}{text.upper()}\n"
+        f"{'=' * 80}{RESET}"
+    )
 
 class ColoredFormatter(logging.Formatter):
     """A custom logging formatter that adds colors based on log level."""
-
-    # ANSI escape codes for colors
-    BLUE = "\033[0;34m"
-    YELLOW = "\033[1;33m"
-    RED = "\033[0;31m"
-    RESET = "\033[0m"
 
     # The format string for the log message
     log_format_prefix = "[%(levelname)s:%(name)s:%(funcName)s:L.%(lineno)d] "

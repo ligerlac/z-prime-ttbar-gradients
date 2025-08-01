@@ -42,9 +42,15 @@ from utils.jax_stats import (
     compute_discovery_pvalue,
     build_channel_data_scalar
 )
+from utils.logging import _banner, RED, GREEN, BLUE, RESET
 from utils.plot import (create_cms_histogram,
                         plot_parameters_over_iterations,
-                        plot_pvalue_vs_parameters)
+                        plot_pvalue_vs_parameters,
+                        #plot_mva_scores,
+                        #plot_mva_feature_distributions)
+)
+from utils.tools import (nested_defaultdict_to_dict, recursive_to_backend)
+
 
 # =============================================================================
 # Backend & Logging Setup
@@ -58,24 +64,11 @@ logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 NanoAODSchema.warn_missing_crossrefs = False
 warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
 
-GREEN = "\033[92m"
-BLUE = "\033[94m"
-RED = "\033[91m"
-RESET = "\033[0m"
-MAGENTA = "\033[95m"
+
 
 # -----------------------------------------------------------------------------
 # Utility functions
 # -----------------------------------------------------------------------------
-def _banner(text: str) -> str:
-    """Creates a magenta-colored banner for logging."""
-    return (
-        f"\n{MAGENTA}\n{'=' * 80}\n"
-        f"{' ' * ((80 - len(text)) // 2)}{text.upper()}\n"
-        f"{'=' * 80}{RESET}"
-    )
-
-
 def merge_histograms(
     existing_histograms: dict[str, dict[str, dict[str, jnp.ndarray]]],
     new_histograms: dict[str, dict[str, dict[str, jnp.ndarray]]],
@@ -111,36 +104,6 @@ def merge_histograms(
     return existing_histograms
 
 
-def recursive_to_backend(data_structure: Any, backend: str = "jax") -> Any:
-    """
-    Recursively convert all Awkward Arrays in a data structure to the specified backend.
-
-    Parameters
-    ----------
-    data_structure : Any
-        Input data structure possibly containing Awkward Arrays.
-    backend : str
-        Target backend to convert arrays to (e.g. 'jax', 'cpu').
-
-    Returns
-    -------
-    Any
-        Data structure with Awkward Arrays converted to the desired backend.
-    """
-    if isinstance(data_structure, ak.Array):
-        # Convert only if not already on the target backend
-        return ak.to_backend(data_structure, backend) if ak.backend(data_structure) != backend else data_structure
-    elif isinstance(data_structure, Mapping):
-        # Recurse into dictionary values
-        return {key: recursive_to_backend(value, backend) for key, value in data_structure.items()}
-    elif isinstance(data_structure, Sequence) and not isinstance(data_structure, (str, bytes)):
-        # Recurse into list or tuple elements
-        return [recursive_to_backend(value, backend) for value in data_structure]
-    else:
-        # Leave unchanged if not an Awkward structure
-        return data_structure
-
-
 def infer_processes_and_systematics(
     fileset: dict[str, dict[str, Any]],
     systematics_config: list[dict[str, Any]],
@@ -174,27 +137,6 @@ def infer_processes_and_systematics(
     systematic_names = {syst["name"] for syst in systematics_config + corrections_config}
 
     return sorted(process_names), sorted(systematic_names)
-
-
-def nested_defaultdict_to_dict(nested_structure: Any) -> dict:
-    """
-    Recursively convert any nested defaultdicts into standard Python dictionaries.
-
-    Parameters
-    ----------
-    nested_structure : Any
-        A nested structure possibly containing defaultdicts.
-
-    Returns
-    -------
-    dict
-        Fully converted structure using built-in dict.
-    """
-    if isinstance(nested_structure, defaultdict):
-        return {key: nested_defaultdict_to_dict(value) for key, value in nested_structure.items()}
-    elif isinstance(nested_structure, dict):
-        return {key: nested_defaultdict_to_dict(value) for key, value in nested_structure.items()}
-    return nested_structure
 
 def _log_parameter_update(
     step: Union[int, str],
@@ -415,7 +357,19 @@ def make_lr_and_clamp_transform(
     }
 
     def make_label_pytree(parameter_tree: dict) -> dict:
-        """Create a label tree assigning each parameter to a named sub-transform."""
+        """
+        Create a label tree assigning each parameter to a named sub-transform.
+
+        Parameters
+        -----------
+        parameter_tree : dict
+            Nested dictionary of parameters with keys "aux" and "fit".
+
+        Returns
+        --------
+        dict
+            A tree structure mapping each parameter to its corresponding label.
+        """
         label_tree = {"aux": {}, "fit": {}}
 
         for param_name in parameter_tree["aux"]:
@@ -439,7 +393,24 @@ def make_lr_and_clamp_transform(
 
         return label_tree
 
-    def optimiser_builder(initial_params: dict) -> tuple[optax.GradientTransformation, dict]:
+    def optimiser_builder(
+            initial_params: dict
+    ) -> tuple[optax.GradientTransformation, dict]:
+        """
+        Build the optimiser with learning rate scheduling and clamping.
+
+        Parameters
+        ----------
+        initial_params : dict
+            Initial parameter values to determine the label mapping.
+
+        Returns
+        -------
+        tuple
+            A tuple containing:
+            - An Optax transformation that applies learning rates and clamps parameters.
+            - A mapping of parameter names to their optimiser labels.
+        """
         # Map each parameter to its optimiser label
         label_mapping = make_label_pytree(initial_params)
         # Chain the learning rate transform with clamping logic
@@ -536,6 +507,10 @@ class DifferentiableAnalysis(Analysis):
         fit_plots = self.dirs["output"] / "plots" / "fit"
         fit_plots.mkdir(parents=True, exist_ok=True)
 
+        # Directory for MVA plots (subdirectories created during plotting)
+        mva_plots = self.dirs["output"] / "mva_plots"
+        mva_plots.mkdir(parents=True, exist_ok=True)
+
         # Register the created paths in the analysis directory registry
         self.dirs.update({
             "cache":       cache,
@@ -543,6 +518,7 @@ class DifferentiableAnalysis(Analysis):
             "mva_models":  mva,
             "optimisation_plots": optimisation_plots,
             "fit_plots": fit_plots,
+            "mva_plots": mva_plots,
         })
 
     def _log_config_summary(self, fileset: dict[str, Any]):
@@ -804,6 +780,8 @@ class DifferentiableAnalysis(Analysis):
         nets = {}
 
         for mva_cfg in self.config.mva:
+            logger.info(f"Training MVA '{mva_cfg.name}'...")
+
             # JAX-based model
             if mva_cfg.framework == "jax":
                 net = JAXNetwork(mva_cfg)
@@ -814,6 +792,7 @@ class DifferentiableAnalysis(Analysis):
                 params = net.train(Xtr, ytr, Xvl, yvl)
                 trained[mva_cfg.name] = params
                 nets[mva_cfg.name] = net
+
 
             # TensorFlow-based model
             else:
@@ -1570,6 +1549,7 @@ class DifferentiableAnalysis(Analysis):
             logger.info(_banner("Executing MVA Pre-training"))
             models, nets = self._run_mva_training(mva_data)
 
+
             # Save trained models and attach to processed data
             for model_name in models.keys():
                 model = models[model_name]
@@ -1912,5 +1892,6 @@ class DifferentiableAnalysis(Analysis):
         make_pre_and_post_fit_plots(histograms, "postopt_postfit", mle_pars)
         make_pre_and_post_fit_plots(initial_histograms, "preopt_postfit", mle_pars)
         make_pre_and_post_fit_plots(initial_histograms, "preopt_prefit", all_parameters["fit"])
+
 
         return histograms, final_pval
