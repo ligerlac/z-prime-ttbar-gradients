@@ -287,16 +287,19 @@ def _log_parameter_update(
         table_data.append(row)
 
     if isinstance(step, int):
-        header = f"Step {step:3d}"
+        header = f"STEP {step:3d}"
     else:
-        header = f"State: {step}"
+        if step != "":
+            header = f"STATE: {step}"
+        else:
+            header = ""
 
     if not table_data:
         logger.info(f"\n{header}\n{p_value_table}\n(No parameters to log)")
         return
 
     table_str = tabulate(table_data, headers=headers, tablefmt="grid")
-    logger.info(f"\n{header}\n{p_value_table}\n{table_str}")
+    logger.info(f"\n{header}\n{p_value_table}\n{table_str}\n")
 
 # -----------------------------------------------------------------------------
 # Optimisation helper functions
@@ -552,8 +555,6 @@ class DifferentiableAnalysis(Analysis):
             ["Output Directory", general_cfg.output_dir],
             ["Max Files per Sample", "All" if general_cfg.max_files == -1 else general_cfg.max_files],
             ["Run Preprocessing", general_cfg.run_preprocessing],
-            ["Run Histogramming", general_cfg.run_histogramming],
-            ["Run Statistics", general_cfg.run_statistics],
             ["Run MVA Pre-training", general_cfg.run_mva_training],
             ["Run Systematics", general_cfg.run_systematics],
             ["Run Plots Only", general_cfg.run_plots_only],
@@ -561,9 +562,13 @@ class DifferentiableAnalysis(Analysis):
         ]
         logger.info("General Settings:\n" + tabulate(general_data, tablefmt="grid", stralign="left"))
 
-        if not self.config.jax:
-            logger.warning("No JAX configuration block found.")
-            return
+        # --- Channels ---
+        channel_data = []
+        for ch in self.config.channels:
+            if ch.use_in_diff:
+                channel_data.append([ch.name, ch.fit_observable])
+        if channel_data:
+            logger.info("Differentiable Channels:\n" + tabulate(channel_data, headers=["Name", "Fit Observable"], tablefmt="grid"))
 
         # --- Processes ---
         processes = sorted(list({content["metadata"]["process"] for content in fileset.values()}))
@@ -572,8 +577,21 @@ class DifferentiableAnalysis(Analysis):
         processes_data = [[p] for p in processes]
         logger.info("Processes Included:\n" + tabulate(processes_data, headers=["Process"], tablefmt="grid"))
 
-        jax_cfg = self.config.jax
+        # --- Systematics ---
+        if self.config.general.run_systematics:
+            syst_data = []
+            all_systs = self.config.systematics + self.config.corrections
+            for syst in all_systs:
+                if syst.name != "nominal":
+                    syst_data.append([syst.name, syst.type])
+            if syst_data:
+                logger.info("Systematics Enabled:\n" + tabulate(syst_data, headers=["Systematic", "Type"], tablefmt="grid"))
 
+        if not self.config.jax:
+            logger.warning("No JAX configuration block found.")
+            return
+
+        jax_cfg = self.config.jax
         # --- Optimisation Settings ---
         jax_data = [
             ["Run Optimisation", jax_cfg.optimise],
@@ -615,25 +633,6 @@ class DifferentiableAnalysis(Analysis):
                     mva.grad_optimisation.learning_rate if mva.grad_optimisation.optimise else "N/A"
                 ])
             logger.info("MVA Models:\n" + tabulate(mva_data, headers=headers, tablefmt="grid"))
-
-        # --- Channels ---
-        channel_data = []
-        for ch in self.config.channels:
-            if ch.use_in_diff:
-                channel_data.append([ch.name, ch.fit_observable])
-        if channel_data:
-            logger.info("Differentiable Channels:\n" + tabulate(channel_data, headers=["Name", "Fit Observable"], tablefmt="grid"))
-
-        # --- Systematics ---
-        if self.config.general.run_systematics:
-            syst_data = []
-            all_systs = self.config.systematics + self.config.corrections
-            for syst in all_systs:
-                if syst.name != "nominal":
-                    syst_data.append([syst.name, syst.type])
-            if syst_data:
-                logger.info("Systematics Enabled:\n" + tabulate(syst_data, headers=["Systematic", "Type"], tablefmt="grid"))
-
 
     # -------------------------------------------------------------------------
     # Data categorisation (channels)
@@ -1361,7 +1360,7 @@ class DifferentiableAnalysis(Analysis):
         # Compute statistical p-value from histograms
         # -------------------------------------------------------------------------
         info_logger(" ✅ Histogram collection complete. Starting p-value calculation...")
-        pvalue, mle_params = self._calculate_pvalue(histograms_by_process, params["fit"])
+        pvalue, mle_params = self._calculate_pvalue(histograms_by_process, params["fit"], silent=silent)
 
         # Store histograms for later plotting or debugging
         self._set_histograms(histograms_by_process)
@@ -1802,7 +1801,7 @@ class DifferentiableAnalysis(Analysis):
             # Log final summary table comparing initial and final states
             logger.info(_banner("Optimisation results"))
             _log_parameter_update(
-                step="Final Summary",
+                step="",
                 old_p_value=float(initial_pvalue),
                 new_p_value=float(final_pval),
                 old_params=all_parameters,
