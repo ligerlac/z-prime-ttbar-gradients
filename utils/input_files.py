@@ -3,6 +3,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Union
 
+from tabulate import tabulate
+
 defaul_dataset_json = Path("datasets/nanoaods.json")
 
 # Configure module-level logger
@@ -131,7 +133,22 @@ def construct_fileset(
 
             logger.debug(f"Added fileset entry: {key} with {len(file_map)} files")
 
-    logger.info(f"Constructed fileset with {len(fileset)} entries")
+    logger.info(f"Constructed fileset with {len(fileset)} entries.")
+
+    # --- Add summary table ---
+    summary_data = []
+    headers = ["Key", "Process", "Variation", "# Files"]
+    for key, content in fileset.items():
+        process = content["metadata"]["process"]
+        variation = content["metadata"]["variation"]
+        num_files = len(content["files"])
+        summary_data.append([key, process, variation, num_files])
+
+    # Sort by key for consistent output
+    summary_data.sort(key=lambda x: x[0])
+
+    logger.info("Fileset Summary:\n" + tabulate(summary_data, headers=headers, tablefmt="grid"))
+
     return fileset
 
 # End of module

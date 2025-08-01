@@ -11,17 +11,23 @@ class ColoredFormatter(logging.Formatter):
     RESET = "\033[0m"
 
     # The format string for the log message
-    log_format = "[%(levelname)s:%(name)s:%(funcName)s:Line %(lineno)d] %(message)s"
+    log_format_prefix = "[%(levelname)s:%(name)s:%(funcName)s:L.%(lineno)d] "
 
     # A dictionary to map log levels to colors
-    FORMATS = {
-        logging.INFO: BLUE + log_format + RESET,
-        logging.WARNING: YELLOW + log_format + RESET,
-        logging.ERROR: RED + log_format + RESET,
-        logging.CRITICAL: RED + log_format + RESET,
+    PREFIX_COLORS = {
+        logging.INFO: BLUE,
+        logging.WARNING: YELLOW,
+        logging.ERROR: RED,
+        logging.CRITICAL: RED,
     }
 
     def format(self, record):
-        log_fmt = self.FORMATS.get(record.levelno, self.log_format)
-        formatter = logging.Formatter(log_fmt)
-        return formatter.format(record)
+        # Get the color for the current log level's prefix
+        color = self.PREFIX_COLORS.get(record.levelno, "")
+        prefix_formatter = logging.Formatter(self.log_format_prefix)
+        prefix = prefix_formatter.format(record)
+        colored_prefix = f"{color}{prefix}{self.RESET}"
+
+        # The message itself might have its own colors, which will be preserved.
+        message = record.getMessage().lstrip('\n')
+        return f"{colored_prefix}{message}"

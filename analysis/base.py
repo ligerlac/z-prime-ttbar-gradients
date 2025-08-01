@@ -630,7 +630,7 @@ class Analysis:
                 )
                 continue
 
-            logger.info("Computing ghost observables: %s", ghost.names)
+            logger.debug("Computing ghost observables: %s", ghost.names)
             args = self._get_function_arguments(ghost.use,
                                                 object_copies,
                                                 function_name=ghost.function.__name__)
