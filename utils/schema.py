@@ -784,6 +784,45 @@ class FeatureConfig(SubscriptableModel):
             )
         )
     ]
+    @model_validator(mode="after")
+    def validate_binning(self) -> "FeatureConfig":
+        """Validate the binning format and values."""
+        if isinstance(self.binning, str):
+            self.binning = (
+                self.binning.strip("[").strip("]").strip("(").strip(")")
+            )
+            binning = self.binning.split(",")
+            if len(binning) != 3:
+                raise ValueError(
+                    f"Invalid binning string: {self.binning}. Need 3 values."
+                    + "Expected format: 'low,high,nbins'"
+                )
+            else:
+                try:
+                    low, high, nbins = map(float, binning)
+                    nbins = int(nbins)
+                except ValueError:
+                    raise ValueError(
+                        f"Invalid binning string: {self.binning}. Need 3 floats."
+                        + "Expected format: 'low,high,nbins'"
+                    )
+                if low >= high:
+                    raise ValueError(
+                        f"Invalid binning string: {self.binning}. Low must be < high."
+                        + "Expected format: 'low,high,nbins'"
+                    )
+                if nbins <= 0 or not isinstance(nbins, int):
+                    raise ValueError(
+                        f"Invalid binning string: {self.binning}. nbins must be != 0."
+                        + "Expected format: 'low,high,nbins'"
+                    )
+
+        elif isinstance(self.binning, list):
+            if len(self.binning) < 2:
+                raise ValueError("At least two bin edges required.")
+            if any(b <= a for a, b in zip(self.binning, self.binning[1:])):
+                raise ValueError("Binning edges must be strictly increasing.")
+        return self
 
 # ========
 # Full MVA configuration
@@ -851,6 +890,18 @@ class MVAConfig(SubscriptableModel):
             ),
         )
     ]
+
+    plot_classes: Annotated[
+        Optional[List[str]],
+        Field(
+            default=None,
+            description=(
+                "Optional list of class names to use in MVA-related plotting." \
+                "For example, features/scores will be plotted for this set of classes." \
+                "If None, defaults to all classes in `classes`."
+            ),
+        ),
+    ]
     balance_strategy: Annotated[
         Literal["none", "undersample", "oversample", "class_weight"],
         Field(
@@ -908,6 +959,10 @@ class MVAConfig(SubscriptableModel):
                     raise ValueError(
                         f"TF/Keras 'activation' must be one of {list(ActivationKey)}."
                     )
+
+        if self.plot_classes is None:
+            # Default to all classes if not specified
+            self.plot_classes = self.classes.keys()
         return self
 
     @model_validator(mode="after")

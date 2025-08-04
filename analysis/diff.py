@@ -11,6 +11,7 @@ import pickle
 import warnings
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from itertools import chain
 from pathlib import Path
 from pprint import pformat
 from typing import Any, Dict, Literal, List, Tuple, Optional, Union
@@ -46,9 +47,8 @@ from utils.logging import _banner, RED, GREEN, BLUE, RESET
 from utils.plot import (create_cms_histogram,
                         plot_parameters_over_iterations,
                         plot_pvalue_vs_parameters,
-                        #plot_mva_scores,
-                        #plot_mva_feature_distributions)
-)
+                        plot_mva_scores,
+                        plot_mva_feature_distributions)
 from utils.tools import (nested_defaultdict_to_dict, recursive_to_backend)
 
 
@@ -761,15 +761,15 @@ class DifferentiableAnalysis(Analysis):
     # -------------------------------------------------------------------------
     def _run_mva_training(
         self,
-        events_per_process: dict[str, list[Tuple[dict, int]]]
+        events_per_process_per_mva: dict[str, list[Tuple[dict, int]]]
     ) -> dict[str, Any]:
         """
         Train each MVAConfig using the pre-collected object copies and event counts.
 
         Parameters
         ----------
-        events_per_process : dict
-            Mapping from process name to list of (input dictionary, event count).
+        events_per_process_per_mva : dict
+            Mapping from MVA name to process name to list of (input dictionary, event count).
 
         Returns
         -------
@@ -782,6 +782,13 @@ class DifferentiableAnalysis(Analysis):
         for mva_cfg in self.config.mva:
             logger.info(f"Training MVA '{mva_cfg.name}'...")
 
+            events_per_process = events_per_process_per_mva[mva_cfg.name]
+            if set(events_per_process.keys()) != set(mva_cfg.plot_classes):
+                raise ValueError(
+                    f"Mismatch between MVA '{mva_cfg.name}' plot classes and provided processes: "
+                    f"{set(events_per_process.keys())} vs {set(mva_cfg.plot_classes)}"
+                )
+
             # JAX-based model
             if mva_cfg.framework == "jax":
                 net = JAXNetwork(mva_cfg)
@@ -789,9 +796,18 @@ class DifferentiableAnalysis(Analysis):
                 Xtr, Xvl = jnp.array(X_train), jnp.array(X_val)
                 ytr, yvl = jnp.array(y_train), jnp.array(y_val)
                 net.init_network()
+                # Plot feature distributions
+                plot_mva_feature_distributions(
+                    net.process_to_features_map,
+                    mva_cfg,
+                    self.config.plotting,
+                    self.dirs["mva_plots"],
+                )
                 params = net.train(Xtr, ytr, Xvl, yvl)
                 trained[mva_cfg.name] = params
                 nets[mva_cfg.name] = net
+
+                # Optional: apply class-balancing weights to tr
 
 
             # TensorFlow-based model
@@ -1040,7 +1056,7 @@ class DifferentiableAnalysis(Analysis):
 
             # Compute MVA features for this channel
             for mva_name, mva_instance in mva_instances.items():
-                mva_features = mva_instance._extract_features(
+                mva_features, _ = mva_instance._extract_features(
                     obj_copies_ch,
                     mva_instance.mva_cfg.features
                 )
@@ -1388,14 +1404,7 @@ class DifferentiableAnalysis(Analysis):
         logger.info(_banner("Preparing and Caching Data"))
 
         # Prepare dictionary to collect MVA training data
-        mva_data: dict[str, list[Tuple[dict, int]]] = {}
-        for mva_cfg in config.mva or []:
-            for cls in mva_cfg.classes:
-                if isinstance(cls, str):
-                    mva_data.setdefault(cls, [])
-                elif isinstance(cls, dict):
-                    class_name = next(iter(cls.keys()))
-                    mva_data.setdefault(class_name, [])
+        mva_data: dict[str, dict[str, list[Tuple[dict, int]]]] = defaultdict(lambda : defaultdict(list))
 
         # Loop over datasets in the fileset
         for dataset, content in fileset.items():
@@ -1487,33 +1496,50 @@ class DifferentiableAnalysis(Analysis):
                         ch_name = f"Channel: {ch}"
                         dataset_stats[ch_name] += count
 
+                    # ------------------------------------------------------
+                    # If MVA training is enabled, collect data for MVA models
+                    # ------------------------------------------------------
+                    # Helper to extract class name and associated process names
+                    def parse_class_entry(entry):
+                        if isinstance(entry, str):
+                            return entry, [entry]
+                        if isinstance(entry, dict):
+                            return next(iter(entry.items()))
+                        raise ValueError(f"Invalid MVA class type: {type(entry)}. \
+                                         Allowed types are str or dict.")
+
+                    # Helper to record MVA data
+                    def record_mva_entry(mva_data, cfg_name, class_label, presel_ch, process_name):
+                        nevents = presel_ch["mva_nevents"]
+                        logger.debug(
+                            f"Adding {nevents} events from process '{process_name}' to MVA class '{class_label}'."
+                        )
+                        mva_data[cfg_name][class_label].append(
+                            (presel_ch["mva_objects"], nevents)
+                        )
+
                     # Collect training data for MVA, if enabled
                     if config.mva and config.general.run_mva_training:
-                        for mva_cfg in config.mva:
-                            for cls in mva_cfg.classes:
-                                if isinstance(cls, str):
-                                    class_name = cls
-                                    proc_names = [cls]
-                                elif isinstance(cls, dict):
-                                    class_name, proc_names = next(iter(cls.items()))
-                                else:
-                                    continue
+                        nominal = processed_data.get("nominal", {})
+                        presel_ch = nominal.get("__presel")
+                        if presel_ch:
+                            for mva_cfg in config.mva:
+                                seen = set()  # track classes to avoid duplicates
+                                # iterate training and plot classes in order
+                                for entry in chain(mva_cfg.classes, mva_cfg.plot_classes):
+                                    class_name, proc_names = parse_class_entry(entry)
+                                    # fallback default
+                                    if not class_name or not proc_names:
+                                        class_name = process_name
+                                        proc_names = [process_name]
+                                    # skip duplicates
+                                    if class_name in seen:
+                                        continue
+                                    seen.add(class_name)
+                                    # record only if this process applies
+                                    if process_name in proc_names:
+                                        record_mva_entry(mva_data, mva_cfg.name, class_name, presel_ch, process_name)
 
-                                if process_name not in proc_names:
-                                    continue
-
-                                nominal_channels = processed_data.get("nominal", {})
-                                if nominal_channels:
-                                    presel_ch = nominal_channels["__presel"]
-
-                                    logger.debug(
-                                        f"Adding {presel_ch['mva_nevents']} events from process '{process_name}' "
-                                        f"to MVA training class '{class_name}'."
-                                    )
-
-                                    mva_data[class_name].append(
-                                        (presel_ch["mva_objects"], presel_ch["mva_nevents"])
-                                    )
 
             row = {"Dataset": dataset, "Process": process_name}
             row.update(dataset_stats)
@@ -1545,6 +1571,7 @@ class DifferentiableAnalysis(Analysis):
             for file_dict in dataset_files.values():
                 for skim_key, (processed_data, metadata) in file_dict.items():
                     processed_data['mva_nets'] = nets
+
         if self.config.general.run_mva_training and (mva_cfg := self.config.mva) is not None:
             logger.info(_banner("Executing MVA Pre-training"))
             models, nets = self._run_mva_training(mva_data)
@@ -1750,7 +1777,7 @@ class DifferentiableAnalysis(Analysis):
 
                     # Record progress
                     pval = state.value
-                    mle = state.aux
+                    mle = state.aux # mle values are auxillary outputs of the optimiser
                     pval_history.append(float(pval))
                     for name, value in parameters["aux"].items():
                         if "__NN" not in name:
@@ -1759,12 +1786,14 @@ class DifferentiableAnalysis(Analysis):
                         mle_history[name].append(float(value))
 
                     if step % 10 == 0:
+                        all_new_parameters = new_parameters
+                        all_new_parameters.update({"fit": mle})
                         _log_parameter_update(
                             step=step+1,
                             old_p_value=last_logged_pvalue,
                             new_p_value=pval,
                             old_params=last_logged_params,
-                            new_params=new_parameters,
+                            new_params=all_new_parameters,
                             mva_configs=self.config.mva,
                         )
                         # Update the baseline for the next log

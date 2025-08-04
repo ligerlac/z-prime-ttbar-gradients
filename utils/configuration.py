@@ -258,6 +258,7 @@ mva_config = [
                 "learning_rate": 0.0005,  # learning rate for the MVA optimisation
             },
             "classes": ["wjets", {"ttbar": ("ttbar_semilep", "ttbar_had", "ttbar_lep")}],
+            "plot_classes": ["wjets", "ttbar", "signal"],
             "balance_strategy": "undersample",
             "layers": [
                 {
@@ -380,6 +381,7 @@ plotting_config = {
             "ttbar_lep":  "#7FDEFF",
             "ttbar_had":  "#2C2A4A",
             "wjets":     "#72A1E5",
+            "ttbar": "#907AD6",
         },
         "process_labels": {
             "ttbar_semilep": r"$t\bar{t}\,\textrm{(lepton+jets)}$",
@@ -387,8 +389,10 @@ plotting_config = {
             "ttbar_lep":  r"$t\bar{t}\,\textrm{(leptonic)}$",
             "ttbar_had":  r"$t\bar{t}\,\textrm{(hadronic)}$",
             "wjets":     r"$W+\textrm{jets}$",
+            "ttbar": r"$t\bar{t}$",
         },
         "process_order": [
+            "ttbar",
             "ttbar_had",
             "ttbar_lep",
             "ttbar_semilep",

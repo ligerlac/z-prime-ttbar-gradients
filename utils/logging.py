@@ -5,6 +5,7 @@ BLUE = "\033[0;34m"
 YELLOW = "\033[1;33m"
 RED = "\033[0;31m"
 MAGENTA = "\033[95m"
+GREEN = "\033[0;32m"
 RESET = "\033[0m"
 
 def _banner(text: str) -> str:
@@ -45,7 +46,7 @@ class ColoredFormatter(logging.Formatter):
         color = self.PREFIX_COLORS.get(record.levelno, "")
         prefix_formatter = logging.Formatter(self.log_format_prefix)
         prefix = prefix_formatter.format(record)
-        colored_prefix = f"{color}{prefix}{self.RESET}"
+        colored_prefix = f"{color}{prefix}{RESET}"
 
         # The message itself might have its own colors, which will be preserved.
         message = record.getMessage().lstrip('\n')

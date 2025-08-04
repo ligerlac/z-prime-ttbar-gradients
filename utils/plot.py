@@ -520,8 +520,6 @@ def plot_mva_feature_distributions(
     mva_config: Dict[str, Any],
     plot_config: Dict[str, Any],
     output_dir: str,
-    title: str = "MVA Feature Distributions",
-    file_name: str = "mva_feature_dist",
 ) -> None:
     """
     Plot distributions of MVA input features for different processes.
@@ -537,10 +535,6 @@ def plot_mva_feature_distributions(
         Plotting configuration with colors, labels, and process order.
     output_dir : str
         Directory to save the plots.
-    title : str, optional
-        Title prefix for the plot, by default "MVA Feature Distributions".
-    file_name : str, optional
-        File name prefix for the plot, by default "mva_feature_dist".
     """
     output_path = Path(output_dir) / "mva" / "features"
     output_path.mkdir(parents=True, exist_ok=True)
@@ -549,51 +543,75 @@ def plot_mva_feature_distributions(
     process_labels = plot_config.get("process_labels", {})
     process_order = plot_config.get("process_order", list(feature_data.keys()))
 
+    # Build ordered list: first those in process_order, then others in original insertion order
+    ordered_processes = [p for p in process_order if p in feature_data]
+    ordered_processes += [p for p in feature_data.keys() if p not in process_order]
+
     for feature in mva_config.get("features", []):
         feature_name = feature["name"]
         feature_label = feature.get("label", feature_name)
-        binning_str = feature.get("binning")
+        feature_binning = feature.get("binning", None)
 
-        if binning_str:
-            parts = binning_str.split(',')
-            bins = np.linspace(float(parts[1]), float(parts[2]), int(parts[0]) + 1)
+        if feature_binning is not None:
+            if isinstance(feature_binning, str):
+                # Parse binning string like "50,0,100" into bins
+                binning_str = feature_binning.strip()
+                parts = binning_str.split(',')
+                prelim_bins = np.linspace(float(parts[0]), float(parts[1]), int(parts[2])+1)
+            elif isinstance(feature_binning, (list, tuple)):
+                # Assume binning is a list of bin edges
+                prelim_bins = np.asarray(feature_binning)
         else:
-            # Determine binning from data if not specified
-            all_values = np.concatenate([data[feature_name] for proc, data in feature_data.items() if feature_name in data])
-            bins = np.linspace(np.min(all_values), np.max(all_values), 50)
+            # Determine binning from data later if not specified
+            prelim_bins = None
 
-
-        fig, ax = plt.subplots(figsize=(8, 6))
         hep.style.use("CMS")
+        for scaling_version in ["scaled", "unscaled"]:
+            fig, ax = plt.subplots(figsize=(8, 6))
 
-        for process_name in process_order:
-            if process_name not in feature_data or feature_name not in feature_data[process_name]:
-                continue
+            bins = prelim_bins
+            if prelim_bins is None:
+                # Determine binning from data if not specified
+                all_values = np.concatenate([data[feature_name][scaling_version] for proc, data in feature_data.items() if feature_name in data])
+                bins = np.linspace(np.min(all_values), np.max(all_values), 50)
+            else:
+                if scaling_version == "scaled":
+                    if (scaling := feature.scale) is not None:
+                        # Scale feature data if specified in MVA config
+                        bins = scaling(bins)
+                    else:
+                        bins = prelim_bins
+                else:
+                    bins = prelim_bins
 
-            values = convert_to_numpy(feature_data[process_name][feature_name])
+            for process_name in ordered_processes:
+                print(f"Plotting {scaling_version} feature data '{feature_name}' for process '{process_name}'")
+                if process_name not in feature_data or feature_name not in feature_data[process_name]:
+                    continue
 
-            ax.hist(
-                values,
-                bins=bins,
-                color=process_colors.get(process_name, "gray"),
-                label=process_labels.get(process_name, process_name),
-                alpha=0.7,
-                density=True,
-                histtype="stepfilled",
-                linewidth=1.5,
-            )
+                values = convert_to_numpy(feature_data[process_name][feature_name][scaling_version])
 
-        ax.set_title(f"{title} - {feature_label}")
-        ax.set_xlabel(feature_label, fontsize=14)
-        ax.set_ylabel("a.u.", fontsize=14)
-        ax.legend(frameon=False, fontsize=12)
-        ax.tick_params(axis="both", labelsize=12)
-        fig.tight_layout()
+                ax.hist(
+                    values,
+                    bins=bins,
+                    color=process_colors.get(process_name, "gray"),
+                    label=process_labels.get(process_name, process_name),
+                    alpha=0.7,
+                    density=True,
+                    histtype="stepfilled",
+                    linewidth=1.5,
+                )
 
-        plot_filename = output_path / f"{file_name}_{feature_name}.pdf"
-        fig.savefig(plot_filename)
-        plt.close(fig)
-        print(f"Saved MVA feature plot to {plot_filename}")
+            ax.set_xlabel(feature_label, fontsize=14)
+            ax.set_ylabel("a.u.", fontsize=14)
+            ax.legend(frameon=False, fontsize=12)
+            ax.tick_params(axis="both", labelsize=12)
+            fig.tight_layout()
+
+            plot_filename = output_path / f"{mva_config.name}_feats_{feature_name}_{scaling_version}.pdf"
+            fig.savefig(plot_filename, dpi=300)
+            plt.close(fig)
+            print(f"Saved MVA feature plot to {plot_filename}")
 
 
 def plot_mva_scores(

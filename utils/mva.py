@@ -4,7 +4,7 @@
 
 # Standard library imports
 from abc import ABC, abstractmethod
-from collections import Counter
+from collections import Counter, defaultdict
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -48,6 +48,8 @@ class BaseNetwork(ABC, Analysis):
         Network parameters (used by JAX models).
     model : Any
         Model object (used by TensorFlow models).
+    process_to_features_map : Dict[str, Dict[str, np.ndarray]]
+        Mapping from process names to scaled and unscaled feature values.
 
     Methods
     -------
@@ -81,6 +83,8 @@ class BaseNetwork(ABC, Analysis):
         self.mva_cfg = mva_cfg
         self.name = mva_cfg.name
         self.parameters: Dict[str, Any] = {}  # For JAX models
+        # process -> feature name -> {'scaled': np.ndarray, 'unscaled': np.ndarray}
+        self.process_to_features_map: Dict[str, Dict[str, Dict[str, np.ndarray]]] = {}
         self.model: Any = None  # For TensorFlow models
 
     def _split_train_test(
@@ -127,7 +131,7 @@ class BaseNetwork(ABC, Analysis):
         self,
         object_collections: Dict[str, Any],
         feature_configs: List[Any],
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, Dict[str, Dict[str, np.ndarray]]]:
         """Compute and stack all features for one event batch.
 
         Parameters
@@ -142,9 +146,11 @@ class BaseNetwork(ABC, Analysis):
         -------
         np.ndarray
             2D array of shape (n_events, n_features) with stacked features.
+        Dict[str, Dict[str, np.ndarray]]
+            Dictionary mapping feature names to their scaled and unscaled values.
         """
         feature_arrays = []
-
+        features_dict = {}
         for feature_cfg in feature_configs:
             # Extract input arguments from object collections
             args = self._get_function_arguments(
@@ -153,17 +159,23 @@ class BaseNetwork(ABC, Analysis):
             )
 
             # Compute raw feature values
-            feature_values = feature_cfg.function(*args)
+            feature_values_unscaled = feature_cfg.function(*args)
 
             # Apply scaling if configured
             if feature_cfg.scale is not None:
-                feature_values = feature_cfg.scale(feature_values)
+                feature_values_scaled = feature_cfg.scale(feature_values_unscaled)
+            else:
+                feature_values_scaled = feature_values_unscaled
 
             # Convert to NumPy array
-            feature_arrays.append(np.asarray(feature_values))
+            feature_arrays.append(np.asarray(feature_values_scaled))
+
+            features_dict[feature_cfg.name] = {"scaled": feature_values_scaled,
+                                               "unscaled": feature_values_unscaled
+                                            }
 
         # Stack all features as columns
-        return np.stack(feature_arrays, axis=1).astype(float)
+        return np.stack(feature_arrays, axis=1).astype(float), features_dict
 
     def _make_labels(
         self,
@@ -312,78 +324,76 @@ class BaseNetwork(ABC, Analysis):
     ]:
         """Prepare training/validation data from event-level inputs.
 
-        Parameters
-        ----------
-        events_per_process : Dict[str, List[Tuple[Dict, int]]]
-            Mapping from process name to list of:
-            (object_collections: dict, n_events: int)
-
-        Returns
-        -------
-        X_train : np.ndarray
-            Training features.
-        y_train : np.ndarray
-            Training labels.
-        X_val : np.ndarray
-            Validation features.
-        y_val : np.ndarray
-            Validation labels.
-        class_weights : Optional[Dict[int, float]]
-            Class weights for loss function if using 'class_weight' strategy.
-
-        Raises
-        ------
-        ValueError
-            If no valid training data is found.
+        Extract features for all classes (training and plot), but only
+        generate labels and populate the training set for classes in
+        self.mva_cfg.classes (not plot_classes).
         """
         all_features = []
         all_labels = []
+        process_to_features_map = defaultdict(list)
 
-        # Process each class definition
-        for class_def in self.mva_cfg.classes:
-            # Extract class name and process list
-            if isinstance(class_def, str):
-                class_name = class_def
-                process_list = [class_def]
-            elif isinstance(class_def, dict):
-                class_name, process_list = next(iter(class_def.items()))
+        # combine class definitions, preserving order, avoiding duplicates
+        from itertools import chain
+        seen = set()
+        combined = chain(self.mva_cfg.classes, self.mva_cfg.plot_classes)
+        for entry in combined:
+            # parse entry to (class_name, proc_names)
+            if isinstance(entry, str):
+                class_name = entry
+                proc_names = [entry]
+            elif isinstance(entry, dict):
+                class_name, proc_names = next(iter(entry.items()))
             else:
-                raise TypeError(f"Invalid class definition: {class_def}")
+                raise TypeError(f"Invalid class definition: {entry}")
 
-            # Skip if no events for this class
-            entries = events_per_process.get(class_name, [])
-            if not entries:
-                logger.warning(
-                    f"No events found for MVA class '{class_name}'. Skipping."
-                )
+            if class_name in seen:
+                continue
+            seen.add(class_name)
+
+            # skip if no events
+            batches = events_per_process.get(class_name, [])
+            if not batches:
+                logger.warning(f"No events for class '{class_name}'. Skipping.")
                 continue
 
-            # Process each event batch
-            for object_dict, num_events in entries:
-                feature_matrix = self._extract_features(
-                    object_dict, self.mva_cfg.features
-                )
-                label_array = self._make_labels(
-                    num_events, class_name, self.mva_cfg.classes
-                )
-                all_features.append(feature_matrix)
-                all_labels.append(label_array)
+            for obj_dict, n_events in batches:
+                # always extract features
+                feats, feat_dict = self._extract_features(obj_dict,
+                                                         self.mva_cfg.features)
+                # collect for process-to-features map
+                process_to_features_map[class_name].append(feat_dict)
 
-        # Check for valid data
+                # only assign labels & append to training if class is in training set
+                if entry in self.mva_cfg.classes:
+                    labels = self._make_labels(n_events,
+                                               class_name,
+                                               self.mva_cfg.classes)
+                    all_features.append(feats)
+                    all_labels.append(labels)
+
+        # Finalize process_to_features_map: combine per-feature arrays across batches
+        self.process_to_features_map = {}
+        for class_name, dict_list in process_to_features_map.items():
+            # All dicts share same keys
+            combined = {
+                feature: {
+                    "scaled": np.concatenate([d[feature]["scaled"] for d in dict_list]),
+                    "unscaled":  np.concatenate([d[feature]["unscaled"] for d in dict_list])
+                }
+                for feature in dict_list[0].keys()
+            }
+            self.process_to_features_map[class_name] = combined
+
         if not all_features or not all_labels:
-            raise ValueError("No valid training data found for any class.")
+            raise ValueError("No valid training data found for any training class.")
 
-        # Combine and balance
-        features = np.vstack(all_features)
-        labels = np.concatenate(all_labels)
-        features_balanced, labels_balanced, class_weights = (
-            self._balance_dataset(features, labels)
-        )
+        # build and balance dataset
+        X = np.vstack(all_features)
+        y = np.concatenate(all_labels)
+        X_bal, y_bal, class_weights = self._balance_dataset(X, y)
 
-        # Split into train/validation
-        X_train, X_val, y_train, y_val = self._split_train_test(
-            features_balanced, labels_balanced
-        )
+        # split
+        X_train, X_val, y_train, y_val = self._split_train_test(X_bal, y_bal)
 
         return X_train, y_train, X_val, y_val, class_weights
 

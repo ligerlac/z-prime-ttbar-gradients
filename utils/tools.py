@@ -1,4 +1,7 @@
 from collections import defaultdict
+from typing import Any, Mapping, Sequence
+
+import awkward as ak
 
 def nested_defaultdict_to_dict(nested_structure: Any) -> dict:
     """
