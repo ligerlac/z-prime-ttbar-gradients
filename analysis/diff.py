@@ -42,6 +42,7 @@ from utils.logging import BLUE, GREEN, RED, RESET, _banner
 from utils.mva import JAXNetwork, TFNetwork
 from utils.plot import (create_cms_histogram,
                         plot_mva_feature_distributions,
+                        plot_mva_scores,
                         plot_parameters_over_iterations,
                         plot_pvalue_vs_parameters)
 from utils.preproc import pre_process_dak, pre_process_uproot
@@ -950,8 +951,6 @@ class DifferentiableAnalysis(Analysis):
                 trained[mva_cfg.name] = params
                 nets[mva_cfg.name] = net
 
-                # Optional: apply class-balancing weights to tr
-
 
             # TensorFlow-based model
             else:
@@ -1789,6 +1788,8 @@ class DifferentiableAnalysis(Analysis):
                 logger.info(f"Saved MVA model '{model_name}' to {model_path}")
                 logger.info(f"Saved model network '{model_name}' to {net_path}")
 
+
+
             # Attach MVA nets to each file’s processed data
             for dataset_files in all_events.values():
                 for file_dict in dataset_files.values():
@@ -1827,68 +1828,66 @@ class DifferentiableAnalysis(Analysis):
         """
         # Log a summary of the configuration being used for this run
         self._log_config_summary(fileset)
-
-        # ---------------------------------------------------------------------
-        # 1. Configure caching and initialise analysis parameters
-        # ---------------------------------------------------------------------
         cache_dir = "/tmp/gradients_analysis/"
-        read_from_cache = self.config.general.read_from_cache
-        run_and_cache = not read_from_cache
-
-        # Copy soft selection and NN parameters from config
-        auxiliary_parameters = self.config.jax.params.copy()
-
-        all_parameters = {
-            "aux": auxiliary_parameters,
-            "fit": {"mu": 1.0, "scale_ttbar": 1.0},
-        }
-
         # ---------------------------------------------------------------------
-        # 2. Preprocess events and extract MVA models (if any)
-        # ---------------------------------------------------------------------
-        processed_data, mva_models = self._prepare_data(
-            all_parameters,
-            fileset,
-            read_from_cache=read_from_cache,
-            run_and_cache=run_and_cache,
-            cache_dir=cache_dir,
-        )
-
-        # Add MVA model parameters to aux tree (flattened by name)
-        for model_name, model in mva_models.items():
-            model_parameters = jax.tree.map(jnp.array, model)
-            for name, value in model_parameters.items():
-                all_parameters["aux"][name] = value
-
-        # Ensure all parameters are JAX arrays
-        all_parameters["aux"] = {k: jnp.array(v) for k, v in all_parameters["aux"].items()}
-        all_parameters["fit"] = {k: jnp.array(v) for k, v in all_parameters["fit"].items()}
-
-        logger.info("✅ Event preprocessing complete\n")
-
-        # ---------------------------------------------------------------------
-        # 3. Run initial traced analysis to compute KDE histograms
-        # ---------------------------------------------------------------------
-        logger.info(_banner("Running initial p-value computation (traced)"))
-        initial_pvalue, mle_parameters = self._run_traced_analysis_chain(
-            all_parameters, processed_data
-        )
-        initial_histograms = self.histograms
-
-        # Log initial state before optimisation
-        _log_parameter_update(
-            step="Initial",
-            old_p_value=float(initial_pvalue),
-            new_p_value=float(initial_pvalue),
-            old_params=all_parameters,
-            new_params=all_parameters,
-            mva_configs=self.config.mva,
-        )
-
-        # ---------------------------------------------------------------------
-        # 4. If not just plotting, begin gradient-based optimisation
+        # If not just plotting, begin gradient-based optimisation chain
         # ---------------------------------------------------------------------
         if not self.config.general.run_plots_only:
+            # ---------------------------------------------------------------------
+            # 1. Configure caching and initialise analysis parameters
+            # ---------------------------------------------------------------------
+            read_from_cache = self.config.general.read_from_cache
+            run_and_cache = not read_from_cache
+
+            # Copy soft selection and NN parameters from config
+            auxiliary_parameters = self.config.jax.params.copy()
+
+            all_parameters = {
+                "aux": auxiliary_parameters,
+                "fit": {"mu": 1.0, "scale_ttbar": 1.0},
+            }
+
+            # ---------------------------------------------------------------------
+            # 2. Preprocess events and extract MVA models (if any)
+            # ---------------------------------------------------------------------
+            processed_data, mva_models = self._prepare_data(
+                all_parameters,
+                fileset,
+                read_from_cache=read_from_cache,
+                run_and_cache=run_and_cache,
+                cache_dir=cache_dir,
+            )
+
+            # Add MVA model parameters to aux tree (flattened by name)
+            for model_name, model in mva_models.items():
+                model_parameters = jax.tree.map(jnp.array, model)
+                for name, value in model_parameters.items():
+                    all_parameters["aux"][name] = value
+
+            # Ensure all parameters are JAX arrays
+            all_parameters["aux"] = {k: jnp.array(v) for k, v in all_parameters["aux"].items()}
+            all_parameters["fit"] = {k: jnp.array(v) for k, v in all_parameters["fit"].items()}
+
+            logger.info("✅ Event preprocessing complete\n")
+
+            # ---------------------------------------------------------------------
+            # 3. Run initial traced analysis to compute KDE histograms
+            # ---------------------------------------------------------------------
+            logger.info(_banner("Running initial p-value computation (traced)"))
+            initial_pvalue, mle_parameters = self._run_traced_analysis_chain(
+                all_parameters, processed_data
+            )
+            initial_histograms = self.histograms
+
+            # Log initial state before optimisation
+            _log_parameter_update(
+                step="Initial",
+                old_p_value=float(initial_pvalue),
+                new_p_value=float(initial_pvalue),
+                old_params=all_parameters,
+                new_params=all_parameters,
+                mva_configs=self.config.mva,
+            )
 
             # ----------------------------------------------------------------------
             # Collect relevant processes and systematics
@@ -2076,6 +2075,7 @@ class DifferentiableAnalysis(Analysis):
                     "mle_pars": final_mle_pars,
                     "pvalue": final_pval,
                     "histograms": self.histograms,
+                    "initial_histograms": initial_histograms,
                     "pvals_history": pval_history,
                     "aux_history": aux_history,
                     "mle_history": mle_history,
@@ -2094,7 +2094,7 @@ class DifferentiableAnalysis(Analysis):
 
         logger.info(_banner("Making plots and summaries"))
         # ---------------------------------------------------------------------
-        # 5. Reload results and generate summary plots
+        # 4. Reload results and generate summary plots
         # ---------------------------------------------------------------------
         with open(f"{cache_dir}/cached_result.pkl", "rb") as f:
             results = cloudpickle.load(f)
@@ -2107,6 +2107,7 @@ class DifferentiableAnalysis(Analysis):
         mle_history = results["mle_history"]
         gradients = results["gradients"]
         histograms = results["histograms"]
+        initial_histograms = results["initial_histograms"]
 
         logger.info(_banner("Generating parameter evolution plots"))
         # Generate optimisation progress plots
@@ -2134,7 +2135,7 @@ class DifferentiableAnalysis(Analysis):
             )
 
         # ---------------------------------------------------------------------
-        # 6. Generate pre- and post-fit plots
+        # 5. Generate pre- and post-fit plots
         # ---------------------------------------------------------------------
         logger.info("Generating pre and post-fit plots")
         def make_pre_and_post_fit_plots(
