@@ -1,13 +1,13 @@
 import gzip
 import logging
+import warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Tuple, Union
-import warnings
 
 import awkward as ak
+import vector
 from coffea.nanoevents import NanoAODSchema
 from correctionlib import Correction, CorrectionSet
-import vector
 
 from utils.schema import GoodObjectMasksConfig
 

@@ -1,27 +1,26 @@
-from collections import defaultdict
-from functools import reduce
 import glob
 import logging
 import os
+import warnings
+from collections import defaultdict
+from functools import reduce
 from pathlib import Path
 from typing import Any, Literal, Optional
-import warnings
 
 import awkward as ak
 import cabinetry
-from coffea.analysis_tools import PackedSelection
-from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 import hist
 import numpy as np
 import uproot
 import vector
-
+from coffea.analysis_tools import PackedSelection
+from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 
 from analysis.base import Analysis
 from utils.cuts import lumi_mask
-from utils.output_files import (save_histograms_to_root,
+from utils.output_files import (load_histograms_from_pickle,
                                 save_histograms_to_pickle,
-                                load_histograms_from_pickle)
+                                save_histograms_to_root)
 from utils.preproc import pre_process_dak, pre_process_uproot
 from utils.stats import get_cabinetry_rebinning_router
 
@@ -446,11 +445,11 @@ class NonDiffAnalysis(Analysis):
 
         # Save histograms for non-differentiable analysis
         if config.general.run_histogramming:
-            save_histograms(
+            save_histograms_to_root(
                 self.nD_hists_per_region,
                 output_file=f"{config.general.output_dir}/histograms/histograms.root",
             )
-            pkl_histograms(
+            save_histograms_to_pickle(
                 self.nD_hists_per_region,
                 output_file=f"{config.general.output_dir}/histograms/histograms.pkl",
             )

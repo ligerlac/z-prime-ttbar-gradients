@@ -3,8 +3,8 @@ import logging
 import awkward as ak
 import numba
 import numpy as np
-from tensorflow.keras.models import load_model  # type: ignore
 import vector
+from tensorflow.keras.models import load_model  # type: ignore
 
 logger = logging.getLogger(__name__)
 

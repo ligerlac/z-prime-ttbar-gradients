@@ -14,42 +14,38 @@ from collections.abc import Mapping, Sequence
 from itertools import chain
 from pathlib import Path
 from pprint import pformat
-from typing import Any, Dict, Literal, List, Tuple, Optional, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 # =============================================================================
 # Third-Party Imports
 # =============================================================================
+import awkward as ak
 import cloudpickle
-import numpy as np
 import jax
 import jax.numpy as jnp
-from jaxopt import OptaxSolver
-from tabulate import tabulate, SEPARATING_LINE
+import numpy as np
 import optax
-import awkward as ak
 import uproot
 import vector
 from coffea.analysis_tools import PackedSelection
 from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
+from jaxopt import OptaxSolver
+from tabulate import SEPARATING_LINE, tabulate
 
 # =============================================================================
 # Project Imports
 # =============================================================================
 from analysis.base import Analysis
 from utils.cuts import lumi_mask
+from utils.jax_stats import build_channel_data_scalar, compute_discovery_pvalue
+from utils.logging import BLUE, GREEN, RED, RESET, _banner
 from utils.mva import JAXNetwork, TFNetwork
-from utils.preproc import pre_process_dak, pre_process_uproot
-from utils.jax_stats import (
-    compute_discovery_pvalue,
-    build_channel_data_scalar
-)
-from utils.logging import _banner, RED, GREEN, BLUE, RESET
 from utils.plot import (create_cms_histogram,
+                        plot_mva_feature_distributions,
                         plot_parameters_over_iterations,
-                        plot_pvalue_vs_parameters,
-                        plot_mva_scores,
-                        plot_mva_feature_distributions)
-from utils.tools import (nested_defaultdict_to_dict, recursive_to_backend)
+                        plot_pvalue_vs_parameters)
+from utils.preproc import pre_process_dak, pre_process_uproot
+from utils.tools import nested_defaultdict_to_dict, recursive_to_backend
 
 
 # =============================================================================
@@ -142,27 +138,55 @@ def _log_parameter_update(
     step: Union[int, str],
     old_p_value: float,
     new_p_value: float,
-    old_params: dict,
-    new_params: dict,
-    mva_configs: list,
-):
+    old_params: Dict[str, Dict[str, Any]],
+    new_params: Dict[str, Dict[str, Any]],
+    mva_configs: Optional[List[Any]],
+) -> None:
     """
-    Logs a formatted and colored table of parameter updates for a single step.
+    Log a formatted and coloured table of parameter updates for a single optimisation step.
+
+    This function creates two tables:
+    1. A p-value comparison table showing old vs new p-values and percentage change
+    2. A parameter table showing changes for all auxiliary and fit parameters
+
+    The tables use colour coding:
+    - Green: p-value improvement (decrease)
+    - Red: p-value worsening (increase)
+    - Blue: parameter values that have changed
+
+    Neural network parameters are only logged if the corresponding MVA configuration
+    has `grad_optimisation.log_param_changes` enabled, and are displayed as mean values.
 
     Parameters
     ----------
-    step : int
+    step : Union[int, str]
         The current optimisation step number or a descriptive string (e.g., "Initial").
+        If int, displays as "STEP XXX". If str, displays as "STATE: XXX" or just the string.
     old_p_value : float
-        The p-value from the last logged step.
+        The p-value from the last logged step for comparison.
     new_p_value : float
         The p-value at the current step.
-    old_params : dict
-        The dictionary of parameters from a previous state to compare against (e.g., from the last logged step).
-    new_params : dict
-        The dictionary of parameters after the update.
-    mva_configs : list
-        A list of MVA configuration objects to check for logging flags.
+    old_params : Dict[str, Dict[str, Any]]
+        Dictionary with 'aux' and 'fit' keys containing parameters from previous state.
+        Structure: {"aux": {param_name: value, ...}, "fit": {param_name: value, ...}}
+    new_params : Dict[str, Dict[str, Any]]
+        Dictionary with 'aux' and 'fit' keys containing updated parameters.
+        Same structure as old_params.
+    mva_configs : Optional[List[Any]]
+        List of MVA configuration objects with 'name' and 'grad_optimisation.log_param_changes'
+        attributes. Used to determine which neural network parameters to log.
+
+    Returns
+    -------
+    None
+        Logs formatted tables to the logger but returns nothing.
+
+    Notes
+    -----
+    - Parameters starting with "__NN" are treated as neural network parameters
+    - Percentage changes are calculated as ((new - old) / old) * 100
+    - If old value is 0, percentage change is set to infinity for non-zero new values
+    - Colour formatting uses ANSI escape codes defined in utils.logging
     """
     # --- P-value Table ---
     p_value_headers = ["Old p-value", "New p-value", "% Change"]
@@ -173,15 +197,15 @@ def _log_parameter_update(
 
     p_value_row = [f"{old_p_value:.4f}", f"{new_p_value:.4f}", f"{p_value_change:+.2f}%"]
 
-    # Color green for improvement (decrease), red for worsening (increase)
+    # Colour green for improvement (decrease), red for worsening (increase)
     if new_p_value < old_p_value:
-        p_value_row_colored = [f"{GREEN}{item}{RESET}" for item in p_value_row]
+        p_value_row_coloured = [f"{GREEN}{item}{RESET}" for item in p_value_row]
     elif new_p_value > old_p_value:
-        p_value_row_colored = [f"{RED}{item}{RESET}" for item in p_value_row]
+        p_value_row_coloured = [f"{RED}{item}{RESET}" for item in p_value_row]
     else:
-        p_value_row_colored = p_value_row
+        p_value_row_coloured = p_value_row
     p_value_table = tabulate(
-        [p_value_row_colored], headers=p_value_headers, tablefmt="grid"
+        [p_value_row_coloured], headers=p_value_headers, tablefmt="grid"
     )
 
     # --- Parameter Table ---
@@ -222,7 +246,7 @@ def _log_parameter_update(
         # Format for table
         row = [name_display, f"{old_np:.4f}", f"{new_np:.4f}", f"{percent_change:+.2f}%"]
 
-        # Color the row blue if the parameter value has changed
+        # Colour the row blue if the parameter value has changed
         if not np.allclose(old_np, new_np, atol=1e-6, rtol=1e-5):
             row = [f"{BLUE}{item}{RESET}" for item in row]
 
@@ -247,20 +271,37 @@ def _log_parameter_update(
 # Optimisation helper functions
 # -----------------------------------------------------------------------------
 
-def make_apply_param_updates(parameter_update_rules: dict) -> callable:
+def make_apply_param_updates(parameter_update_rules: Dict[str, callable]) -> callable:
     """
     Build a function that updates parameters using user-defined rules.
 
+    This function creates a parameter update function that applies custom transformation
+    rules to auxiliary parameters during optimisation. Each rule defines how a parameter
+    should be updated given its old value and the proposed change (delta).
+
     Parameters
     ----------
-    parameter_update_rules : dict
-        Mapping from parameter name to update function.
-        Each function should have the form: lambda old_value, delta -> new_value
+    parameter_update_rules : Dict[str, callable]
+        Mapping from parameter name to update function. Each function should have the
+        signature: `lambda old_value, delta -> new_value`. For example:
+        - Clamping: `lambda old, delta: jnp.clip(old + delta, min_val, max_val)`
+        - Exponential: `lambda old, delta: old * jnp.exp(delta)`
 
     Returns
     -------
     callable
-        Function that applies update rules to a given pair of parameter dictionaries.
+        Function with signature `(old_params: dict, tentative_params: dict) -> dict`
+        that applies the update rules to auxiliary parameters and returns updated
+        parameter dictionary with structure {"aux": {...}, "fit": {...}}.
+
+    Examples
+    --------
+    >>> rules = {
+    ...     "threshold": lambda old, delta: jnp.clip(old + delta, 0.0, 1.0),
+    ...     "scale": lambda old, delta: old * jnp.exp(delta)
+    ... }
+    >>> update_fn = make_apply_param_updates(rules)
+    >>> new_params = update_fn(old_params, tentative_params)
     """
     def apply_rules(old_params: dict, tentative_params: dict) -> dict:
         updated_auxiliary = {}
@@ -284,17 +325,54 @@ def make_clamp_transform(clamp_function: callable) -> optax.GradientTransformati
     """
     Create an Optax transformation that clamps parameters after each update step.
 
+    This function creates a custom Optax gradient transformation that applies parameter
+    clamping/projection after the standard gradient update. This is useful for enforcing
+    constraints on parameters during optimisation (e.g., keeping probabilities in [0,1]
+    or ensuring positive values).
+
     Parameters
     ----------
     clamp_function : callable
-        A function that takes (old_params, new_params) and returns clamped new_params.
+        A function with signature `(old_params: dict, new_params: dict) -> dict` that
+        takes the current parameters and tentatively updated parameters, then returns
+        the clamped/projected parameters. This function should enforce any constraints
+        on the parameter values.
 
     Returns
     -------
     optax.GradientTransformation
-        An Optax transformation object with clamping logic.
+        An Optax transformation object that applies gradient updates followed by
+        parameter clamping. The transformation has `init_fn` and `update_fn` methods
+        compatible with the Optax interface.
+
+    Notes
+    -----
+    The transformation works by:
+    1. Applying the standard gradient update: new_params = old_params + updates
+    2. Clamping the result: clamped_params = clamp_function(old_params, new_params)
+    3. Computing effective updates: effective_updates = clamped_params - old_params
+
+    Examples
+    --------
+    >>> def clamp_positive(old_params, new_params):
+    ...     return jax.tree_map(lambda x: jnp.maximum(x, 0.0), new_params)
+    >>> clamp_transform = make_clamp_transform(clamp_positive)
+    >>> optimiser = optax.chain(optax.adam(0.01), clamp_transform)
     """
-    def init_fn(initial_params: dict):
+    def init_fn(initial_params: dict) -> None:
+        """
+        Initialise the transformation state.
+
+        Parameters
+        ----------
+        initial_params : dict
+            Initial parameter values (unused in this transformation).
+
+        Returns
+        -------
+        None
+            This transformation does not maintain state.
+        """
         return None
 
     def update_fn(
@@ -314,35 +392,70 @@ def make_clamp_transform(clamp_function: callable) -> optax.GradientTransformati
 
 
 def make_lr_and_clamp_transform(
-    auxiliary_lr_map: dict,
+    auxiliary_lr_map: Dict[str, float],
     default_auxiliary_lr: float,
     default_fit_lr: float,
-    neural_net_lr_map: dict,
+    neural_net_lr_map: Dict[str, float],
     clamp_function: callable,
     frozen_parameter_keys: Optional[set[str]] = None,
 ) -> callable:
     """
-    Create an optimiser builder combining learning-rate scheduling and clamping.
+    Create an optimiser builder combining learning-rate scheduling and parameter clamping.
+
+    This function creates an optimiser that applies different learning rates
+    to different parameter groups (auxiliary parameters, neural network parameters, and
+    fit parameters) while also applying parameter constraints through clamping.
+
+    The optimiser uses Optax's `multi_transform` to apply different `Adam` optimisers with
+    different learning rates to different parameter groups, followed by a custom clamping
+    transformation to enforce parameter constraints.
 
     Parameters
     ----------
-    auxiliary_lr_map : dict
-        Custom learning rates for specific auxiliary parameters.
+    auxiliary_lr_map : Dict[str, float]
+        Custom learning rates for specific auxiliary parameters. Keys are parameter names,
+        values are learning rates. Parameters not in this map use default_auxiliary_lr.
     default_auxiliary_lr : float
-        Default learning rate for auxiliary parameters not in lr_map.
+        Default learning rate for auxiliary parameters not specified in auxiliary_lr_map.
     default_fit_lr : float
-        Learning rate for 'fit' parameters.
-    neural_net_lr_map : dict
-        Learning rates for neural network parameters.
+        Learning rate for 'fit' parameters (typically statistical model parameters).
+    neural_net_lr_map : Dict[str, float]
+        Learning rates for neural network parameters. Keys are MVA model names,
+        values are learning rates for all parameters of that model.
     clamp_function : callable
-        Projection function that clamps parameters within valid bounds.
-    frozen_parameter_keys : set[str], optional
-        Set of parameter names to freeze (prevent updates).
+        Function with signature `(old_params: dict, new_params: dict) -> dict` that
+        enforces parameter constraints by clamping/projecting parameters to valid regions.
+    frozen_parameter_keys : Optional[set[str]]
+        Set of parameter names to freeze (prevent any updates). These parameters will
+        use the 'no_update' transform which sets gradients to zero.
 
     Returns
     -------
     callable
-        A builder function that returns (optax_transform, label_mapping).
+        A builder function with signature `(initial_params: dict) -> (optax.GradientTransformation, dict)`.
+        The returned function takes initial parameters and returns:
+        - An Optax transformation that applies learning rates and clamping
+        - A label mapping dictionary showing which transform each parameter uses
+
+    Notes
+    -----
+    Parameter groups and their transforms:
+    - `aux__<param_name>`: Specific auxiliary parameter with custom learning rate
+    - `aux__default`: Default auxiliary parameters
+    - `NN__<model_name>`: Neural network parameters for specific model
+    - `NN__default`: Neural network parameters with default learning rate
+    - `fit__default`: Fit parameters (statistical model parameters)
+    - `no_update`: Frozen parameters (gradients set to zero)
+
+    Examples
+    --------
+    >>> aux_lrs = {"threshold": 0.01, "bandwidth": 0.001}
+    >>> nn_lrs = {"signal_classifier": 0.0001}
+    >>> clamp_fn = lambda old, new: jax.tree_map(lambda x: jnp.clip(x, 0, 1), new)
+    >>> optimiser_builder = make_lr_and_clamp_transform(
+    ...     aux_lrs, 0.01, 0.001, nn_lrs, clamp_fn, {"frozen_param"}
+    ... )
+    >>> optimiser, labels = optimiser_builder(initial_params)
     """
     frozen_parameter_keys = frozen_parameter_keys or set()
 
@@ -356,19 +469,36 @@ def make_lr_and_clamp_transform(
         "no_update": optax.set_to_zero(),
     }
 
-    def make_label_pytree(parameter_tree: dict) -> dict:
+    def make_label_pytree(parameter_tree: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, str]]:
         """
         Create a label tree assigning each parameter to a named sub-transform.
 
+        This function analyses the parameter tree structure and assigns each parameter
+        to an appropriate optimiser transform based on its name and type. The labels
+        are used by Optax's multi_transform to apply different optimisers to different
+        parameter groups.
+
         Parameters
-        -----------
-        parameter_tree : dict
+        ----------
+        parameter_tree : Dict[str, Dict[str, Any]]
             Nested dictionary of parameters with keys "aux" and "fit".
+            Structure: {"aux": {param_name: param_value, ...}, "fit": {param_name: param_value, ...}}
 
         Returns
-        --------
-        dict
-            A tree structure mapping each parameter to its corresponding label.
+        -------
+        Dict[str, Dict[str, str]]
+            A tree structure with the same shape as parameter_tree, but with string labels
+            instead of parameter values. Each label corresponds to a sub-transform name
+            in the multi_transform dictionary.
+
+        Notes
+        -----
+        Label assignment rules:
+        - Parameters in frozen_parameter_keys -> "no_update"
+        - Parameters containing "__NN" -> "NN__<model_name>" or "NN__default"
+        - Auxiliary parameters in auxiliary_lr_map -> "aux__<param_name>"
+        - Other auxiliary parameters -> "aux__default"
+        - Fit parameters -> "fit__default" (unless frozen)
         """
         label_tree = {"aux": {}, "fit": {}}
 
@@ -394,22 +524,35 @@ def make_lr_and_clamp_transform(
         return label_tree
 
     def optimiser_builder(
-            initial_params: dict
-    ) -> tuple[optax.GradientTransformation, dict]:
+            initial_params: Dict[str, Dict[str, Any]]
+    ) -> Tuple[optax.GradientTransformation, Dict[str, Dict[str, str]]]:
         """
-        Build the optimiser with learning rate scheduling and clamping.
+        Build the optimiser with learning rate scheduling and parameter clamping.
+
+        This function creates the final Optax gradient transformation by combining
+        the multi-transform (for different learning rates) with the clamping transform.
+        It also returns the label mapping for debugging and inspection purposes.
 
         Parameters
         ----------
-        initial_params : dict
-            Initial parameter values to determine the label mapping.
+        initial_params : Dict[str, Dict[str, Any]]
+            Initial parameter values used to determine the label mapping structure.
+            Must have the structure: {"aux": {param_name: value, ...}, "fit": {param_name: value, ...}}
 
         Returns
         -------
-        tuple
+        Tuple[optax.GradientTransformation, Dict[str, Dict[str, str]]]
             A tuple containing:
-            - An Optax transformation that applies learning rates and clamps parameters.
-            - A mapping of parameter names to their optimiser labels.
+            - An Optax transformation that applies different learning rates to different
+              parameter groups and then applies parameter clamping/projection.
+            - A label mapping dictionary with the same structure as initial_params,
+              showing which sub-transform each parameter is assigned to.
+
+        Notes
+        -----
+        The optimiser chain applies transformations in this order:
+        1. Multi-transform: Applies different Adam optimisers with different learning rates
+        2. Clamping transform: Projects parameters to valid regions using clamp_function
         """
         # Map each parameter to its optimiser label
         label_mapping = make_label_pytree(initial_params)
@@ -473,7 +616,7 @@ class DifferentiableAnalysis(Analysis):
         self.histograms = histograms
 
 
-    def _prepare_dirs(self):
+    def _prepare_dirs(self) -> None:
         """
         Create necessary output directories for analysis results.
 
@@ -521,7 +664,7 @@ class DifferentiableAnalysis(Analysis):
             "mva_plots": mva_plots,
         })
 
-    def _log_config_summary(self, fileset: dict[str, Any]):
+    def _log_config_summary(self, fileset: dict[str, Any]) -> None:
         """Logs a structured summary of the key analysis configuration options."""
         logger.info(_banner("Differentiable Analysis Configuration Summary"))
 
@@ -860,7 +1003,7 @@ class DifferentiableAnalysis(Analysis):
         """
         processed_data = {}
 
-        def prepare_full_obj_copies(events, mask_set: str, label: str):
+        def prepare_full_obj_copies(events, mask_set: str, label: str) -> tuple[dict[str, ak.Array], dict[str, ak.Array], ak.Array]:
             """
             Perform object copying, masking, baseline selection, correction,
             and ghost observable computation.
@@ -876,8 +1019,11 @@ class DifferentiableAnalysis(Analysis):
 
             Returns
             -------
-            tuple
-                (masked object copies, corrected objects, selection mask)
+            tuple[dict[str, ak.Array], dict[str, ak.Array], ak.Array]
+                A tuple containing:
+                - masked object copies (dict mapping object names to arrays)
+                - corrected objects (dict mapping object names to corrected arrays)
+                - selection mask (boolean array for event selection)
             """
             # Copy objects and apply good-object masks
             obj_copies = self.get_object_copies(events)
@@ -1465,23 +1611,27 @@ class DifferentiableAnalysis(Analysis):
 
                     # Handle caching: process and cache, read from cache, or skip
                     if run_and_cache:
+                        logger.info(f"Processing {skimmed} and caching results")
                         events = NanoEventsFactory.from_root(
                             skimmed, schemaclass=NanoAODSchema, delayed=False
                         ).events()
                         with open(cache_file, "wb") as f:
                             cloudpickle.dump(events, f)
                     elif read_from_cache:
+                        logger.info(f"Reading cached events for {skimmed}")
                         if os.path.exists(cache_file):
                             with open(cache_file, "rb") as f:
                                 events = cloudpickle.load(f)
                         else:
                             logger.warning(f"Cache file not found: {cache_file}")
+                            logger.info(f"Processing {skimmed} and caching results")
                             events = NanoEventsFactory.from_root(
                                 skimmed, schemaclass=NanoAODSchema, delayed=False
                             ).events()
                             with open(cache_file, "wb") as f:
                                 cloudpickle.dump(events, f)
                     else:
+                        logger.info(f"Processing {skimmed} but *not* caching results")
                         events = NanoEventsFactory.from_root(
                             skimmed, schemaclass=NanoAODSchema, delayed=False
                         ).events()
@@ -1500,7 +1650,28 @@ class DifferentiableAnalysis(Analysis):
                     # If MVA training is enabled, collect data for MVA models
                     # ------------------------------------------------------
                     # Helper to extract class name and associated process names
-                    def parse_class_entry(entry):
+                    def parse_class_entry(entry: Union[str, dict[str, list[str]]]) -> tuple[str, list[str]]:
+                        """
+                        Parse MVA class entry to extract class name and associated process names.
+
+                        Parameters
+                        ----------
+                        entry : Union[str, dict[str, list[str]]]
+                            MVA class entry, either a string (process name) or a dictionary
+                            mapping class name to list of process names.
+
+                        Returns
+                        -------
+                        tuple[str, list[str]]
+                            A tuple containing:
+                            - class_name: Name of the MVA class
+                            - process_names: List of process names associated with this class
+
+                        Raises
+                        ------
+                        ValueError
+                            If entry is neither a string nor a dictionary.
+                        """
                         if isinstance(entry, str):
                             return entry, [entry]
                         if isinstance(entry, dict):
@@ -1509,7 +1680,35 @@ class DifferentiableAnalysis(Analysis):
                                          Allowed types are str or dict.")
 
                     # Helper to record MVA data
-                    def record_mva_entry(mva_data, cfg_name, class_label, presel_ch, process_name):
+                    def record_mva_entry(
+                        mva_data: dict[str, dict[str, list[tuple[dict, int]]]],
+                        cfg_name: str,
+                        class_label: str,
+                        presel_ch: dict[str, Any],
+                        process_name: str
+                    ) -> None:
+                        """
+                        Record MVA training data for a specific class and process.
+
+                        Parameters
+                        ----------
+                        mva_data : dict[str, dict[str, list[tuple[dict, int]]]]
+                            Nested dictionary storing MVA training data, structured as:
+                            mva_data[config_name][class_name] = [(objects_dict, event_count), ...]
+                        cfg_name : str
+                            Name of the MVA configuration.
+                        class_label : str
+                            Label for the MVA class (e.g., 'signal', 'background').
+                        presel_ch : dict[str, Any]
+                            Preselection channel data containing 'mva_objects' and 'mva_nevents'.
+                        process_name : str
+                            Name of the physics process being recorded.
+
+                        Returns
+                        -------
+                        None
+                            Modifies mva_data in place by appending new training data.
+                        """
                         nevents = presel_ch["mva_nevents"]
                         logger.debug(
                             f"Adding {nevents} events from process '{process_name}' to MVA class '{class_label}'."
@@ -1710,12 +1909,33 @@ class DifferentiableAnalysis(Analysis):
                 has_aux=True,
                 argnums=0,
             )(all_parameters, processed_data)
+
             # ----------------------------------------------------------------------
             # Prepare for optimisation
             # ----------------------------------------------------------------------
             logger.info(_banner("Preparing for parameter optimisation"))
             # Define objective for optimiser (p-value to minimise)
-            def objective(params):
+            def objective(params: dict[str, dict[str, Any]]) -> tuple[jnp.ndarray, dict[str, Any]]:
+                """
+                Objective function for gradient-based optimisation.
+
+                This function computes the p-value and maximum likelihood estimators
+                for the given parameters, which serves as the objective to minimise
+                during optimisation.
+
+                Parameters
+                ----------
+                params : dict[str, dict[str, Any]]
+                    Parameter dictionary with structure:
+                    {"aux": auxiliary_parameters, "fit": fit_parameters}
+
+                Returns
+                -------
+                tuple[jnp.ndarray, dict[str, Any]]
+                    A tuple containing:
+                    - p-value (JAX scalar to be minimised)
+                    - maximum likelihood estimators (auxiliary output)
+                """
                 return self._run_traced_analysis_chain(params, processed_data, silent=True)
 
             # Build parameter update/clamping logic
@@ -1756,7 +1976,27 @@ class DifferentiableAnalysis(Analysis):
             # ----------------------------------------------------------------------
             # Optimisation
             # ----------------------------------------------------------------------
-            def optimise_and_log(n_steps: int = 100):
+            def optimise_and_log(n_steps: int = 100) -> tuple[jnp.ndarray, dict[str, Any], dict[str, dict[str, Any]]]:
+                """
+                Run gradient-based optimisation with periodic logging.
+
+                This function performs the main optimisation loop using OptaxSolver,
+                logging parameter updates every 10 steps and recording the optimisation
+                history for later analysis.
+
+                Parameters
+                ----------
+                n_steps : int, optional
+                    Number of optimisation steps to perform, by default 100.
+
+                Returns
+                -------
+                tuple[jnp.ndarray, dict[str, Any], dict[str, dict[str, Any]]]
+                    A tuple containing:
+                    - final_pvalue: Final p-value after optimisation
+                    - final_mle_params: Final maximum likelihood estimators
+                    - final_parameters: Final optimised parameter dictionary
+                """
                 parameters = initial_params
                 last_logged_params = initial_params
                 last_logged_pvalue = initial_pvalue
@@ -1820,10 +2060,9 @@ class DifferentiableAnalysis(Analysis):
             logger.info("=" * 80)
 
             # ----------------------------------------------------------------------
-            # Prepare post-optmisation histograms
+            # Prepare post-optimisation histograms
             # ----------------------------------------------------------------------
             logger.info(_banner("Running analysis chain with optimised parameters (untraced)"))
-
             # Run the traced analysis chain with final parameters
             _ = self._run_traced_analysis_chain(final_params, processed_data)
 
@@ -1853,6 +2092,7 @@ class DifferentiableAnalysis(Analysis):
                 with open(path, "wb") as f:
                     pickle.dump(jax.tree.map(np.array, optimised_nn_params), f)
 
+        logger.info(_banner("Making plots and summaries"))
         # ---------------------------------------------------------------------
         # 5. Reload results and generate summary plots
         # ---------------------------------------------------------------------
@@ -1868,8 +2108,7 @@ class DifferentiableAnalysis(Analysis):
         gradients = results["gradients"]
         histograms = results["histograms"]
 
-        logger.info(_banner("Generating final plots"))
-
+        logger.info(_banner("Generating parameter evolution plots"))
         # Generate optimisation progress plots
         if self.config.jax.explicit_optimisation:
             logger.info(f"Generating parameter history plots")
@@ -1898,7 +2137,33 @@ class DifferentiableAnalysis(Analysis):
         # 6. Generate pre- and post-fit plots
         # ---------------------------------------------------------------------
         logger.info("Generating pre and post-fit plots")
-        def make_pre_and_post_fit_plots(histograms_dict, label: str, fitted_pars):
+        def make_pre_and_post_fit_plots(
+            histograms_dict: dict[str, dict[str, dict[str, dict[str, jnp.ndarray]]]],
+            label: str,
+            fitted_pars: dict[str, Any]
+        ) -> None:
+            """
+            Generate pre-fit and post-fit histogram plots for all analysis channels.
+
+            This function creates CMS-style histogram plots showing data vs. Monte Carlo
+            predictions, either before fitting (pre-fit) or after fitting (post-fit)
+            with the provided fitted parameters.
+
+            Parameters
+            ----------
+            histograms_dict : dict[str, dict[str, dict[str, dict[str, jnp.ndarray]]]]
+                Nested dictionary containing histograms structured as:
+                histograms[process][variation][channel][observable] = (histogram, bin_edges)
+            label : str
+                Label to include in the output filename (e.g., 'prefit', 'postfit').
+            fitted_pars : dict[str, Any]
+                Dictionary of fitted parameters to use for scaling templates.
+
+            Returns
+            -------
+            None
+                Saves plots to the fit_plots directory but returns nothing.
+            """
             channel_data_list, _ = build_channel_data_scalar(histograms_dict, self.config.channels)
             for channel_data in channel_data_list:
                 channel_cfg = next(c for c in self.config.channels if c.name == channel_data.name)

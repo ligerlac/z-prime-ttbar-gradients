@@ -1,9 +1,10 @@
+from functools import partial
+
 import awkward as ak
-from coffea.analysis_tools import PackedSelection
-import numpy as np
 import jax
 import jax.numpy as jnp
-from functools import partial
+import numpy as np
+from coffea.analysis_tools import PackedSelection
 
 ak.jax.register_and_check()
 

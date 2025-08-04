@@ -1,21 +1,21 @@
 #!/usr/bin/env python
 
 import argparse
-import shutil
 import pickle
-from pathlib import Path
+import shutil
 import warnings
 from functools import partial
+from pathlib import Path
 
-import numpy as np
+import awkward as ak
 import jax
 import jax.numpy as jnp
-from jax import random, jit
 import matplotlib.pyplot as plt
-import awkward as ak
-from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
-from sklearn.model_selection import train_test_split
 import mplhep as hep
+import numpy as np
+from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
+from jax import jit, random
+from sklearn.model_selection import train_test_split
 
 hep.style.use("CMS")
 

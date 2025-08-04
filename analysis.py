@@ -8,13 +8,12 @@ correctionlib-based and function-based corrections.
 import logging
 import sys
 
-from analysis.nondiff import NonDiffAnalysis
 from analysis.diff import DifferentiableAnalysis
-
+from analysis.nondiff import NonDiffAnalysis
 from utils.configuration import config as ZprimeConfig
 from utils.input_files import construct_fileset
-from utils.schema import Config, load_config_with_restricted_cli
 from utils.logging import ColoredFormatter
+from utils.schema import Config, load_config_with_restricted_cli
 
 # -----------------------------
 # Logging Configuration

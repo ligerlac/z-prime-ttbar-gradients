@@ -3,9 +3,9 @@
 # =============================================================================
 
 # Standard library imports
+import logging
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
-import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Third-party imports
@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import tensorflow as tf
-from jax import random, value_and_grad, jit
+from jax import jit, random, value_and_grad
 from sklearn.model_selection import train_test_split
 
 # Local application imports
