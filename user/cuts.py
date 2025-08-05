@@ -360,17 +360,17 @@ def Zprime_softcuts_jax_workshop(
     # Choose a fixed numebr of jets
     max_jets = 8   # for example
     padded = ak.pad_none(jets, target=max_jets, axis=1, clip=True)
-    # Convert “None” slots to zero‐score
+    # Convert "None" slots to zero‐score
     padded = ak.fill_none(padded, -1.0)
     # Now we have an array of shape (n_events, max_jets) as Awkward; convert to JAX:
     jets_jax = jnp.asarray(ak.to_jax(padded))  # dtype=float32 or float64
 
-    # 2) Compute “soft count of b‐tagged jets”:
+    # 2) Compute "soft count of b‐tagged jets":
     btag_thr = params["btag_threshold"]  # e.g. 0.5 or whatever; make sure it is a JAX scalar
 
-    # We do “(score − thr)*10” inside a sigmoid, so that any score ≳ thr becomes ~1,
+    # We do "(score − thr)*10" inside a sigmoid, so that any score ≳ thr becomes ~1,
     # and any score ≲ thr becomes ~0. Then we sum across the jet dimension
-    # to get an approximate “number of jets above threshold.”
+    # to get an approximate "number of jets above threshold."
     inner = (jets_jax - btag_thr) * 10.0   # still a (n_events × max_jets) JAX array
     soft_flags = jax.nn.sigmoid(inner)    # same shape (n_events × max_jets)
     soft_counts = jnp.sum(soft_flags, axis=1)      # shape (n_events,)

@@ -10,7 +10,7 @@ import sys
 
 from analysis.diff import DifferentiableAnalysis
 from analysis.nondiff import NonDiffAnalysis
-from utils.configuration import config as ZprimeConfig
+from user.configuration import config as ZprimeConfig
 from utils.input_files import construct_fileset
 from utils.logging import ColoredFormatter
 from utils.schema import Config, load_config_with_restricted_cli

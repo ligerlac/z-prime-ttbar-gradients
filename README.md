@@ -72,10 +72,25 @@ python run.py
 
 ### 3. What is Happening?
 
-The default configuration (`utils/configuration.py`) is set up to perform a differentiable analysis. The command above will:
+The default configuration (`user/configuration.py`) is set up to perform a differentiable analysis. The command above will:
 1.  **MVA Pre-training**: First, it trains a small, JAX-based neural network to distinguish between `W+jets` and `ttbar` background events. The trained model parameters are saved to disk.
 2.  **Differentiable Optimisation**: It then runs the main analysis optimisation loop. The goal is to find the selection cuts that maximise the statistical significance of the Z' signal. At each step, it calculates the gradient of the significance with respect to the cut thresholds (e.g., `met_threshold`, `btag_threshold`) and uses the `optax` optimiser to update them.
 3.  **Outputs**: The analysis will produce plots in the `outputs/` directory showing the evolution of the parameters and significance during optimisation, along with the final histograms. The final optimised significance will be printed to the console.
+
+## For Users: What You Need to Know
+
+**This framework separates user-configurable code from framework code:**
+
+- **`user/` directory**: **This is where you make changes for your analysis**
+  - `user/configuration.py`: Main configuration file - modify this for your analysis settings
+  - `user/cuts.py`: Selection functions - define your analysis regions and cuts here
+  - `user/observables.py`: Physics observables - define what variables you want to compute
+  - `user/systematics.py`: Systematic variations - define uncertainty sources
+
+- **`analysis/` and `utils/` directories**: **Framework code - you typically don't need to modify these**
+  - These contain the analysis infrastructure, plotting utilities, and technical implementation
+
+**To adapt this framework for your analysis, focus on modifying the files in the `user/` directory.** The framework will handle the rest automatically.
 
 ## Table of Contents
 
@@ -83,7 +98,7 @@ The default configuration (`utils/configuration.py`) is set up to perform a diff
   - [Key Technologies](#key-technologies)
   - [The Differentiable Workflow](#the-differentiable-workflow)
 - [How to Implement an Analysis](#how-to-implement-an-analysis)
-  - [1. The Configuration File (`utils/configuration.py`)](#1-the-configuration-file-utilsconfigurationpy)
+  - [1. The Configuration File (`user/configuration.py`)](#1-the-configuration-file-userconfigurationpy)
   - [2. Defining Analysis Logic](#2-defining-analysis-logic)
   - [3. Running the Analysis](#3-running-the-analysis)
 - [Configuration Reference](#configuration-reference)
@@ -133,7 +148,7 @@ Implementing a new analysis or modifying the existing one primarily involves thr
 2.  Defining the analysis logic (observables and selections) in Python functions.
 3.  Running the analysis workflow.
 
-### 1. The Configuration File (`utils/configuration.py`)
+### 1. The Configuration File (`user/configuration.py`)
 
 This file is the central hub for defining your entire analysis. The `config` dictionary controls every aspect of the workflow.
 
@@ -159,9 +174,9 @@ This file is the central hub for defining your entire analysis. The `config` dic
 
 ### 2. Defining Analysis Logic
 
-The `config` file points to Python functions that contain the actual physics logic. These typically live in `utils/`.
+The `config` file points to Python functions that contain the actual physics logic. These typically live in `user/`.
 
-#### Observables (`utils/observables.py`)
+#### Observables (`user/observables.py`)
 
 An observable function takes `awkward-array` collections as input and returns a flat array of the computed values.
 
@@ -178,7 +193,7 @@ def get_mtt(
     return p4tot.mass
 ```
 
-#### Selections (`utils/cuts.py`)
+#### Selections (`user/cuts.py`)
 
 There are two types of selection functions:
 
@@ -224,7 +239,7 @@ With the configuration and functions in place, you can run the analysis using a 
 
 #### Example `run.py` script
 A typical script would:
-1.  Load the base configuration from `utils/configuration.py`.
+1.  Load the base configuration from `user/configuration.py`.
 2.  Optionally, override configuration settings from the command line.
 3.  Construct the fileset of data samples.
 4.  Instantiate the `DifferentiableAnalysis` class from `analysis/diff.py`.
@@ -234,7 +249,8 @@ A typical script would:
 # In a hypothetical run.py
 import sys
 from analysis.diff import DifferentiableAnalysis
-from utils.configuration import config, load_config_with_restricted_cli
+from user.configuration import config
+from utils.schema import load_config_with_restricted_cli
 from utils.input_files import construct_fileset
 
 if __name__ == "__main__":
@@ -265,11 +281,11 @@ The allowed top-level keys for CLI overrides are:
 *   `preprocess`
 *   `statistics`
 
-Attempting to override other keys (e.g., `jax.params`) will result in an error. To change these, you must edit the `utils/configuration.py` file directly.
+Attempting to override other keys (e.g., `jax.params`) will result in an error. To change these, you must edit the `user/configuration.py` file directly.
 
 ## Configuration Reference
 
-The analysis is controlled by a central configuration dictionary, typically defined in `utils/configuration.py`.
+The analysis is controlled by a central configuration dictionary, typically defined in `user/configuration.py`.
 The structure of this configuration is validated against a Pydantic schema in `utils/schema.py`.
 
 Below is a comprehensive reference for all available options, grouped by their top-level key.
@@ -497,7 +513,7 @@ This is a neural network implementation written purely in JAX, providing deep in
 *   **Explicit Parameter Management**: Unlike frameworks that encapsulate model weights, the `JAXNetwork` manages its weights and biases in a simple Python dictionary. This transparency is key to its integration. Parameter names follow a convention (e.g., `__NN_my_model_W1`) that allows the framework to automatically identify them.
 *   **End-to-End optimisation**: When MVA optimisation is enabled in the configuration (`grad_optimisation.optimise: True`), the network's parameters are added to the global set of variables that the main optimizer tunes. This means the optimizer can simultaneously adjust the MVA's weights to improve signal/background separation *and* tune the analysis selection cuts, all to directly maximize the final statistical significance.
 *   **Full Control**: The from-scratch implementation gives full control over the network's forward pass, loss function, and training loop, all within the JAX ecosystem.
-*   **Configuration**: The network architecture (layers, activations) is defined in `utils/configuration.py`. Activations are provided as Python `lambda` functions, allowing for custom, non-standard activation functions if needed.
+*   **Configuration**: The network architecture (layers, activations) is defined in `user/configuration.py`. Activations are provided as Python `lambda` functions, allowing for custom, non-standard activation functions if needed.
 
 #### `TFNetwork`
 This class provides a wrapper around a standard `tf.keras.Sequential` model.
@@ -537,7 +553,7 @@ The framework handles MVAs in a two-stage process: an initial, one-off pre-train
 
 Adding a new MVA to the analysis is a configuration-driven process:
 
-1.  **Add to Config**: Create a new dictionary entry in the `mva` list in `utils/configuration.py`. Give it a unique `name`.
+1.  **Add to Config**: Create a new dictionary entry in the `mva` list in `user/configuration.py`. Give it a unique `name`.
 
 2.  **Define Architecture & Framework**:
     *   Set `framework` to `"jax"` or `"keras"`.
@@ -551,7 +567,7 @@ Adding a new MVA to the analysis is a configuration-driven process:
 4.  **Use the MVA in Selection**:
     *   The framework will automatically train the MVA (if `run_mva_training` is `True`) and compute its output score for every event.
     *   This score is attached to a special object collection named after your MVA (e.g., `wjets_vs_ttbar_nn`).
-    *   You can then use this score in your differentiable selection function in `utils/cuts.py` just like any other variable.
+    *   You can then use this score in your differentiable selection function in `user/cuts.py` just like any other variable.
 
 5.  **Enable Gradient optimisation (JAX only)**:
     *   To make the JAX MVA's weights optimizable, set `grad_optimisation.optimise: True` in its configuration.
@@ -569,7 +585,7 @@ Adding a new MVA to the analysis is a configuration-driven process:
         'my_new_cut': 100.0, # <-- Add new parameter
     },
     ```
-2.  **Use in Soft Selection**: Use `params["my_new_cut"]` in your soft selection function in `utils/cuts.py`.
+2.  **Use in Soft Selection**: Use `params["my_new_cut"]` in your soft selection function in `user/cuts.py`.
 3.  **(Optional) Add a Clamp**: Add a rule for your new parameter in `config["jax"]["param_updates"]` to keep it within a sensible range.
 
 #### Adding a New Systematic Uncertainty
@@ -577,7 +593,7 @@ Adding a new MVA to the analysis is a configuration-driven process:
 1.  **Add to Config**: Add a new dictionary to the `config["systematics"]` list.
 2.  **Define Logic**:
     *   If it's a simple scale factor, you can define the `up_function` and `down_function` directly in the config (e.g., `lambda: 1.05`).
-    *   For more complex variations, define a function in `utils/systematics.py` that takes an object collection and returns a per-object weight.
+    *   For more complex variations, define a function in `user/systematics.py` that takes an object collection and returns a per-object weight.
     *   For `correctionlib`-based uncertainties, ensure the `file` and `key` are specified correctly.
 3.  **Specify Target**: Define the `target` (which object and variable are affected) and the `op` (how the variation is applied, e.g., `mult` or `add`).
 
@@ -592,24 +608,125 @@ Alongside the differentiable path, the framework fully supports a traditional, n
 ## Directory Structure
 
 ```
-├── analysis/
-│   ├── base.py         # Base class with common analysis logic (corrections, etc.)
-│   ├── diff.py         # Implements the full differentiable analysis workflow
-│   └── nondiff.py      # Implements a traditional, non-differentiable analysis
-├── utils/
-│   ├── configuration.py # The main configuration file for the analysis
-│   ├── cuts.py         # Defines selection logic (both hard and soft/differentiable)
-│   ├── observables.py  # Defines functions to compute physics observables
-│   ├── mva.py          # MVA (neural network) model definitions and training logic
-│   ├── systematics.py  # Functions for systematic variations
-│   ├── schema.py       # Pydantic schemas for validating the configuration
-│   └── ...             # Other helper utilities
+├── user/                    # USER-CONFIGURABLE MODULES - Modify these for your analysis
+│   ├── __init__.py         # Package initialization
+│   ├── configuration.py    # Main configuration file for the analysis
+│   ├── cuts.py            # Selection logic (both hard and soft/differentiable)
+│   ├── observables.py     # Physics observables and reconstruction functions
+│   └── systematics.py     # Systematic variation functions
+├── analysis/               # FRAMEWORK CODE - Core analysis classes and pipeline logic
+│   ├── base.py            # Base class with common analysis logic (corrections, etc.)
+│   ├── diff.py            # Implements the full differentiable analysis workflow
+│   └── nondiff.py         # Implements a traditional, non-differentiable analysis
+├── utils/                  # FRAMEWORK CODE - Supporting utility functions
+│   ├── mva.py             # MVA (neural network) model definitions and training logic
+│   ├── schema.py          # Pydantic schemas for validating the configuration
+│   ├── plot.py            # Plotting utilities and visualization functions
+│   ├── stats.py           # Statistical analysis functions
+│   ├── tools.py           # General utility functions
+│   ├── input_files.py     # File handling utilities
+│   ├── output_files.py    # Output management utilities
+│   └── ...                # Other helper utilities
 ├── cabinetry/
-│   └── ...             # Configuration for the `cabinetry` statistical tool
+│   └── ...                # Configuration for the `cabinetry` statistical tool
 ├── corrections/
-│   └── ...             # Correction files (e.g., from `correctionlib`)
+│   └── ...                # Correction files (e.g., from `correctionlib`)
 └── README.md
 ```
+
+### Key Design Principle
+
+The framework separates **user-configurable modules** (`user/`) from **framework code** (`analysis/`, `utils/`):
+
+- **`user/` directory**: Contains modules that users should modify for their specific analysis needs
+- **`analysis/` and `utils/` directories**: Contains framework code that provides the analysis infrastructure
+
+This separation ensures that users can focus on physics configuration while the framework handles the technical implementation details.
+
+---
+
+## Logical Flow of the Differentiable Analysis
+
+Understanding the logical flow of the differentiable analysis helps users see how their configuration choices in the `user/` directory affect the overall workflow. Here's a step-by-step breakdown:
+
+### 1. Initialization and Configuration Loading
+```
+user/configuration.py → Analysis Setup
+```
+- The analysis starts by loading your configuration from `user/configuration.py`
+- This defines all analysis parameters, observables, cuts, and optimization settings
+- The framework validates the configuration against the schema in `utils/schema.py`
+
+### 2. Data Preprocessing (One-time Setup)
+```
+Raw NanoAOD → Preprocessing → Cached Data
+```
+- If `general.run_preprocessing=True`, raw NanoAOD files are skimmed
+- Only branches specified in `config.preprocess.branches` are kept
+- Baseline selections from `config.baseline_selection` are applied
+- Results are cached for faster subsequent runs
+
+### 3. MVA Pre-training (Optional)
+```
+Cached Data → Feature Extraction → Model Training → Saved Model
+```
+- If `general.run_mva_training=True`, neural networks are pre-trained
+- Features defined in `config.mva[].features` are computed using functions from `user/observables.py`
+- Models are trained to distinguish between background processes
+- Trained parameters are saved and later used in the main analysis
+
+### 4. Event Processing Loop
+```
+For each event batch:
+  Raw Objects → Corrections → Good Objects → Ghost Observables
+```
+- Object corrections from `config.corrections` are applied
+- "Good object" masks from `config.good_object_masks` filter objects
+- "Ghost observables" from `config.ghost_observables` are computed using `user/observables.py`
+- This creates an event records with all necessary variables
+
+### 5. Differentiable Selection (The Core Loop)
+```
+For each optimization step:
+  Events → Soft Cuts → Event Weights → Histograms → Significance → Gradients → Parameter Updates
+```
+- **Soft Cuts**: Your selection function from `user/cuts.py` (e.g., `Zprime_softcuts_jax_workshop`) is called
+- **Event Weights**: Instead of hard cuts, sigmoid functions produce continuous weights (0-1) per event
+- **Histograms**: Events are binned using Kernel Density Estimation (KDE) - smooth and differentiable
+- **Significance**: Statistical model computes discovery significance using the `relaxed` library
+- **Gradients**: JAX computes gradients of significance w.r.t. all parameters in `config.jax.params`
+- **Updates**: Optimizer (optax) updates parameters to maximize significance
+
+### 6. Parameter Flow Through the System
+```
+config.jax.params → Selection Function → Event Weights → Final Significance
+     ↑                                                           ↓
+Parameter Updates ←← Gradients ←← Statistical Model ←← Histograms
+```
+- Parameters you define in `config.jax.params` (e.g., `met_threshold: 50.0`) flow into your selection function
+- Your selection function in `user/cuts.py` uses these parameters in sigmoid cuts
+- The resulting event weights affect histogram shapes
+- Changes in histograms affect the final statistical significance
+- Gradients flow backward through this entire chain to update parameters
+
+### 7. Multi-Channel Analysis
+```
+For each channel in config.channels:
+  Selection → Observable Computation → Histogramming → Statistical Combination
+```
+- Each analysis channel (signal region, control regions) is processed
+- Channel-specific selections from `config.channels[].selection` are applied
+- Observables from `config.channels[].observables` are computed using `user/observables.py`
+- All channels contribute to the final statistical model
+
+
+### Key Insight: Your Role as a User
+- **Configuration (`user/configuration.py`)**: You define what gets optimized and how
+- **Observables (`user/observables.py`)**: You define what physics quantities to compute
+- **Cuts (`user/cuts.py`)**: You define how events are selected (both hard and soft cuts)
+- **Systematics (`user/systematics.py`)**: You define uncertainty sources
+
+The framework handles the technical details (JAX tracing, gradient computation, optimisation) while you focus on the physics logic. Every function you write in the `user/` directory becomes part of a fully differentiable computation graph that can be optimised end-to-end.
 
 ---
 

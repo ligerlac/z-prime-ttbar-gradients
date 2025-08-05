@@ -36,7 +36,7 @@ from tabulate import SEPARATING_LINE, tabulate
 # Project Imports
 # =============================================================================
 from analysis.base import Analysis
-from utils.cuts import lumi_mask
+from user.cuts import lumi_mask
 from utils.jax_stats import build_channel_data_scalar, compute_discovery_pvalue
 from utils.logging import BLUE, GREEN, RED, RESET, _banner
 from utils.mva import JAXNetwork, TFNetwork

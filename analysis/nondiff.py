@@ -17,7 +17,7 @@ from coffea.analysis_tools import PackedSelection
 from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 
 from analysis.base import Analysis
-from utils.cuts import lumi_mask
+from user.cuts import lumi_mask
 from utils.output_files import (load_histograms_from_pickle,
                                 save_histograms_to_pickle,
                                 save_histograms_to_root)

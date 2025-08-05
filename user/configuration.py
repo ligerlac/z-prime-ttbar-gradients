@@ -1,10 +1,10 @@
 import jax.numpy as jnp
 import numpy as np
 
-from utils.cuts import (Zprime_hardcuts, Zprime_hardcuts_no_fj,
+from user.cuts import (Zprime_hardcuts, Zprime_hardcuts_no_fj,
                         Zprime_softcuts_jax_workshop, Zprime_workshop_cuts)
-from utils.observables import get_mtt, get_mva_vars
-from utils.systematics import jet_pt_resolution, jet_pt_scale
+from user.observables import get_mtt, get_mva_vars
+from user.systematics import jet_pt_resolution, jet_pt_scale
 
 
 # ==============================================================================
