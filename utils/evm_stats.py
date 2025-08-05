@@ -4,6 +4,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optimistix as optx
+import evermore as evm
 
 from jaxtyping import Array, Float, PyTree
 from typing import NamedTuple, TypeAlias, Any, Callable
