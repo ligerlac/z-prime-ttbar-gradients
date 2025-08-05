@@ -141,7 +141,9 @@ def _log_parameter_update(
     new_p_value: float,
     old_params: Dict[str, Dict[str, Any]],
     new_params: Dict[str, Dict[str, Any]],
-    mva_configs: Optional[List[Any]],
+    initial_params: Optional[Dict[str, Dict[str, Any]]] = None,
+    initial_pval: Optional[float] = None,
+    mva_configs: Optional[List[Any]] = {},
 ) -> None:
     """
     Log a formatted and coloured table of parameter updates for a single optimisation step.
@@ -173,6 +175,12 @@ def _log_parameter_update(
     new_params : Dict[str, Dict[str, Any]]
         Dictionary with 'aux' and 'fit' keys containing updated parameters.
         Same structure as old_params.
+    initial_params : Dict[str, Dict[str, Any]]
+        Dictionary with 'aux' and 'fit' keys containing initial parameters from the start
+        of optimisation. Used to calculate percentage change from initial state.
+        Same structure as old_params.
+    initial_pval: float
+        The initial p-value at the start of optimisation, used for percentage change from initial state.
     mva_configs : Optional[List[Any]]
         List of MVA configuration objects with 'name' and 'grad_optimisation.log_param_changes'
         attributes. Used to determine which neural network parameters to log.
@@ -185,8 +193,9 @@ def _log_parameter_update(
     Notes
     -----
     - Parameters starting with "__NN" are treated as neural network parameters
-    - Percentage changes are calculated as ((new - old) / old) * 100
-    - If old value is 0, percentage change is set to infinity for non-zero new values
+    - Percentage changes are calculated as ((new - old) / old) * 100 for last step change
+    - Percentage changes from initial are calculated as ((new - initial) / initial) * 100
+    - If old/initial value is 0, percentage change is set to infinity for non-zero new values
     - Colour formatting uses ANSI escape codes defined in utils.logging
     """
     # --- P-value Table ---
@@ -197,6 +206,18 @@ def _log_parameter_update(
         p_value_change = float("inf") if new_p_value != 0 else 0.0
 
     p_value_row = [f"{old_p_value:.4f}", f"{new_p_value:.4f}", f"{p_value_change:+.2f}%"]
+
+    if initial_pval:
+        p_value_headers.append("% Change from Initial")
+        if initial_pval != 0:
+            p_value_change_initial = ((new_p_value - initial_pval) / initial_pval) * 100
+        else:
+            if new_p_value != 0:
+                p_value_change_initial = float("inf")
+            else:
+                p_value_change_initial = 0.0
+        p_value_row.append(f"{p_value_change_initial:+.2f}%")
+
 
     # Colour green for improvement (decrease), red for worsening (increase)
     if new_p_value < old_p_value:
@@ -219,9 +240,11 @@ def _log_parameter_update(
     # Combine all parameters for easier iteration
     all_old_params = {**old_params.get("aux", {}), **old_params.get("fit", {})}
     all_new_params = {**new_params.get("aux", {}), **new_params.get("fit", {})}
+    all_initial_params = {**initial_params.get("aux", {}), **initial_params.get("fit", {})} if initial_params else {}
 
     for name, old_val in sorted(all_old_params.items()):
         new_val = all_new_params[name]
+        initial_val = all_initial_params.get(name, 0.0)
 
         # Handle NN parameters
         if name.startswith("__NN"):
@@ -229,26 +252,36 @@ def _log_parameter_update(
 
             # Check if logging is enabled for this MVA
             if mva_name and mva_config_map[mva_name].grad_optimisation.log_param_changes:
-                old_val_display, new_val_display = jnp.mean(old_val), jnp.mean(new_val)
+                old_val_display, new_val_display, initial_val_display = jnp.mean(old_val), jnp.mean(new_val), jnp.mean(initial_val)
                 name_display = f"{name} (mean)"
             else:
                 continue  # Skip NN params if logging is not enabled
         else:
-            old_val_display, new_val_display = old_val, new_val
+            old_val_display, new_val_display, initial_val_display = old_val, new_val, initial_val
             name_display = name
 
-        # Calculate percentage change
-        old_np, new_np = jax.device_get([old_val_display, new_val_display])
-        if old_np != 0:
-            percent_change = ((new_np - old_np) / old_np) * 100
+        # Calculate percentage change from last step
+        old_param, new_param, initial_param = jax.device_get([old_val_display, new_val_display, initial_val_display])
+        if old_param != 0:
+            percent_change = ((new_param - old_param) / old_param) * 100
         else:
-            percent_change = float("inf") if new_np != 0 else 0.0
+            percent_change = float("inf") if new_param != 0 else 0.0
 
         # Format for table
-        row = [name_display, f"{old_np:.4f}", f"{new_np:.4f}", f"{percent_change:+.2f}%"]
+        row = [name_display, f"{old_param:.4f}", f"{new_param:.4f}", f"{percent_change:+.2f}%"]
+
+        # Calculate percentage change from initial
+        if initial_param is None:
+            headers.append("% Change from Initial")
+            if initial_param != 0:
+                percent_change_from_initial = ((new_param - initial_param) / initial_param) * 100
+            else:
+                percent_change_from_initial = float("inf") if new_param != 0 else 0.0
+
+            row.append(f"{percent_change_from_initial:+.2f}%")
 
         # Colour the row blue if the parameter value has changed
-        if not np.allclose(old_np, new_np, atol=1e-6, rtol=1e-5):
+        if not np.allclose(old_param, new_param, atol=1e-6, rtol=1e-5):
             row = [f"{BLUE}{item}{RESET}" for item in row]
 
         table_data.append(row)
@@ -1786,16 +1819,6 @@ class DifferentiableAnalysis(Analysis):
                 logger.info(f"Saved MVA model '{model_name}' to {model_path}")
                 logger.info(f"Saved model network '{model_name}' to {net_path}")
 
-                # MVA scores
-                _ = net.generate_scores_for_processes(mva_data[model_name],)
-                # Plot MVA scores
-                plot_mva_scores(
-                    net.process_to_scores_map,
-                    self.config.plotting,
-                    self.dirs["mva_plots"],
-                    prefix=f"{model_name}_preopt_",
-                )
-
 
             # Attach MVA nets to each file’s processed data
             for dataset_files in all_events.values():
@@ -1803,7 +1826,7 @@ class DifferentiableAnalysis(Analysis):
                     for skim_key, (processed_data, metadata) in file_dict.items():
                         processed_data['mva_nets'] = nets
 
-        return all_events, models, mva_data
+        return all_events, models, nets, mva_data
 
 
 
@@ -1857,7 +1880,7 @@ class DifferentiableAnalysis(Analysis):
             # ---------------------------------------------------------------------
             # 2. Preprocess events and extract MVA models (if any)
             # ---------------------------------------------------------------------
-            processed_data, mva_models = self._prepare_data(
+            processed_data, mva_models, mva_nets, mva_data = self._prepare_data(
                 all_parameters,
                 fileset,
                 read_from_cache=read_from_cache,
@@ -1893,6 +1916,8 @@ class DifferentiableAnalysis(Analysis):
                 new_p_value=float(initial_pvalue),
                 old_params=all_parameters,
                 new_params=all_parameters,
+                initial_params=all_parameters,
+                initial_pval=float(initial_pvalue),
                 mva_configs=self.config.mva,
             )
 
@@ -2040,6 +2065,8 @@ class DifferentiableAnalysis(Analysis):
                             new_p_value=pval,
                             old_params=last_logged_params,
                             new_params=all_new_parameters,
+                            initial_params=initial_params,
+                            initial_pval=initial_pvalue,
                             mva_configs=self.config.mva,
                         )
                         # Update the baseline for the next log
@@ -2063,7 +2090,6 @@ class DifferentiableAnalysis(Analysis):
                 new_params=final_params,
                 mva_configs=self.config.mva,
             )
-            logger.info("=" * 80)
 
             # ----------------------------------------------------------------------
             # Prepare post-optimisation histograms
@@ -2071,6 +2097,28 @@ class DifferentiableAnalysis(Analysis):
             logger.info(_banner("Running analysis chain with optimised parameters (untraced)"))
             # Run the traced analysis chain with final parameters
             _ = self._run_traced_analysis_chain(final_params, processed_data)
+
+            logger.info(_banner("Re-computing NN scores/process for MVA models"))
+
+            # Compute MVA scores with optimised parameters
+            initial_mva_scores, final_mva_scores = {}, {}
+            for net_name, net in mva_nets.items():
+                final_scores = net.generate_scores_for_processes(
+                    mva_data[net_name],
+                    final_params["aux"],
+                )
+                final_mva_scores[net_name] = final_scores
+
+
+
+                # Compute it for initial parameters as well
+                initial_scores = net.generate_scores_for_processes(
+                    mva_data[net_name],
+                    initial_params["aux"],
+                )
+                initial_mva_scores[net_name] = initial_scores
+
+
 
             # ----------------------------------------------------------------------
             # Caching
@@ -2082,11 +2130,14 @@ class DifferentiableAnalysis(Analysis):
                     "mle_pars": final_mle_pars,
                     "pvalue": final_pval,
                     "histograms": self.histograms,
-                    "initial_histograms": initial_histograms,
                     "pvals_history": pval_history,
                     "aux_history": aux_history,
                     "mle_history": mle_history,
                     "gradients": gradients,
+                    "initial_histograms": initial_histograms,
+                    "initial_params": all_parameters,
+                    "final_mva_scores": final_mva_scores,
+                    "initial_mva_scores": initial_mva_scores,
                 }, f)
 
             # Save optimised MVA parameters
@@ -2107,6 +2158,7 @@ class DifferentiableAnalysis(Analysis):
             results = cloudpickle.load(f)
 
         final_params = results["params"]
+        initial_params = results["initial_params"]
         mle_pars = results["mle_pars"]
         final_pval = results["pvalue"]
         pval_history = results["pvals_history"]
@@ -2115,6 +2167,8 @@ class DifferentiableAnalysis(Analysis):
         gradients = results["gradients"]
         histograms = results["histograms"]
         initial_histograms = results["initial_histograms"]
+        final_mva_scores = results["final_mva_scores"]
+        initial_mva_scores = results["initial_mva_scores"]
 
         logger.info(_banner("Generating parameter evolution plots"))
         # Generate optimisation progress plots
@@ -2193,7 +2247,25 @@ class DifferentiableAnalysis(Analysis):
         # Plot post-fit (final) and post-fit (initial) comparison
         make_pre_and_post_fit_plots(histograms, "postopt_postfit", mle_pars)
         make_pre_and_post_fit_plots(initial_histograms, "preopt_postfit", mle_pars)
-        make_pre_and_post_fit_plots(initial_histograms, "preopt_prefit", all_parameters["fit"])
+        make_pre_and_post_fit_plots(initial_histograms, "preopt_prefit", initial_params["fit"])
 
+        # ---------------------------------------------------------------------
+        # 6. Plot NN scores distributions
+        # ---------------------------------------------------------------------
+        for net_name in final_mva_scores.keys():
+            initial_scores = initial_mva_scores[net_name]
+            final_scores = final_mva_scores[net_name]
+            plot_mva_scores(
+                initial_scores,
+                self.config.plotting,
+                self.dirs["mva_plots"],
+                prefix=f"{net_name}_preopt_",
+            )
+            plot_mva_scores(
+                final_scores,
+                self.config.plotting,
+                self.dirs["mva_plots"],
+                prefix=f"{net_name}_postopt_",
+            )
 
         return histograms, final_pval

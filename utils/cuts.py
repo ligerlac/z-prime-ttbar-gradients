@@ -376,7 +376,7 @@ def Zprime_softcuts_jax_workshop(
     btag_cut   = jax.nn.sigmoid(soft_counts * 10)       # shape (n_events,)
 
     # this works because there's always exactly 1 muon in the event
-    lep_ht = ak.to_jax(muons + met).flatten()
+    lep_ht = ak.to_jax(muons[:,0] + met).flatten()
 
     # ---------------------
     # Define differentiable sigmoid cuts

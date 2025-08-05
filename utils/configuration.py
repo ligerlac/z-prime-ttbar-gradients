@@ -244,7 +244,7 @@ mva_config = [
             "random_state": 42,
             "batch_size": None,
             "grad_optimisation": {
-                "optimise": False,  # this will add weights to set of optimised parameters
+                "optimise": True,  # this will add weights to set of optimised parameters
                 "learning_rate": 0.0005,  # learning rate for the MVA optimisation
             },
             "classes": ["wjets", {"ttbar": ("ttbar_semilep", "ttbar_had", "ttbar_lep")}],

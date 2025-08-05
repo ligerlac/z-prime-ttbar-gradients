@@ -1,3 +1,12 @@
+"""
+Plotting utilities for physics analysis with CMS-style formatting.
+
+This module provides plotting functions for particle physics analysis,
+including histogram plotting, parameter evolution tracking, and MVA score visualization.
+Functions support JAX arrays and include error handling and logging.
+"""
+
+import logging
 import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
@@ -10,15 +19,26 @@ from matplotlib import rcParams
 from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import ScalarFormatter
 
+from utils.logging import ColoredFormatter
+
 # Configure matplotlib global settings
 rcParams.update({
     "axes.formatter.use_mathtext": True,
     "text.usetex": True,
     "font.family": "serif",
+    "axes.linewidth": 1.2,
 })
 
-# Type alias for array-like objects
-ArrayLike = Union[np.ndarray, Any]  # Accepts jax.numpy.ndarray, etc.
+# Type alias for array-like objects (supports JAX, NumPy, etc.)
+ArrayLike = Union[np.ndarray, Any]
+
+# Set up module-specific logger with colored formatting
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(ColoredFormatter())
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 
 def format_scientific_latex(value: float, significant_digits: int = 2) -> str:
@@ -40,12 +60,32 @@ def format_scientific_latex(value: float, significant_digits: int = 2) -> str:
     Examples
     --------
     >>> format_scientific_latex(2.487e-5)
-    '2.487\times10^{-5}'
+    '2.487\\times10^{-5}'
+
+    Raises
+    ------
+    ValueError
+        If significant_digits is not positive
+    TypeError
+        If value is not a number
     """
-    formatted = f"{value:.{significant_digits}e}"
-    mantissa, exponent_part = formatted.split("e")
-    exponent = int(exponent_part)
-    return rf"{mantissa}\times10^{{{exponent}}}"
+    if not isinstance(value, (int, float, np.number, np.ndarray)):
+        raise TypeError(f"Value must be a number, got {type(value)}")
+    if significant_digits <= 0:
+        raise ValueError("significant_digits must be positive")
+    if isinstance(value, np.ndarray):
+        if value.shape != ():
+            raise ValueError("Value must be a scalar, got shape {}".format(value.shape))
+        value = value.item()
+
+    try:
+        formatted = f"{value:.{significant_digits}e}"
+        mantissa, exponent_part = formatted.split("e")
+        exponent = int(exponent_part)
+        return rf"{mantissa}\times10^{{{exponent}}}"
+    except (ValueError, OverflowError) as e:
+        logger.error(f"Failed to format {value} in scientific notation: {e}")
+        return str(value)
 
 
 def convert_to_numpy(array_like: ArrayLike) -> np.ndarray:
@@ -64,9 +104,18 @@ def convert_to_numpy(array_like: ArrayLike) -> np.ndarray:
     -------
     np.ndarray
         Converted NumPy array on host memory
+
+    Raises
+    ------
+    ValueError
+        If array_like cannot be converted to numpy array
     """
-    device_array = jax.device_get(array_like)
-    return np.asarray(device_array)
+    try:
+        device_array = jax.device_get(array_like)
+        return np.asarray(device_array)
+    except Exception as e:
+        logger.error(f"Failed to convert array to numpy: {e}")
+        raise ValueError(f"Cannot convert input to numpy array: {e}")
 
 
 def create_cms_histogram(
@@ -120,137 +169,160 @@ def create_cms_histogram(
     plt.Figure
         Generated matplotlib figure
 
+    Raises
+    ------
+    ValueError
+        If templates dictionary is empty or data/bin_edges have incompatible shapes
+    TypeError
+        If required parameters are not of expected types
+
     Notes
     -----
     - Uses CMS plotting style via mplhep
     - Creates two panels: main histogram and data/prediction ratio
     - Includes parameter value annotations when fitted_params are provided
     """
-    # Apply CMS style and convert inputs
-    hep.style.use("CMS")
-    data_array = convert_to_numpy(data)
-    edges_array = convert_to_numpy(bin_edges)
-    bin_centers = 0.5 * (edges_array[:-1] + edges_array[1:])
+    # Input validation
+    if not templates:
+        raise ValueError("Templates dictionary cannot be empty")
 
-    # Determine process drawing order
-    config = plot_settings or {}
-    process_names = list(templates.keys())
-    process_order = config.get("process_order")
+    try:
+        # Apply CMS style and convert inputs
+        hep.style.use("CMS")
+        data_array = convert_to_numpy(data)
+        edges_array = convert_to_numpy(bin_edges)
 
-    if process_order:
-        process_order = [
-            p for p in process_order
-            if p in templates and (show_signal or p.lower() != "signal")
-        ]
-    else:
-        background_processes = sorted(
-            p for p in process_names if p.lower() != "signal"
-        )
-        signal_present = "signal" in templates and show_signal
-        process_order = background_processes + (["signal"] if signal_present else [])
+        # Validate array shapes
+        if len(data_array) != len(edges_array) - 1:
+            raise ValueError(f"Data length ({len(data_array)}) must match number of bins ({len(edges_array) - 1})")
 
-    # Scale templates according to fitted parameters
-    signal_scale = fitted_params.get("mu", 1.0) if fitted_params else 1.0
-    ttbar_scale = (
-        fitted_params.get("norm_ttbar_semilep", 1.0) if fitted_params else 1.0
-    )
+        bin_centers = 0.5 * (edges_array[:-1] + edges_array[1:])
 
-    scaled_templates = {}
-    for process, values in templates.items():
-        scale_factor = 1.0
-        if process.lower() == "signal":
-            scale_factor = signal_scale
-        elif process == "ttbar_semilep":
-            scale_factor = ttbar_scale
-        scaled_templates[process] = convert_to_numpy(values) * scale_factor
+        # Determine process drawing order
+        config = plot_settings or {}
+        process_names = list(templates.keys())
+        process_order = config.get("process_order")
 
-    # Create figure with two panels (main + ratio)
-    figure = plt.figure(figsize=figsize)
-    grid_spec = GridSpec(2, 1, height_ratios=(3, 1), hspace=0.1, figure=figure)
-    main_axis = figure.add_subplot(grid_spec[0])
-    ratio_axis = figure.add_subplot(grid_spec[1], sharex=main_axis)
+        if process_order:
+            process_order = [
+                p for p in process_order
+                if p in templates and (show_signal or p.lower() != "signal")
+            ]
+        else:
+            background_processes = sorted(
+                p for p in process_names if p.lower() != "signal"
+            )
+            signal_present = "signal" in templates and show_signal
+            process_order = background_processes + (["signal"] if signal_present else [])
 
-    # Plot stacked backgrounds and data points
-    color_map = config.get("process_colors", {})
-    label_map = config.get("process_labels", {})
+        logger.debug(f"Process order: {process_order}")
 
-    hep.histplot(
-        [scaled_templates[p] for p in process_order],
-        edges_array,
-        stack=True,
-        ax=main_axis,
-        label=[label_map.get(p, p) for p in process_order],
-        color=[color_map.get(p) for p in process_order],
-        edgecolor="k",
-        histtype="fill",
-        linewidth=0.5,
-    )
-
-    hep.histplot(
-        data_array,
-        edges_array,
-        yerr=np.sqrt(data_array),
-        ax=main_axis,
-        marker="o",
-        color="k",
-        label="Data",
-        markersize=5,
-        capsize=2,
-        histtype="errorbar",
-    )
-
-    main_axis.set_ylabel(ylabel, fontsize=20)
-    main_axis.set_title(title, fontsize=18)
-    main_axis.legend(frameon=False, fontsize=16, ncol=2, loc="upper right")
-    plt.setp(main_axis.get_xticklabels(), visible=False)
-
-    # Add parameter annotation box
-    if fitted_params:
-        param_labels = config.get("jax", {}).get("fit_param_labels", {})
-        annotation_lines = []
-        for param, value in fitted_params.items():
-            latex_label = param_labels.get(param, param)
-            if not (latex_label.startswith("$") and latex_label.endswith("$")):
-                latex_label = f"${latex_label}$"
-            annotation_lines.append(f"{latex_label} = {value:.3f}")
-
-        main_axis.text(
-            0.05,
-            0.94,
-            "\n".join(annotation_lines),
-            transform=main_axis.transAxes,
-            va="top",
-            ha="left",
-            fontsize=18,
-            bbox={
-                "facecolor": "white",
-                "edgecolor": "black",
-                "boxstyle": "round,pad=0.5",
-                "alpha": 0.8,
-            },
+        # Scale templates according to fitted parameters
+        signal_scale = fitted_params.get("mu", 1.0) if fitted_params else 1.0
+        ttbar_scale = (
+            fitted_params.get("norm_ttbar_semilep", 1.0) if fitted_params else 1.0
         )
 
-    # Compute and plot ratio
-    total_prediction = np.sum([scaled_templates[p] for p in process_order], axis=0)
-    ratio_values = np.divide(
-        data_array, total_prediction, out=np.ones_like(data_array), where=total_prediction > 0
-    )
-    ratio_errors = np.divide(
-        np.sqrt(data_array),
-        total_prediction,
-        out=np.zeros_like(data_array),
-        where=total_prediction > 0,
-    )
+        scaled_templates = {}
+        for process, values in templates.items():
+            scale_factor = 1.0
+            if process.lower() == "signal":
+                scale_factor = signal_scale
+            elif process == "ttbar_semilep":
+                scale_factor = ttbar_scale
+            scaled_templates[process] = convert_to_numpy(values) * scale_factor
 
-    ratio_axis.errorbar(
-        bin_centers, ratio_values, yerr=ratio_errors, fmt="o", color="k", capsize=2
-    )
-    ratio_axis.axhline(1, color="r", linestyle="--")
-    ratio_axis.set_ylim(ratio_ylim)
-    ratio_axis.set_xlabel(xlabel, fontsize=14)
-    ratio_axis.set_ylabel("Data/Pred.", fontsize=14, ha="center", labelpad=15)
+        # Create figure with two panels (main + ratio)
+        figure = plt.figure(figsize=figsize)
+        grid_spec = GridSpec(2, 1, height_ratios=(3, 1), hspace=0.1, figure=figure)
+        main_axis = figure.add_subplot(grid_spec[0])
+        ratio_axis = figure.add_subplot(grid_spec[1], sharex=main_axis)
 
-    return figure
+        # Plot stacked backgrounds and data points
+        color_map = config.get("process_colors", {})
+        label_map = config.get("process_labels", {})
+
+        hep.histplot(
+            [scaled_templates[p] for p in process_order],
+            edges_array,
+            stack=True,
+            ax=main_axis,
+            label=[label_map.get(p, p) for p in process_order],
+            color=[color_map.get(p) for p in process_order],
+            edgecolor="k",
+            histtype="fill",
+            linewidth=0.5,
+        )
+
+        hep.histplot(
+            data_array,
+            edges_array,
+            yerr=np.sqrt(data_array),
+            ax=main_axis,
+            marker="o",
+            color="k",
+            label="Data",
+            markersize=5,
+            capsize=2,
+            histtype="errorbar",
+        )
+
+        main_axis.set_ylabel(ylabel, fontsize=20)
+        main_axis.set_title(title, fontsize=18)
+        main_axis.legend(frameon=False, fontsize=16, ncol=2, loc="upper right")
+        plt.setp(main_axis.get_xticklabels(), visible=False)
+
+        # Add parameter annotation box if fitted parameters are provided
+        if fitted_params:
+            param_labels = config.get("jax", {}).get("fit_param_labels", {})
+            annotation_lines = []
+            for param, value in fitted_params.items():
+                latex_label = param_labels.get(param, param)
+                if not (latex_label.startswith("$") and latex_label.endswith("$")):
+                    latex_label = f"${latex_label}$"
+                annotation_lines.append(f"{latex_label} = {value:.3f}")
+
+            main_axis.text(
+                0.05,
+                0.94,
+                "\n".join(annotation_lines),
+                transform=main_axis.transAxes,
+                va="top",
+                ha="left",
+                fontsize=18,
+                bbox={
+                    "facecolor": "white",
+                    "edgecolor": "black",
+                    "boxstyle": "round,pad=0.5",
+                    "alpha": 0.8,
+                },
+            )
+
+        # Compute and plot ratio panel
+        total_prediction = np.sum([scaled_templates[p] for p in process_order], axis=0)
+        ratio_values = np.divide(
+            data_array, total_prediction, out=np.ones_like(data_array), where=total_prediction > 0
+        )
+        ratio_errors = np.divide(
+            np.sqrt(data_array),
+            total_prediction,
+            out=np.zeros_like(data_array),
+            where=total_prediction > 0,
+        )
+
+        ratio_axis.errorbar(
+            bin_centers, ratio_values, yerr=ratio_errors, fmt="o", color="k", capsize=2
+        )
+        ratio_axis.axhline(1, color="r", linestyle="--")
+        ratio_axis.set_ylim(ratio_ylim)
+        ratio_axis.set_xlabel(xlabel, fontsize=14)
+        ratio_axis.set_ylabel("Data/Pred.", fontsize=14, ha="center", labelpad=15)
+
+        return figure
+
+    except Exception as e:
+        logger.error(f"Failed to create CMS histogram: {e}")
+        raise
 
 
 def plot_pvalue_vs_parameters(
@@ -292,93 +364,113 @@ def plot_pvalue_vs_parameters(
     -------
     None
         Saves plot to specified file
+
+    Raises
+    ------
+    ValueError
+        If no varying parameters are found or input data is invalid
+    IOError
+        If file cannot be saved
     """
-    # Combine parameter histories
-    parameter_history = {}
-    for name, history in auxiliary_history.items():
-        if "__NN" not in name:  # Exclude neural network parameters
-            parameter_history[f"aux__{name}"] = history
-    for name, history in mle_history.items():
-        parameter_history[f"mle__{name}"] = history
+    logger.info(f"Creating p-value vs parameters plot: {filename}")
 
-    # Filter out constant parameters
-    non_constant_params = {}
-    for name, history in parameter_history.items():
-        arr = np.asarray(history)
-        if not np.allclose(arr, arr[0]):
-            non_constant_params[name] = history
+    try:
+        # Combine parameter histories
+        parameter_history = {}
+        for name, history in auxiliary_history.items():
+            if "__NN" not in name:  # Exclude neural network parameters
+                parameter_history[f"aux__{name}"] = history
+        for name, history in mle_history.items():
+            parameter_history[f"mle__{name}"] = history
 
-    if not non_constant_params:
-        print("No varying parameters found - skipping plot")
-        return
+        # Filter out constant parameters
+        non_constant_params = {}
+        for name, history in parameter_history.items():
+            arr = np.asarray(history)
+            if not np.allclose(arr, arr[0]):
+                non_constant_params[name] = history
 
-    # Create subplot grid
-    num_params = len(non_constant_params)
-    grid_size = math.ceil(math.sqrt(num_params))
-    fig, axes = plt.subplots(
-        grid_size,
-        grid_size,
-        figsize=(4 * grid_size, 3 * grid_size),
-        sharey=True,
-        squeeze=False,
-    )
-    axes_flat = axes.flatten()
+        if not non_constant_params:
+            logger.warning("No varying parameters found - skipping plot")
+            return
 
-    # Get labeling information
-    config = plot_settings or {}
-    jax_config = config.get("jax", {})
-    aux_labels = jax_config.get("aux_param_labels", {})
-    fit_labels = jax_config.get("fit_param_labels", {})
-    param_labels = {**aux_labels, **fit_labels}
+        logger.debug(f"Found {len(non_constant_params)} varying parameters")
 
-    # Plot each parameter's history against p-values
-    for idx, (ax, (param_name, history)) in enumerate(
-        zip(axes_flat, non_constant_params.items())
-    ):
-        # Extract base parameter name
-        base_name = param_name.split("__", 1)[-1]
+        # Create subplot grid
+        num_params = len(non_constant_params)
+        grid_size = math.ceil(math.sqrt(num_params))
+        fig, axes = plt.subplots(
+            grid_size,
+            grid_size,
+            figsize=(4 * grid_size, 3 * grid_size),
+            sharey=True,
+            squeeze=False,
+        )
+        axes_flat = axes.flatten()
 
-        # Create title string with gradient and learning rate
-        title_parts = []
-        if base_name in gradients.get("aux", {}):
-            grad_val = gradients["aux"][base_name]
-            title_parts.append(
-                r"$\Delta_{\theta}(p_s) = "
-                f"{format_scientific_latex(grad_val)}$"
-            )
-        if base_name in learning_rates:
-            lr_val = learning_rates[base_name]
-            title_parts.append(
-                r"$\eta = " f"{format_scientific_latex(lr_val)}$"
-            )
-        title_text = ", ".join(title_parts) if title_parts else ""
+        # Get labeling information
+        config = plot_settings or {}
+        jax_config = config.get("jax", {})
+        aux_labels = jax_config.get("aux_param_labels", {})
+        fit_labels = jax_config.get("fit_param_labels", {})
+        param_labels = {**aux_labels, **fit_labels}
 
-        # Plot trajectory
-        ax.plot(history, pvalue_history, "o-", ms=5)
-        ax.set_title(title_text, fontsize=10)
+        # Plot each parameter's history against p-values
+        for idx, (ax, (param_name, history)) in enumerate(
+            zip(axes_flat, non_constant_params.items())
+        ):
+            # Extract base parameter name
+            base_name = param_name.split("__", 1)[-1]
 
-        # Configure axes
-        display_name = param_labels.get(base_name, base_name)
-        ax.set_xlabel(f"{display_name} Value")
-        if idx % grid_size == 0:
-            ax.set_ylabel(r"$p$-value")
-        ax.grid(True, alpha=0.3)
+            # Create title string with gradient and learning rate
+            title_parts = []
+            if base_name in gradients.get("aux", {}):
+                grad_val = gradients["aux"][base_name]
+                grad_val = convert_to_numpy(grad_val)
+                title_parts.append(
+                    r"$\Delta_{\theta}(p_s) = "
+                    f"{format_scientific_latex(grad_val)}$"
+                )
+            if base_name in learning_rates:
+                lr_val = learning_rates[base_name]
+                title_parts.append(
+                    r"$\eta = " f"{format_scientific_latex(lr_val)}$"
+                )
+            title_text = ", ".join(title_parts) if title_parts else ""
 
+            # Plot trajectory
+            ax.plot(history, pvalue_history, "o-", ms=5)
+            ax.set_title(title_text, fontsize=10)
 
-    # Configure axes formatting
-    formatter = ScalarFormatter(useMathText=True)
-    formatter.set_scientific(True)
-    formatter.set_powerlimits((0, 0))
-    for ax in axes_flat[:num_params]:
-        ax.yaxis.set_major_formatter(formatter)
+            # Configure axes
+            display_name = param_labels.get(base_name, base_name)
+            ax.set_xlabel(f"{display_name} Value" , fontsize=10)
+            if idx % grid_size == 0:
+                ax.set_ylabel(r"$p$-value", fontsize=10)
+            ax.grid(True, alpha=0.3)
 
-    # Hide unused subplots
-    for ax in axes_flat[num_params:]:
-        ax.set_visible(False)
+        # Configure axes formatting
+        formatter = ScalarFormatter(useMathText=True)
+        formatter.set_scientific(True)
+        formatter.set_powerlimits((0, 0))
+        for ax in axes_flat[:num_params]:
+            ax.yaxis.set_major_formatter(formatter)
+            ax.tick_params(axis="both", labelsize=10)
+            ax.yaxis.offsetText.set_fontsize(10)
 
-    plt.tight_layout()
-    fig.savefig(filename, dpi=300)
-    plt.close(fig)
+        # Hide unused subplots
+        for ax in axes_flat[num_params:]:
+            ax.set_visible(False)
+
+        plt.tight_layout()
+        fig.savefig(filename, dpi=300)
+        plt.close(fig)
+
+        logger.info(f"Successfully saved p-value vs parameters plot to {filename}")
+
+    except Exception as e:
+        logger.error(f"Failed to create p-value vs parameters plot: {e}")
+        raise
 
 
 def plot_parameters_over_iterations(
@@ -420,99 +512,118 @@ def plot_parameters_over_iterations(
     -------
     None
         Saves plot to specified file
+
+    Raises
+    ------
+    ValueError
+        If no varying parameters are found or input data is invalid
+    IOError
+        If file cannot be saved
     """
-    # Combine parameter histories
-    parameter_history = {}
-    for name, history in auxiliary_history.items():
-        if "__NN" not in name:  # Exclude neural network parameters
-            parameter_history[f"aux__{name}"] = history
-    for name, history in mle_history.items():
-        parameter_history[f"mle__{name}"] = history
+    logger.info(f"Creating parameters vs iterations plot: {filename}")
 
-    # Filter out constant parameters
-    non_constant_params = {}
-    for name, history in parameter_history.items():
-        arr = np.asarray(history)
-        if not np.allclose(arr, arr[0]):
-            non_constant_params[name] = history
+    try:
+        # Combine parameter histories
+        parameter_history = {}
+        for name, history in auxiliary_history.items():
+            if "__NN" not in name:  # Exclude neural network parameters
+                parameter_history[f"aux__{name}"] = history
+        for name, history in mle_history.items():
+            parameter_history[f"mle__{name}"] = history
 
-    # Add p-value to parameters
-    non_constant_params["pvalue"] = np.asarray(pvalue_history)
-    if not non_constant_params:
-        print("No varying parameters found - skipping plot")
-        return
+        # Filter out constant parameters
+        non_constant_params = {}
+        for name, history in parameter_history.items():
+            arr = np.asarray(history)
+            if not np.allclose(arr, arr[0]):
+                non_constant_params[name] = history
 
-    # Create subplot grid
-    num_params = len(non_constant_params)
-    num_iterations = len(pvalue_history)
-    iteration_steps = np.arange(num_iterations)
-    grid_size = math.ceil(math.sqrt(num_params))
-    fig, axes = plt.subplots(
-        grid_size,
-        grid_size,
-        figsize=(4 * grid_size, 3 * grid_size),
-        sharex=True,
-        squeeze=False,
-    )
-    axes_flat = axes.flatten()
+        # Add p-value to parameters
+        non_constant_params["pvalue"] = np.asarray(pvalue_history)
+        if not non_constant_params:
+            logger.warning("No varying parameters found - skipping plot")
+            return
 
-    # Get labeling information
-    config = plot_settings or {}
-    jax_config = config.get("jax", {})
-    aux_labels = jax_config.get("aux_param_labels", {})
-    fit_labels = jax_config.get("fit_param_labels", {})
-    param_labels = {**aux_labels, **fit_labels}
+        logger.debug(f"Found {len(non_constant_params)} varying parameters (including p-value)")
 
-    # Plot each parameter's evolution
-    for idx, (ax, (param_name, history)) in enumerate(
-        zip(axes_flat, non_constant_params.items())
-    ):
-        # Extract base parameter name
-        base_name = param_name.split("__", 1)[-1] if "__" in param_name else param_name
+        # Create subplot grid
+        num_params = len(non_constant_params)
+        num_iterations = len(pvalue_history)
+        iteration_steps = np.arange(num_iterations)
+        grid_size = math.ceil(math.sqrt(num_params))
+        fig, axes = plt.subplots(
+            grid_size,
+            grid_size,
+            figsize=(4 * grid_size, 3 * grid_size),
+            sharex=True,
+            squeeze=False,
+        )
+        axes_flat = axes.flatten()
 
-        # Create title string with gradient and learning rate
-        title_parts = []
-        if base_name in gradients.get("aux", {}):
-            grad_val = gradients["aux"][base_name]
-            title_parts.append(
-                r"$\Delta_{\theta}(p_s) = "
-                f"{format_scientific_latex(grad_val)}$"
-            )
-        if base_name in learning_rates:
-            lr_val = learning_rates[base_name]
-            title_parts.append(
-                r"$\eta = " f"{format_scientific_latex(lr_val)}$"
-            )
-        title_text = ", ".join(title_parts) if title_parts else ""
+        # Get labeling information
+        config = plot_settings or {}
+        jax_config = config.get("jax", {})
+        aux_labels = jax_config.get("aux_param_labels", {})
+        fit_labels = jax_config.get("fit_param_labels", {})
+        param_labels = {**aux_labels, **fit_labels}
 
-        # Plot trajectory
-        ax.plot(iteration_steps, history, "o-", ms=3)
-        ax.set_title(title_text, fontsize=10)
+        # Plot each parameter's evolution
+        for idx, (ax, (param_name, history)) in enumerate(
+            zip(axes_flat, non_constant_params.items())
+        ):
+            # Extract base parameter name
+            base_name = param_name.split("__", 1)[-1] if "__" in param_name else param_name
 
-        # Configure axes
-        if param_name == "pvalue":
-            display_name = r"$p$-value"
-        else:
-            display_name = param_labels.get(base_name, base_name)
-        ax.set_ylabel(display_name)
-        ax.set_xlabel("Iteration")
-        ax.grid(True, alpha=0.3)
+            # Create title string with gradient and learning rate
+            title_parts = []
+            if base_name in gradients.get("aux", {}):
+                grad_val = gradients["aux"][base_name]
+                grad_val = convert_to_numpy(grad_val)
+                title_parts.append(
+                    r"$\Delta_{\theta}(p_s) = "
+                    f"{format_scientific_latex(grad_val)}$"
+                )
+            if base_name in learning_rates:
+                lr_val = learning_rates[base_name]
+                title_parts.append(
+                    r"$\eta = " f"{format_scientific_latex(lr_val)}$"
+                )
+            title_text = ", ".join(title_parts) if title_parts else ""
 
+            # Plot trajectory
+            ax.plot(iteration_steps, history, "o-", ms=3)
+            ax.set_title(title_text, fontsize=10)
 
-    # Configure axes formatting
-    formatter = ScalarFormatter(useMathText=True)
-    formatter.set_scientific(True)
-    formatter.set_powerlimits((0, 0))
-    for ax in axes_flat:
-        ax.yaxis.set_major_formatter(formatter)
+            # Configure axes
+            if param_name == "pvalue":
+                display_name = r"$p$-value"
+            else:
+                display_name = param_labels.get(base_name, base_name)
+            ax.set_ylabel(display_name, fontsize=10)
+            ax.set_xlabel("Iteration", fontsize=10)
+            ax.grid(True, alpha=0.3)
 
-    # Hide unused subplots
-    for ax in axes_flat[num_params:]:
-        ax.set_visible(False)
+        # Configure axes formatting
+        formatter = ScalarFormatter(useMathText=True)
+        formatter.set_scientific(True)
+        formatter.set_powerlimits((0, 0))
+        for ax in axes_flat:
+            ax.yaxis.set_major_formatter(formatter)
+            ax.tick_params(axis="both", labelsize=10)
 
-    plt.tight_layout()
-    fig.savefig(filename, dpi=300)
-    plt.close(fig)
+        # Hide unused subplots
+        for ax in axes_flat[num_params:]:
+            ax.set_visible(False)
+
+        plt.tight_layout()
+        fig.savefig(filename, dpi=300)
+        plt.close(fig)
+
+        logger.info(f"Successfully saved parameters vs iterations plot to {filename}")
+
+    except Exception as e:
+        logger.error(f"Failed to create parameters vs iterations plot: {e}")
+        raise
 
 
 def _setup_process_ordering(
@@ -533,13 +644,22 @@ def _setup_process_ordering(
     -------
     List[str]
         Ordered list of process names
+
+    Raises
+    ------
+    ValueError
+        If data_dict is empty
     """
+    if not data_dict:
+        raise ValueError("Data dictionary cannot be empty")
+
     process_order = plot_config.get("process_order", list(data_dict.keys()))
 
     # Build ordered list: first those in process_order, then others in original insertion order
     ordered_processes = [p for p in process_order if p in data_dict]
     ordered_processes += [p for p in data_dict.keys() if p not in process_order]
 
+    logger.debug(f"Process ordering: {ordered_processes}")
     return ordered_processes
 
 
@@ -556,10 +676,22 @@ def _setup_plot_style_and_figure(figsize: Tuple[float, float] = (8, 6)) -> Tuple
     -------
     Tuple[plt.Figure, plt.Axes]
         Created figure and axes objects
+
+    Raises
+    ------
+    ValueError
+        If figsize contains non-positive values
     """
-    hep.style.use("CMS")
-    fig, ax = plt.subplots(figsize=figsize)
-    return fig, ax
+    if figsize[0] <= 0 or figsize[1] <= 0:
+        raise ValueError("Figure size must contain positive values")
+
+    try:
+        hep.style.use("CMS")
+        fig, ax = plt.subplots(figsize=figsize)
+        return fig, ax
+    except Exception as e:
+        logger.error(f"Failed to create figure: {e}")
+        raise
 
 
 def _save_plot_with_logging(
@@ -581,10 +713,24 @@ def _save_plot_with_logging(
         Description for logging
     dpi : int, optional
         DPI for saving, by default 300
+
+    Raises
+    ------
+    IOError
+        If file cannot be saved
     """
-    fig.savefig(plot_filename, dpi=dpi)
-    plt.close(fig)
-    print(f"Saved {plot_description} to {plot_filename}")
+    try:
+        # Ensure parent directory exists
+        plot_filename.parent.mkdir(parents=True, exist_ok=True)
+
+        fig.savefig(plot_filename, dpi=dpi)
+        plt.close(fig)
+        logger.info(f"Saved {plot_description} to {plot_filename}")
+
+    except Exception as e:
+        logger.error(f"Failed to save plot {plot_filename}: {e}")
+        plt.close(fig)  # Ensure figure is closed even on error
+        raise IOError(f"Cannot save plot to {plot_filename}: {e}")
 
 
 def plot_mva_feature_distributions(
@@ -608,7 +754,9 @@ def plot_mva_feature_distributions(
     output_dir : str
         Directory to save the plots.
     """
-    output_path = Path(output_dir) / "mva" / "features"
+    logger.info(f"Creating MVA feature distribution plots in {output_dir}")
+
+    output_path = Path(output_dir) / "features"
     output_path.mkdir(parents=True, exist_ok=True)
 
     process_colors = plot_config.get("process_colors", {})
@@ -620,6 +768,7 @@ def plot_mva_feature_distributions(
         feature_label = feature.get("label", feature_name)
         feature_binning = feature.get("binning", None)
 
+        # Parse binning configuration
         if feature_binning is not None:
             if isinstance(feature_binning, str):
                 # Parse binning string like "50,0,100" into bins
@@ -653,7 +802,7 @@ def plot_mva_feature_distributions(
                     bins = prelim_bins
 
             for process_name in ordered_processes:
-                print(f"Plotting {scaling_version} feature data '{feature_name}' for process '{process_name}'")
+                logger.debug(f"Plotting {scaling_version} feature data '{feature_name}' for process '{process_name}'")
                 if process_name not in feature_data or feature_name not in feature_data[process_name]:
                     continue
 
@@ -676,8 +825,8 @@ def plot_mva_feature_distributions(
             ax.tick_params(axis="both", labelsize=12)
             fig.tight_layout()
 
-            plot_filename = output_path / f"{mva_config.name}_feats_{feature_name}_{scaling_version}.pdf"
-            _save_plot_with_logging(fig, plot_filename, f"MVA feature plot")
+            plot_filename = output_path / f"{mva_config['name']}_feats_{feature_name}_{scaling_version}.pdf"
+            _save_plot_with_logging(fig, plot_filename, f"MVA feature plot ({feature_name}, {scaling_version})")
 
 
 def plot_mva_scores(
@@ -699,49 +848,73 @@ def plot_mva_scores(
         Plotting configuration with colors, labels, and process order.
     output_dir : str
         Directory to save the plot.
+    prefix : str, optional
+        Prefix for output filename, by default ""
     bins : int, optional
         Number of bins for the histogram, by default 50.
     score_range : Tuple[float, float], optional
         The range of scores to plot, by default (0, 1).
+
+    Raises
+    ------
+    ValueError
+        If scores dictionary is empty or bins is not positive
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if not scores:
+        raise ValueError("Scores dictionary cannot be empty")
+    if bins <= 0:
+        raise ValueError("Number of bins must be positive")
 
-    process_colors = plot_config.get("process_colors", {})
-    process_labels = plot_config.get("process_labels", {})
-    ordered_processes = _setup_process_ordering(scores, plot_config)
+    logger.info(f"Creating MVA scores plot with prefix '{prefix}' in {output_dir}")
 
-    fig, ax = _setup_plot_style_and_figure()
+    try:
+        output_path = Path(output_dir)  / "scores"
+        output_path.mkdir(parents=True, exist_ok=True)
 
-    bin_edges = np.linspace(score_range[0], score_range[1], bins + 1)
-    max_height = 0
+        process_colors = plot_config.get("process_colors", {})
+        process_labels = plot_config.get("process_labels", {})
+        ordered_processes = _setup_process_ordering(scores, plot_config)
 
-    for process_name in ordered_processes:
-        print(f"Plotting MVA scores for process '{process_name}'")
-        if process_name not in scores:
-            continue
+        fig, ax = _setup_plot_style_and_figure()
 
-        process_scores = convert_to_numpy(scores[process_name])
-        counts, _ = np.histogram(process_scores, bins=bin_edges, density=True)
-        if len(counts) > 0:
-            max_height = max(max_height, counts.max())
+        bin_edges = np.linspace(score_range[0], score_range[1], bins + 1)
+        max_height = 0
 
-        ax.hist(
-            process_scores,
-            bins=bin_edges,
-            color=process_colors.get(process_name, "gray"),
-            label=process_labels.get(process_name, process_name),
-            alpha=0.7,
-            density=True,
-            histtype="stepfilled",
-            linewidth=1.5,
-        )
+        for process_name in ordered_processes:
+            logger.debug(f"Plotting MVA scores for process '{process_name}'")
+            if process_name not in scores:
+                continue
 
-    ax.set_xlabel("MVA Score", fontsize=14)
-    ax.set_ylabel("a.u.", fontsize=14)
-    ax.set_ylim(0, max_height * 1.15)
-    ax.legend(frameon=False, fontsize=12)
-    ax.tick_params(axis="both", labelsize=12)
-    fig.tight_layout()
+            process_scores = convert_to_numpy(scores[process_name])
+            if len(process_scores) == 0:
+                logger.warning(f"No scores found for process '{process_name}'")
+                continue
 
-    plot_filename = output_dir / f"{prefix}mva_score.pdf"
-    _save_plot_with_logging(fig, plot_filename, f"MVA score plot [{prefix}]")
+            counts, _ = np.histogram(process_scores, bins=bin_edges, density=True)
+            if len(counts) > 0:
+                max_height = max(max_height, counts.max())
+
+            ax.hist(
+                process_scores,
+                bins=bin_edges,
+                color=process_colors.get(process_name, "gray"),
+                label=process_labels.get(process_name, process_name),
+                alpha=0.7,
+                density=True,
+                histtype="stepfilled",
+                linewidth=1.5,
+            )
+
+        ax.set_xlabel("MVA Score", fontsize=14)
+        ax.set_ylabel("a.u.", fontsize=14)
+        ax.set_ylim(0, max_height * 1.15)
+        ax.legend(frameon=False, fontsize=12)
+        ax.tick_params(axis="both", labelsize=12)
+        fig.tight_layout()
+
+        plot_filename = output_path / f"{prefix}mva_score.pdf"
+        _save_plot_with_logging(fig, plot_filename, f"MVA score plot [{prefix}]")
+
+    except Exception as e:
+        logger.error(f"Failed to create MVA scores plot: {e}")
+        raise
