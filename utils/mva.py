@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 import tensorflow as tf
 from jax import jit, random, value_and_grad
+from itertools import chain
 from sklearn.model_selection import train_test_split
 
 # Local application imports
@@ -85,6 +86,8 @@ class BaseNetwork(ABC, Analysis):
         self.parameters: Dict[str, Any] = {}  # For JAX models
         # process -> feature name -> {'scaled': np.ndarray, 'unscaled': np.ndarray}
         self.process_to_features_map: Dict[str, Dict[str, Dict[str, np.ndarray]]] = {}
+        # process -> MVA scores array
+        self.process_to_scores_map: Dict[str, np.ndarray] = {}
         self.model: Any = None  # For TensorFlow models
 
     def _split_train_test(
@@ -333,7 +336,6 @@ class BaseNetwork(ABC, Analysis):
         process_to_features_map = defaultdict(list)
 
         # combine class definitions, preserving order, avoiding duplicates
-        from itertools import chain
         seen = set()
         combined = chain(self.mva_cfg.classes, self.mva_cfg.plot_classes)
         for entry in combined:
@@ -432,6 +434,100 @@ class BaseNetwork(ABC, Analysis):
             Trained model or parameter state.
         """
         raise NotImplementedError
+
+    def generate_scores_for_processes(
+        self,
+        events_per_process: Dict[str, List[Tuple[Dict, int]]],
+        custom_parameters: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, np.ndarray]:
+        """Generate MVA scores for plotting processes.
+
+        This method extracts features and generates MVA scores for processes
+        that should be included in plots. It uses the same logic as prepare_inputs
+        for determining which processes to include based on plot_classes configuration.
+
+        Parameters
+        ----------
+        events_per_process : Dict[str, List[Tuple[Dict, int]]]
+            Dictionary mapping class names to list of (object_dict, event_count) tuples.
+        custom_parameters : Optional[Dict[str, Any]]
+            Optional custom parameters to use for prediction (e.g., optimized parameters).
+            If None, uses the current model parameters.
+
+        Returns
+        -------
+        Dict[str, np.ndarray]
+            Dictionary mapping process names to MVA score arrays, ready for plot_mva_scores.
+        """
+        # Determine which processes to include based on plot_classes
+        plot_processes = getattr(self.mva_cfg, 'plot_processes', None)
+        if plot_processes is None:
+            # Fall back to extracting process names from plot_classes
+            plot_processes = []
+            for entry in self.mva_cfg.plot_classes:
+                if isinstance(entry, str):
+                    plot_processes.append(entry)
+                elif isinstance(entry, dict):
+                    class_name, proc_names = next(iter(entry.items()))
+                    plot_processes.extend(proc_names)
+
+        process_scores = {}
+
+        # Generate scores for each process
+        for class_name, batches in events_per_process.items():
+            # Skip if this class is not in our plot processes
+            if class_name not in plot_processes:
+                continue
+
+            if not batches:
+                logger.warning(f"No events for class '{class_name}'. Skipping score generation.")
+                continue
+
+            all_scores = []
+            for obj_dict, n_events in batches:
+                # Extract features
+                features, _ = self._extract_features(obj_dict, self.mva_cfg.features)
+
+                # Generate predictions using custom parameters if provided
+                if custom_parameters is not None:
+                    scores = self._predict_with_custom_params(features, custom_parameters)
+                else:
+                    scores = self.predict(features)
+
+                all_scores.append(np.asarray(scores))
+
+            # Concatenate all scores for this process
+            if all_scores:
+                process_scores[class_name] = np.concatenate(all_scores)
+
+        # Store in the instance attribute
+        self.process_to_scores_map = process_scores
+        return process_scores
+
+    def _predict_with_custom_params(
+        self,
+        inputs: Union[jnp.ndarray, np.ndarray],
+        custom_parameters: Dict[str, Any],
+    ) -> np.ndarray:
+        """Generate predictions using custom parameters.
+
+        This method should be overridden by subclasses to handle custom parameter usage.
+        Default implementation falls back to regular predict method.
+
+        Parameters
+        ----------
+        inputs : Union[jnp.ndarray, np.ndarray]
+            Input features for prediction.
+        custom_parameters : Dict[str, Any]
+            Custom parameters to use for prediction.
+
+        Returns
+        -------
+        np.ndarray
+            Prediction scores.
+        """
+        logger.warning(f"Custom parameters not supported for {self.__class__.__name__}. Using default parameters.")
+        return self.predict(inputs)
 
     @abstractmethod
     def predict(
@@ -724,6 +820,44 @@ class JAXNetwork(BaseNetwork):
             Model output logits.
         """
         return self.forward_pass(self.parameters, inputs)
+
+    def _predict_with_custom_params(
+        self,
+        inputs: Union[jnp.ndarray, np.ndarray],
+        custom_parameters: Dict[str, Any],
+    ) -> np.ndarray:
+        """Generate predictions using custom parameters for JAX networks.
+
+        Parameters
+        ----------
+        inputs : Union[jnp.ndarray, np.ndarray]
+            Input features for prediction.
+        custom_parameters : Dict[str, Any]
+            Custom parameters to use for prediction. Should contain NN parameters
+            with keys like "__NN_{model_name}_{param_name}".
+
+        Returns
+        -------
+        np.ndarray
+            Prediction scores.
+        """
+        # Extract NN parameters for this model from the flattened parameter dict
+        model_params = {}
+        for param_name, param_value in custom_parameters.items():
+            if param_name.startswith(f"__NN_{self.name}_"):
+                # Remove the model-specific prefix to get the original parameter name
+                original_name = param_name.replace(f"__NN_{self.name}_", "")
+                model_params[param_name] = param_value
+
+        # If no custom parameters found for this model, use default parameters
+        if not model_params:
+            logger.warning(f"No custom parameters found for model '{self.name}'. Using default parameters.")
+            return np.asarray(self.predict(jnp.asarray(inputs)))
+
+        # Use custom parameters for prediction
+        inputs_jax = jnp.asarray(inputs)
+        predictions = self.forward_pass(model_params, inputs_jax)
+        return np.asarray(predictions)
 
 
 # =============================================================================

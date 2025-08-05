@@ -368,7 +368,7 @@ def plot_pvalue_vs_parameters(
     # Configure axes formatting
     formatter = ScalarFormatter(useMathText=True)
     formatter.set_scientific(True)
-    formatter.set_powerlimits((-2, 2))
+    formatter.set_powerlimits((0, 0))
     for ax in axes_flat[:num_params]:
         ax.yaxis.set_major_formatter(formatter)
 
@@ -377,7 +377,7 @@ def plot_pvalue_vs_parameters(
         ax.set_visible(False)
 
     plt.tight_layout()
-    fig.savefig(filename, dpi=300, bbox_inches="tight")
+    fig.savefig(filename, dpi=300)
     plt.close(fig)
 
 
@@ -502,7 +502,7 @@ def plot_parameters_over_iterations(
     # Configure axes formatting
     formatter = ScalarFormatter(useMathText=True)
     formatter.set_scientific(True)
-    formatter.set_powerlimits((-2, 2))
+    formatter.set_powerlimits((0, 0))
     for ax in axes_flat:
         ax.yaxis.set_major_formatter(formatter)
 
@@ -511,8 +511,80 @@ def plot_parameters_over_iterations(
         ax.set_visible(False)
 
     plt.tight_layout()
-    fig.savefig(filename, dpi=300, bbox_inches="tight")
+    fig.savefig(filename, dpi=300)
     plt.close(fig)
+
+
+def _setup_process_ordering(
+    data_dict: Dict[str, Any],
+    plot_config: Dict[str, Any]
+) -> List[str]:
+    """
+    Set up consistent process ordering for plotting.
+
+    Parameters
+    ----------
+    data_dict : Dict[str, Any]
+        Dictionary containing process data
+    plot_config : Dict[str, Any]
+        Plotting configuration with process_order
+
+    Returns
+    -------
+    List[str]
+        Ordered list of process names
+    """
+    process_order = plot_config.get("process_order", list(data_dict.keys()))
+
+    # Build ordered list: first those in process_order, then others in original insertion order
+    ordered_processes = [p for p in process_order if p in data_dict]
+    ordered_processes += [p for p in data_dict.keys() if p not in process_order]
+
+    return ordered_processes
+
+
+def _setup_plot_style_and_figure(figsize: Tuple[float, float] = (8, 6)) -> Tuple[plt.Figure, plt.Axes]:
+    """
+    Set up consistent plot style and create figure.
+
+    Parameters
+    ----------
+    figsize : Tuple[float, float], optional
+        Figure size, by default (8, 6)
+
+    Returns
+    -------
+    Tuple[plt.Figure, plt.Axes]
+        Created figure and axes objects
+    """
+    hep.style.use("CMS")
+    fig, ax = plt.subplots(figsize=figsize)
+    return fig, ax
+
+
+def _save_plot_with_logging(
+    fig: plt.Figure,
+    plot_filename: Path,
+    plot_description: str,
+    dpi: int = 300
+) -> None:
+    """
+    Save plot with consistent logging and cleanup.
+
+    Parameters
+    ----------
+    fig : plt.Figure
+        Figure to save
+    plot_filename : Path
+        Path to save the plot
+    plot_description : str
+        Description for logging
+    dpi : int, optional
+        DPI for saving, by default 300
+    """
+    fig.savefig(plot_filename, dpi=dpi)
+    plt.close(fig)
+    print(f"Saved {plot_description} to {plot_filename}")
 
 
 def plot_mva_feature_distributions(
@@ -541,11 +613,7 @@ def plot_mva_feature_distributions(
 
     process_colors = plot_config.get("process_colors", {})
     process_labels = plot_config.get("process_labels", {})
-    process_order = plot_config.get("process_order", list(feature_data.keys()))
-
-    # Build ordered list: first those in process_order, then others in original insertion order
-    ordered_processes = [p for p in process_order if p in feature_data]
-    ordered_processes += [p for p in feature_data.keys() if p not in process_order]
+    ordered_processes = _setup_process_ordering(feature_data, plot_config)
 
     for feature in mva_config.get("features", []):
         feature_name = feature["name"]
@@ -565,9 +633,8 @@ def plot_mva_feature_distributions(
             # Determine binning from data later if not specified
             prelim_bins = None
 
-        hep.style.use("CMS")
         for scaling_version in ["scaled", "unscaled"]:
-            fig, ax = plt.subplots(figsize=(8, 6))
+            fig, ax = _setup_plot_style_and_figure()
 
             bins = prelim_bins
             if prelim_bins is None:
@@ -576,7 +643,8 @@ def plot_mva_feature_distributions(
                 bins = np.linspace(np.min(all_values), np.max(all_values), 50)
             else:
                 if scaling_version == "scaled":
-                    if (scaling := feature.scale) is not None:
+                    scaling = getattr(feature, 'scale', None)
+                    if scaling is not None:
                         # Scale feature data if specified in MVA config
                         bins = scaling(bins)
                     else:
@@ -609,17 +677,14 @@ def plot_mva_feature_distributions(
             fig.tight_layout()
 
             plot_filename = output_path / f"{mva_config.name}_feats_{feature_name}_{scaling_version}.pdf"
-            fig.savefig(plot_filename, dpi=300)
-            plt.close(fig)
-            print(f"Saved MVA feature plot to {plot_filename}")
+            _save_plot_with_logging(fig, plot_filename, f"MVA feature plot")
 
 
 def plot_mva_scores(
     scores: Dict[str, ArrayLike],
     plot_config: Dict[str, Any],
     output_dir: str,
-    file_name: str = "mva_scores.pdf",
-    title: str = "MVA Scores",
+    prefix: str = "",
     bins: int = 50,
     score_range: Tuple[float, float] = (0, 1),
 ) -> None:
@@ -634,29 +699,24 @@ def plot_mva_scores(
         Plotting configuration with colors, labels, and process order.
     output_dir : str
         Directory to save the plot.
-    file_name : str, optional
-        Name for the output plot file, by default "mva_scores.pdf".
-    title : str, optional
-        Title for the plot, by default "MVA Scores".
     bins : int, optional
         Number of bins for the histogram, by default 50.
     score_range : Tuple[float, float], optional
         The range of scores to plot, by default (0, 1).
     """
-    output_path = Path(output_dir) / "mva"
-    output_path.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     process_colors = plot_config.get("process_colors", {})
     process_labels = plot_config.get("process_labels", {})
-    process_order = plot_config.get("process_order", list(scores.keys()))
+    ordered_processes = _setup_process_ordering(scores, plot_config)
 
-    fig, ax = plt.subplots(figsize=(8, 6))
-    hep.style.use("CMS")
+    fig, ax = _setup_plot_style_and_figure()
 
     bin_edges = np.linspace(score_range[0], score_range[1], bins + 1)
     max_height = 0
 
-    for process_name in process_order:
+    for process_name in ordered_processes:
+        print(f"Plotting MVA scores for process '{process_name}'")
         if process_name not in scores:
             continue
 
@@ -665,10 +725,9 @@ def plot_mva_scores(
         if len(counts) > 0:
             max_height = max(max_height, counts.max())
 
-        hep.histplot(
+        ax.hist(
             process_scores,
             bins=bin_edges,
-            ax=ax,
             color=process_colors.get(process_name, "gray"),
             label=process_labels.get(process_name, process_name),
             alpha=0.7,
@@ -677,7 +736,6 @@ def plot_mva_scores(
             linewidth=1.5,
         )
 
-    ax.set_title(title, fontsize=16, loc="left")
     ax.set_xlabel("MVA Score", fontsize=14)
     ax.set_ylabel("a.u.", fontsize=14)
     ax.set_ylim(0, max_height * 1.15)
@@ -685,7 +743,5 @@ def plot_mva_scores(
     ax.tick_params(axis="both", labelsize=12)
     fig.tight_layout()
 
-    plot_filename = output_path / file_name
-    fig.savefig(plot_filename)
-    plt.close(fig)
-    print(f"Saved MVA score plot to {plot_filename}")
+    plot_filename = output_dir / f"{prefix}mva_score.pdf"
+    _save_plot_with_logging(fig, plot_filename, f"MVA score plot [{prefix}]")

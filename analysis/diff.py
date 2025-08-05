@@ -951,7 +951,6 @@ class DifferentiableAnalysis(Analysis):
                 trained[mva_cfg.name] = params
                 nets[mva_cfg.name] = net
 
-
             # TensorFlow-based model
             else:
                 net = TFNetwork(mva_cfg)
@@ -1774,7 +1773,6 @@ class DifferentiableAnalysis(Analysis):
             logger.info(_banner("Executing MVA Pre-training"))
             models, nets = self._run_mva_training(mva_data)
 
-
             # Save trained models and attach to processed data
             for model_name in models.keys():
                 model = models[model_name]
@@ -1788,6 +1786,15 @@ class DifferentiableAnalysis(Analysis):
                 logger.info(f"Saved MVA model '{model_name}' to {model_path}")
                 logger.info(f"Saved model network '{model_name}' to {net_path}")
 
+                # MVA scores
+                _ = net.generate_scores_for_processes(mva_data[model_name],)
+                # Plot MVA scores
+                plot_mva_scores(
+                    net.process_to_scores_map,
+                    self.config.plotting,
+                    self.dirs["mva_plots"],
+                    prefix=f"{model_name}_preopt_",
+                )
 
 
             # Attach MVA nets to each file’s processed data
@@ -1796,7 +1803,7 @@ class DifferentiableAnalysis(Analysis):
                     for skim_key, (processed_data, metadata) in file_dict.items():
                         processed_data['mva_nets'] = nets
 
-        return all_events, models
+        return all_events, models, mva_data
 
 
 
