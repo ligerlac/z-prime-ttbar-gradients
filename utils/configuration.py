@@ -86,7 +86,6 @@ jax_config = {
                 ("Muon", "pt"),
                 ("Jet", "btagDeepB"),
                 ("PuppiMET", "pt"),
-                ("Jet", "mass"),
                 ("wjets_vs_ttbar_nn", None),
             ],
         },

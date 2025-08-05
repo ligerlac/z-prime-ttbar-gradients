@@ -325,7 +325,6 @@ def Zprime_softcuts_jax_workshop(
     muons: ak.Array,
     jets: ak.Array,
     met: ak.Array,
-    jet_mass: ak.Array,
     nn,
     params: dict
 ) -> jnp.ndarray:
@@ -343,6 +342,8 @@ def Zprime_softcuts_jax_workshop(
         Jet collection in JAX backend.
     met : ak.Array
         MET collection in JAX backend.
+    nn : dict
+        Neural network instance and features.
     params : dict
         Dictionary of cut thresholds and scales (e.g. for MET cut).
 

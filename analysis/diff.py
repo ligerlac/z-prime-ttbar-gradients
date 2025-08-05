@@ -143,7 +143,7 @@ def _log_parameter_update(
     new_params: Dict[str, Dict[str, Any]],
     initial_params: Optional[Dict[str, Dict[str, Any]]] = None,
     initial_pval: Optional[float] = None,
-    mva_configs: Optional[List[Any]] = {},
+    mva_configs: Optional[List[Any]] = None,
 ) -> None:
     """
     Log a formatted and coloured table of parameter updates for a single optimisation step.
