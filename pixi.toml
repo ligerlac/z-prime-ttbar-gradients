@@ -35,6 +35,7 @@ tqdm = ">=4.67.1,<5"
 vector = ">=1.6.3,<2"
 python = ">=3.12.11,<3.13"
 xrootd = ">=5.8.1,<6"
+fsspec-xrootd = ">=0.5.1,<0.6"
 
 [pypi-dependencies]
 relaxed = ">=0.4.0, <0.5"
