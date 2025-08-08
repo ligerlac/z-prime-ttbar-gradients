@@ -249,7 +249,7 @@ mva_config = [
     {
         "name": "wjets_vs_ttbar_nn",
         "use_in_diff": True,
-        "epochs": 1000,
+        "epochs": 100,
         "framework": "jax",  # keras/tf/... if TF need more info
         # (e.g. Model: Sequential layers: Dense)
         "validation_split": 0.2,
@@ -301,7 +301,7 @@ mva_config = [
                 "function": lambda mva: mva.n_jet,
                 "use": [("mva", None)],
                 "scale": lambda x: x / 10.0,  # scale to [0, 1]
-                "binning": "01010",  # optional binning for pre-scaling
+                "binning": "0,10,10",  # optional binning for pre-scaling
                 # data scaled by "scale" for post-scaling data
             },
             {
@@ -310,7 +310,7 @@ mva_config = [
                 "function": lambda mva: mva.leading_jet_mass,
                 "use": [("mva", None)],
                 "scale": lambda x: x / 20.0,  # scale to [0, 1]
-                "binning": "010050",  # optional binning for pre-scaling
+                "binning": "0,100,50",  # optional binning for pre-scaling
                 # data scaled by "scale" for post-scaling data
             },
             {
@@ -318,7 +318,7 @@ mva_config = [
                 "label": r"$m_{j_2}$ [GeV]",
                 "function": lambda mva: mva.subleading_jet_mass,
                 "use": [("mva", None)],
-                "binning": "05025",  # optional binning for pre-scaling
+                "binning": "0,50,25",  # optional binning for pre-scaling
                 # data scaled by "scale" for post-scaling data
             },
         ],

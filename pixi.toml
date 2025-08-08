@@ -8,10 +8,10 @@ version = "0.1.0"
 
 [dependencies]
 # v2.8.6 is the last release to have JAX backend support
-awkward = "==2.8.6"
+awkward = "==2.8.2"
 cabinetry = ">=0.6.0,<0.7"
 cloudpickle = ">=3.1.1,<4"
-coffea = ">=2025.7.3,<2026"
+coffea = ">=2024,<2025"
 correctionlib = ">=2.7.0,<3"
 dask-awkward = ">=2025.5.0,<2026"
 equinox = ">=0.13.0,<0.14"
@@ -32,12 +32,12 @@ scipy = ">=1.16.0,<2"
 tabulate = ">=0.9.0,<0.10"
 tensorflow = ">=2.18.0,<3"
 tqdm = ">=4.67.1,<5"
-vector = ">=1.6.3,<2"
+vector = "==1.5.1" # ">=1.6.3,<2"
 python = ">=3.12.11,<3.13"
 xrootd = ">=5.8.1,<6"
 
 [pypi-dependencies]
-relaxed = ">=0.4.0, <0.5"
+relaxed = "-=0.4.0"
 
 [feature.lab.dependencies]
 notebook = ">=7.4.5,<8"
