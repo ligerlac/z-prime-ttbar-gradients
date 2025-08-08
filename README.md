@@ -12,9 +12,29 @@ This section guides you through running the default analysis configuration provi
 
 #### Environment Setup
 
-Before running, you must set up the Python environment and install the required dependencies. The recommended method is to use `conda`.
+Before running, you must set up the Python environment and install the required dependencies. The recommended method is to use Pixi.
 
-**Using `conda` (Recommended)**
+##### Using Pixi
+
+1. Install [Pixi](https://pixi.sh/latest/installation/).
+2. Run
+
+```
+pixi run start
+```
+
+from the top level of the repository.
+This will launch a JupyterLab interface with the environment described the by `pixi.toml` Pixi manifest and instantiated in the `pixi.lock` lock file activated.
+
+To interactively use the environment in your local machine's shell run
+
+```
+pixi shell
+```
+
+from the top level of the repository.
+
+##### Using `conda`
 
 The `environment.yml` file contains all the necessary packages. Create and activate the conda environment with the following commands:
 
@@ -23,7 +43,7 @@ conda env create -f environment.yml
 conda activate zprime_diff_analysis
 ```
 
-**Using `pip`**
+##### Using `pip`
 
 We also provide a `requirements.txt` file, you can still leverage `conda` for environment management:
 
