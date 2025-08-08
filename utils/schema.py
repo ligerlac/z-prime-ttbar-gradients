@@ -1,8 +1,18 @@
+"""
+Pydantic schemas for validating the analysis configuration.
+
+This module defines a set of Pydantic models that correspond to the structure
+of the main analysis configuration dictionary. It ensures that the configuration
+is well-formed, all required fields are present, and values have the correct types
+before the analysis runs. This provides type safety and clear error messages for
+invalid configurations.
+"""
+
 import copy
 from enum import Enum
 from typing import Annotated, Callable, List, Literal, Optional, Tuple, Union
 
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, DictConfig
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -11,64 +21,87 @@ ObjVar = Tuple[str, Optional[str]]
 
 
 class SubscriptableModel(BaseModel):
+    """A Pydantic BaseModel that supports dictionary-style item access."""
+
     def __getitem__(self, key):
+        """Allows dictionary-style `model[key]` access."""
         return getattr(self, key)
 
     def __setitem__(self, key, value):
+        """Allows dictionary-style `model[key] = value` assignment."""
         return setattr(self, key, value)
 
     def __contains__(self, key):
+        """Allows `key in model` checks."""
         return hasattr(self, key)
 
     def get(self, key, default=None):
+        """Allows `.get(key, default)` method."""
         return getattr(self, key, default)
 
 
 class FunctorConfig(SubscriptableModel):
     function: Annotated[
         Callable,
-        Field(
-            description="Function to be computed."
-        ),
+        Field(description="A Python callable to be executed."),
     ]
     use: Annotated[
         Optional[List[ObjVar]],
         Field(
             default=None,
-            description="(object, variable) pairs for the function.",
+            description="A list of (object variable) tuples specifying "
+            "the inputs for the function.",
         ),
     ]
 
+
 class GoodObjectMasksConfig(SubscriptableModel):
     object: Annotated[
-        str, Field(description="Name of the object to compute masks for")
+        str,
+        Field(
+            description="The object collection to which this mask applies "
+            "(e.g. 'Jet')."
+        ),
     ]
     function: Annotated[
         Callable,
-        Field(description="Function to compute good object masks. \
-              Will be applied to the object in block key.")
+        Field(
+            description="A callable that takes object collections and "
+            "returns a boolean mask."
+        ),
     ]
     use: Annotated[
         List[ObjVar],
         Field(
-            description="(object, variable) pairs for the good object mask function.",
+            description="A list of (object variable) tuples specifying "
+            "the inputs for the mask function."
         ),
     ]
 
     @model_validator(mode="after")
     def validate_fields(self) -> "GoodObjectMasksConfig":
-        # check that object is one of Muon, Jet or FatJet
+        """Validate that the object is a recognised type."""
         if self.object not in ["Muon", "Jet", "FatJet"]:
             raise ValueError(
-                f"Invalid object '{self.object}'. Must be one of 'Muon', \
-                    'Jet', or 'FatJet'."
+                f"Invalid object '{self.object}'. Must be one of "
+                f"'Muon' 'Jet' or 'FatJet'."
             )
 
         return self
 
+
 class GoodObjectMasksBlockConfig(SubscriptableModel):
-    analysis: List[GoodObjectMasksConfig]
-    mva: List[GoodObjectMasksConfig]
+    """Configuration block for defining 'good' object masks."""
+
+    analysis: Annotated[
+        List[GoodObjectMasksConfig],
+        Field(description="Masks for the main physics analysis branch."),
+    ]
+    mva: Annotated[
+        List[GoodObjectMasksConfig],
+        Field(description="Masks for the MVA training data branch."),
+    ]
+
 
 # ------------------------
 # General configuration
@@ -86,101 +119,131 @@ class GeneralConfig(SubscriptableModel):
     ]
     analysis: Annotated[
         Optional[str],
-        Field(default="nondiff",
-              description="Analysis MODE: 'diff', 'nondiff' or 'both'"),
+        Field(
+            default="nondiff",
+            description="The analysis mode to run: 'diff' (differentiable) "
+            "'nondiff' or 'both'.",
+        ),
     ]
     max_files: Annotated[
         Optional[int],
-        Field(default=1, description="Maximum number of files to process"),
+        Field(
+            default=1,
+            description="Maximum number of files to process per dataset. "
+            "Use -1 for no limit.",
+        ),
     ]
     run_preprocessing: Annotated[
         bool,
-        Field(default=False, description="Whether to run preprocessing step"),
+        Field(
+            default=False,
+            description="If True, run the initial NanoAOD skimming and filtering step.",
+        ),
     ]
     run_histogramming: Annotated[
         bool,
-        Field(default=True, description="Whether to run histogramming step"),
+        Field(
+            default=True,
+            description="If True run the histogramming step for the "
+            "non-differentiable analysis.",
+        ),
     ]
     run_statistics: Annotated[
         bool,
         Field(
             default=True,
-            description="Whether to run statistical analysis step",
+            description="If True run the statistical analysis "
+            "(e.g. cabinetry fit) in non-differentiable analysis.",
         ),
     ]
     run_systematics: Annotated[
         bool,
         Field(
             default=True,
-            description="Whether to run systematic variations step",
+            description="If True, process systematic variations.",
         ),
     ]
     run_plots_only: Annotated[
         bool,
         Field(
             default=False,
-            description="Whether to skip all steps except plotting",
+            description="If True load cached results and generate plots "
+            "without re-running the analysis.",
         ),
     ]
     run_mva_training: Annotated[
         bool,
         Field(
             default=False,
-            description="Whether to run MVA training step",
+            description="If True, run the MVA model pre-training step.",
         ),
     ]
     read_from_cache: Annotated[
         bool,
         Field(
             default=True,
-            description="Whether to read preprocessed files from cache",
+            description="If True, read preprocessed data from the cache directory "
+            "if available.",
         ),
     ]
 
     output_dir: Annotated[
         Optional[str],
-        Field(default="output/", description="Directory for output files"),
+        Field(
+            default="output/",
+            description="Root directory for all analysis outputs "
+            "(plots, models, etc.).",
+        ),
     ]
     preprocessor: Annotated[
         Literal["uproot", "dak"],
-        Field(default="uproot", description="Preprocessor to use"),
+        Field(
+            default="uproot",
+            description="The engine to use for preprocessing: 'uproot' or "
+            "'dask-awkward'.",
+        ),
     ]
     preprocessed_dir: Annotated[
         Optional[str],
         Field(
-            default=None, description="Directory containing preprocessed files"
+            default=None,
+            description="Directory containing pre-processed (skimmed) ROOT files.",
         ),
     ]
     cache_dir: Annotated[
         Optional[str],
         Field(
             default="/tmp/gradients_analysis/",
-            description="Directory for caching preprocessed files",
+            description="Cache directory for intermediate products of the analysis.",
         ),
     ]
     processes: Annotated[
         Optional[List[str]],
         Field(
             default=None,
-            description="List of processes to include in the analysis",
+            description="If specified, limit the analysis to this list "
+            "of process names.",
         ),
     ]
     channels: Annotated[
         Optional[List[str]],
         Field(
             default=None,
-            description="List of channels to include in the analysis",
+            description="If specified, limit the analysis to this list "
+            "of channel names.",
         ),
     ]
 
     @model_validator(mode="after")
     def validate_general(self) -> "GeneralConfig":
+        """Validate the general configuration settings."""
         if self.analysis not in ["diff", "nondiff", "both"]:
             raise ValueError(
                 f"Invalid analysis mode '{self.analysis}'. Must be 'diff' or 'nondiff'."
             )
 
         return self
+
 
 # ------------------------
 # JAX configuration
@@ -189,64 +252,69 @@ class JaxConfig(SubscriptableModel):
     soft_selection: Annotated[
         FunctorConfig,
         Field(
-            description="Soft selection function for JAX-mode observable shaping. "
-            "Should return a dictionary of soft selections."
+            description="The differentiable selection function. It "
+            "should return a per-event weight."
         ),
     ]
     params: Annotated[
         dict[str, float],
-        Field(description="Thresholds, weights, and scaling factors used in JAX backend."),
+        Field(
+            description="A dictionary of all optimizable "
+            + "parameters and their initial values."
+        ),
     ]
-    optimize: Annotated[
+    optimise: Annotated[
         bool,
         Field(
             default=True,
-            description="Whether to run JAX optimisation for soft selection parameters",
+            description="If True, run the gradient-based optimisation of parameters.",
         ),
     ]
     learning_rate: Annotated[
         float,
         Field(
             default=0.01,
-            description="Learning rate for JAX optimisation",
+            description="The default learning rate for the optimiser.",
         ),
     ]
     max_iterations: Annotated[
         Optional[int],
         Field(
             default=25,
-            description="Number of optimisation steps for JAX",
+            description="The number of optimisation steps to perform.",
         ),
     ]
     param_updates: Annotated[
-            dict[str, Callable[[float, float], float]],
-            Field(
-                default_factory=dict,
-                description=(
-                    "Optional per-parameter update rules. Maps parameter name to a callable "
-                    "that accepts (value, delta) and returns updated value. "
-                    "Delta is defined as `learning_rate * gradient`. "
-                    "Example: {'met_threshold': lambda x, d: jnp.clip(x + d, 20.0, 150.0)}"
-                ),
-            ),
-        ]
+        dict[str, Callable[[float, float], float]],
+        Field(
+            default_factory=dict,
+            description="Optional per-parameter update/clamping rules. "
+            + "Maps a parameter name to a callable that accepts "
+            + "(current_value, update_delta) and returns "
+            + "the new value. Example: "
+            + "{'met_threshold': lambda x, d: jnp.clip(x + d, 20, 150)}",
+        ),
+    ]
 
     learning_rates: Annotated[
         Optional[dict[str, float]],
         Field(
             default=None,
-            description="Optional per-parameter learning rates for JAX optimisation. "
-            "If None, uses `learning_rate` for all parameters.",
+            description="A dictionary of parameter-specific learning rates, \
+                        overriding the default.",
         ),
     ]
 
-    explicit_optimization: Annotated[
+    explicit_optimisation: Annotated[
         bool,
         Field(
             default=False,
-            description="Whether to run explicit optimization loop for JAX parameters",
+            description="If True, use a manual optimisation loop instead of the \
+                `jaxopt` solver.",
         ),
     ]
+
+
 # ------------------------
 # Preprocessing configuration
 # ------------------------
@@ -254,8 +322,7 @@ class PreprocessConfig(SubscriptableModel):
     branches: Annotated[
         dict[str, List[str]],
         Field(
-            description="Branches to keep per NanoAOD object. "
-            "'event' refers to non-collection branches."
+            description="A mapping of collection names to a list of branches to keep."
         ),
     ]
     ignore_missing: Annotated[
@@ -267,13 +334,13 @@ class PreprocessConfig(SubscriptableModel):
     mc_branches: Annotated[
         dict[str, List[str]],
         Field(
-            description="Branches to keep for MC only. "
-            "'event' refers to non-collection branches."
+            description="Additional branches to keep only for Monte Carlo samples."
         ),
     ]
 
     @model_validator(mode="after")
     def validate_branches(self) -> "PreprocessConfig":
+        """Validate the branch configuration for duplicates and consistency."""
         # check for duplicate objects in branches
         if len(list(self.branches.keys())) != len(set(self.branches.keys())):
             raise ValueError("Duplicate objects found in branch list.")
@@ -313,7 +380,8 @@ class StatisticalConfig(SubscriptableModel):
     cabinetry_config: Annotated[
         str,
         Field(
-            description="Path to YAML file with cabinetry settings",
+            description="Path to the YAML configuration file for the `cabinetry` \
+                statistical tool (non-differentiable analysis).",
         ),
     ]
 
@@ -326,34 +394,43 @@ class ObservableConfig(SubscriptableModel):
     binning: Annotated[
         Union[str, List[float]],
         Field(
-            description="Either a 'low,high,nbins' string or a list of bin edges"
+            description="Histogram binning, specified as a 'low,high,nbins' string "
+            + "or a list of explicit bin edges."
         ),
     ]
     function: Annotated[
         Callable,
-        Field(description="Callable computing the observable"),
+        Field(
+            description="A callable that computes the "
+            + "observable values from event data."
+        ),
     ]
     use: Annotated[
         List[ObjVar],
         Field(
-            description="(object, variable) pairs for the function. "
-            "If variable is None, object is passed.",
+            description="A list of (object, variable) tuples specifying the inputs \
+                for the function.",
         ),
     ]
     label: Annotated[
         Optional[str],
-        Field(default="observable", description="LaTeX label for plots"),
+        Field(
+            default="observable",
+            description="A LaTeX-formatted string for plot axis labels.",
+        ),
     ]
     works_with_jax: Annotated[
         bool,
         Field(
             default=True,
-            description="Whether the function works with JAX backend",
+            description="If True, the function is compatible with the JAX backend "
+            "for differentiable analysis.",
         ),
     ]
 
     @model_validator(mode="after")
     def validate_binning(self) -> "ObservableConfig":
+        """Validate the binning format and values."""
         if isinstance(self.binning, str):
             self.binning = (
                 self.binning.strip("[").strip("]").strip("(").strip(")")
@@ -396,15 +473,35 @@ class ObservableConfig(SubscriptableModel):
 # Ghost observable configuration
 # ------------------------
 class GhostObservable(SubscriptableModel):
-    names: Union[str, List[str]]
-    collections: Union[str, List[str]]
-    function: Callable
-    use: List[ObjVar]
+    """Represents a derived quantity computed once and attached to the event record."""
+
+    names: Annotated[
+        Union[str, List[str]],
+        Field(description="Name(s) of the computed observable(s)."),
+    ]
+    collections: Annotated[
+        Union[str, List[str]],
+        Field(
+            description="The collection(s) to which the "
+            + "new observable(s) should be attached."
+        ),
+    ]
+    function: Annotated[
+        Callable,
+        Field(description="A callable that computes the ghost observables."),
+    ]
+    use: Annotated[
+        List[ObjVar],
+        Field(
+            description="A list of (object, variable) tuples "
+            + "specifying the inputs for the function."
+        ),
+    ]
     works_with_jax: Annotated[
         bool,
         Field(
             default=True,
-            description="Whether the function works with JAX backend",
+            description="If True, the function is compatible with the JAX backend.",
         ),
     ]
 
@@ -417,13 +514,10 @@ class ChannelConfig(SubscriptableModel):
     observables: Annotated[
         List[ObservableConfig],
         Field(
-            description="List of observables for this channel (must be ≥ 1)"
+            description="A list of observable configurations for this channel."
         ),
     ]
-    fit_observable: Annotated[
-        str,
-        Field(description="Name of the observable to use for fitting"),
-    ]
+    fit_observable: Annotated[str, Field]
     selection: Annotated[
         Optional[FunctorConfig],
         Field(
@@ -503,7 +597,7 @@ class CorrectionConfig(SubscriptableModel):
     transform: Annotated[
         Optional[Callable],
         Field(
-            default=None,
+            default=lambda *x: x,
             description="Optional function to apply transformation to inputs "
             + "before applying correction",
         ),
@@ -535,6 +629,11 @@ class CorrectionConfig(SubscriptableModel):
             if not self.target:
                 raise ValueError(
                     "If correction 'type' is 'object', 'target' must be specified."
+                )
+            if self.target[2] is None:
+                raise ValueError(
+                    "If correction 'type' is 'object', \
+                        target variable must not be None."
                 )
         return self
 
@@ -596,20 +695,21 @@ class SystematicConfig(SubscriptableModel):
 
         return self
 
+
 class PlottingJaxConfig(SubscriptableModel):
     aux_param_labels: Annotated[
         Optional[dict[str, str]],
         Field(
             default=None,
-            description="LaTeX labels for auxiliary parameters in JAX‐scan plots"
-        )
+            description="LaTeX labels for auxiliary parameters in JAX‐scan plots",
+        ),
     ]
     fit_param_labels: Annotated[
         Optional[dict[str, str]],
         Field(
             default=None,
-            description="LaTeX labels for fit parameters in JAX‐scan plots"
-        )
+            description="LaTeX labels for fit parameters in JAX‐scan plots",
+        ),
     ]
 
 
@@ -617,50 +717,43 @@ class PlottingConfig(SubscriptableModel):
     output_dir: Annotated[
         Optional[str],
         Field(
-            default=None,
-            description="Directory where plots will be written"
-        )
+            default=None, description="Directory where plots will be written"
+        ),
     ]
     process_colors: Annotated[
         Optional[dict[str, str]],
-        Field(
-            default=None,
-            description="Hex colors for each process key"
-        )
+        Field(default=None, description="Hex colors for each process key"),
     ]
     process_labels: Annotated[
         Optional[dict[str, str]],
         Field(
             default=None,
-            description="LaTeX‐style legend labels for each process"
-        )
+            description="LaTeX‐style legend labels for each process",
+        ),
     ]
     process_order: Annotated[
         Optional[List[str]],
-        Field(
-            default=None,
-            description="Draw/order sequence for processes"
-        )
+        Field(default=None, description="Draw/order sequence for processes"),
     ]
     jax: Annotated[
         Optional[PlottingJaxConfig],
-        Field(
-            default=None,
-            description="JAX‐specific label overrides"
-        )
+        Field(default=None, description="JAX‐specific label overrides"),
     ]
+
 
 # =================================
 # MVA configuration
 # =================================
 
+
 # ========
 # Activation functions
 # ========
 class ActivationKey(str, Enum):
-    relu    = "relu"
-    tanh    = "tanh"
+    relu = "relu"
+    tanh = "tanh"
     sigmoid = "sigmoid"
+
 
 # ========
 # Gradient optimisation configuration
@@ -670,24 +763,32 @@ class GradOptimConfig(SubscriptableModel):
         bool,
         Field(
             default=True,
-            description="Include this MVA’s weights in the global optimisation"
+            description="Include this MVA’s weights in the global optimisation",
         ),
     ]
     learning_rate: Annotated[
         float,
         Field(
             default=1e-3,
-            description="Learning rate for this MVA when optimise=True"
+            description="Learning rate for this MVA when optimise=True",
         ),
     ]
+    log_param_changes: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="If True, log the mean of weight/bias changes \
+                during optimisation.",
+        ),
+    ]
+
 
 # ========
 # Network layers configuration
 # ========
 class LayerConfig(SubscriptableModel):
     ndim: Annotated[
-        int,
-        Field(..., description="Output dimension of this layer")
+        int, Field(..., description="Output dimension of this layer")
     ]
     activation: Annotated[
         Union[Callable, ActivationKey],
@@ -696,47 +797,58 @@ class LayerConfig(SubscriptableModel):
             description=(
                 "For framework='jax', a Python callable; "
                 "for TF/Keras, one of the ActivationKey enums"
-            )
+            ),
         ),
     ]
     weights: Annotated[
         str,
-        Field(..., description="Parameter name for the weight tensor in this layer")
+        Field(
+            ...,
+            description="Parameter name for the weight tensor in this layer",
+        ),
     ]
     bias: Annotated[
         str,
-        Field(..., description="Parameter name for the bias vector in this layer")
+        Field(
+            ..., description="Parameter name for the bias vector in this layer"
+        ),
     ]
+
 
 # ========
 # Features to train the MVA on
 # ========
 class FeatureConfig(SubscriptableModel):
-    name: Annotated[
-        str,
-        Field(..., description="Feature name")
-    ]
+    name: Annotated[str, Field(..., description="Feature name")]
     label: Annotated[
         Optional[str],
         Field(
             default=None,
-            description="Optional label for plots (e.g. LaTeX string)"
-        )
+            description="Optional label for plots (e.g. LaTeX string)",
+        ),
     ]
     function: Annotated[
         Callable,
-        Field(..., description="Callable extracting the raw feature (e.g. lambda mva: mva.n_jet)")
+        Field(
+            ...,
+            description="Callable extracting the raw feature \
+                (e.g. lambda mva: mva.n_jet)",
+        ),
     ]
     use: Annotated[
         List[ObjVar],
-        Field(..., description="(object, variable) pairs to pass into function, e.g. [('mva', None)]")
+        Field(
+            ...,
+            description="(object, variable) pairs to pass into function, \
+                e.g. [('mva', None)]",
+        ),
     ]
     scale: Annotated[
         Optional[Callable],
         Field(
             default=None,
-            description="Optional callable to scale the extracted feature"
-        )
+            description="Optional callable to scale the extracted feature",
+        ),
     ]
     binning: Annotated[
         Optional[Union[str, List[float]]],
@@ -745,47 +857,86 @@ class FeatureConfig(SubscriptableModel):
             description=(
                 "Optional histogramming binning for diagnostics: "
                 "either 'low,high,nbins' or explicit edge list"
-            )
-        )
+            ),
+        ),
     ]
+
+    @model_validator(mode="after")
+    def validate_binning(self) -> "FeatureConfig":
+        """Validate the binning format and values."""
+        if isinstance(self.binning, str):
+            self.binning = (
+                self.binning.strip("[").strip("]").strip("(").strip(")")
+            )
+            binning = self.binning.split(",")
+            if len(binning) != 3:
+                raise ValueError(
+                    f"Invalid binning string: {self.binning}. Need 3 values."
+                    + "Expected format: 'low,high,nbins'"
+                )
+            else:
+                try:
+                    low, high, nbins = map(float, binning)
+                    nbins = int(nbins)
+                except ValueError:
+                    raise ValueError(
+                        f"Invalid binning string: {self.binning}. Need 3 floats."
+                        + "Expected format: 'low,high,nbins'"
+                    )
+                if low >= high:
+                    raise ValueError(
+                        f"Invalid binning string: {self.binning}. Low must be < high."
+                        + "Expected format: 'low,high,nbins'"
+                    )
+                if nbins <= 0 or not isinstance(nbins, int):
+                    raise ValueError(
+                        f"Invalid binning string: {self.binning}. nbins must be != 0."
+                        + "Expected format: 'low,high,nbins'"
+                    )
+
+        elif isinstance(self.binning, list):
+            if len(self.binning) < 2:
+                raise ValueError("At least two bin edges required.")
+            if any(b <= a for a, b in zip(self.binning, self.binning[1:])):
+                raise ValueError("Binning edges must be strictly increasing.")
+        return self
+
 
 # ========
 # Full MVA configuration
 # ========
 class MVAConfig(SubscriptableModel):
     name: Annotated[
-        str,
-        Field(..., description="Unique name for this neural network")
+        str, Field(..., description="Unique name for this neural network")
     ]
     use_in_diff: Annotated[
         bool,
         Field(
             default=False,
-            description="Whether to include this MVA in the global JAX gradient"
+            description="Whether to include this MVA in the global JAX gradient",
         ),
-    ] # is this useful?
+    ]  # is this useful?
     framework: Annotated[
         Literal["jax", "keras", "tf"],
-        Field(..., description="Framework to use for building/training")
+        Field(..., description="Framework to use for building/training"),
     ]
     # Global pre-training learning rate:
     learning_rate: Annotated[
         float,
         Field(
-            default=0.01,
-            description="Step size for pre-training the network"
-        )
+            default=0.01, description="Step size for pre-training the network"
+        ),
     ]
     grad_optimisation: Annotated[
         GradOptimConfig,
         Field(
             default_factory=GradOptimConfig,
-            description="Per-MVA optimisation settings"
+            description="Per-MVA optimisation settings",
         ),
     ]
     layers: Annotated[
         List[LayerConfig],
-        Field(..., description="Sequential layer definitions")
+        Field(..., description="Sequential layer definitions"),
     ]
     loss: Annotated[
         Union[Callable, str],
@@ -794,12 +945,12 @@ class MVAConfig(SubscriptableModel):
             description=(
                 "For 'jax': a Python callable (preds, features, targets)->scalar; "
                 "for TF/Keras: string loss key (e.g. 'binary_crossentropy')"
-            )
-        )
+            ),
+        ),
     ]
     features: Annotated[
         List[FeatureConfig],
-        Field(..., description="List of input features for this network")
+        Field(..., description="List of input features for this network"),
     ]
 
     classes: Annotated[
@@ -807,13 +958,26 @@ class MVAConfig(SubscriptableModel):
         Field(
             ...,
             description=(
-                "List of class definitions for training the classifier. Each entry can be:\n"
+                "List of class definitions for training the classifier. Each entry"
+                "can be:\n"
                 "- a single process name (e.g. 'wjets'), or\n"
                 "- a dictionary mapping a class label to multiple process names "
                 "(e.g. {'ttbar': ['ttbar_semilep', 'ttbar_had', 'ttbar_lep']}).\n"
                 "The index of each entry determines the class label."
             ),
-        )
+        ),
+    ]
+
+    plot_classes: Annotated[
+        Optional[List[str]],
+        Field(
+            default=None,
+            description=(
+                "Optional list of class names to use in MVA-related plotting."
+                "For example, features/scores will be plotted for this set of classes."
+                "If None, defaults to all classes in `classes`."
+            ),
+        ),
     ]
     balance_strategy: Annotated[
         Literal["none", "undersample", "oversample", "class_weight"],
@@ -824,7 +988,8 @@ class MVAConfig(SubscriptableModel):
                 "- `none`: leave as is\n"
                 "- `undersample`: down-sample every class to the smallest class size\n"
                 "- `oversample`: up-sample every class to the largest class size\n"
-                "- `class_weight`: compute sample-weights inversely proportional to class frequency"
+                "- `class_weight`: compute sample-weights inversely proportional "
+                "to class frequency"
             ),
         ),
     ]
@@ -841,19 +1006,29 @@ class MVAConfig(SubscriptableModel):
     # -------------------------------------------------------------------------
     epochs: Annotated[
         int,
-        Field(default=1000, description="Number of training epochs for this MVA")
+        Field(
+            default=1000, description="Number of training epochs for this MVA"
+        ),
     ]
     batch_size: Annotated[
         Optional[int],
-        Field(default=32, description="Batch size for training; None for full-batch GD")
+        Field(
+            default=32,
+            description="Batch size for training; None for full-batch GD",
+        ),
     ]
     validation_split: Annotated[
         float,
-        Field(default=0.2, description="Fraction of data reserved for validation")
+        Field(
+            default=0.2, description="Fraction of data reserved for validation"
+        ),
     ]
     log_interval: Annotated[
         int,
-        Field(default=100, description="Epoch interval for logging training progress")
+        Field(
+            default=100,
+            description="Epoch interval for logging training progress",
+        ),
     ]
 
     @model_validator(mode="after")
@@ -863,7 +1038,9 @@ class MVAConfig(SubscriptableModel):
                 raise ValueError("JAX 'loss' must be a callable.")
             for L in self.layers:
                 if not callable(L.activation):
-                    raise ValueError("JAX 'activation' must be a Python callable.")
+                    raise ValueError(
+                        "JAX 'activation' must be a Python callable."
+                    )
         else:
             if not isinstance(self.loss, str):
                 raise ValueError("TF/Keras 'loss' must be a string key.")
@@ -872,6 +1049,10 @@ class MVAConfig(SubscriptableModel):
                     raise ValueError(
                         f"TF/Keras 'activation' must be one of {list(ActivationKey)}."
                     )
+
+        if self.plot_classes is None:
+            # Default to all classes if not specified
+            self.plot_classes = self.classes.keys()
         return self
 
     @model_validator(mode="after")
@@ -879,8 +1060,11 @@ class MVAConfig(SubscriptableModel):
         names = [feat.name for feat in self.features]
         dup = {n for n in names if names.count(n) > 1}
         if dup:
-            raise ValueError(f"Duplicate feature names in MVA '{self.name}': {sorted(dup)}")
+            raise ValueError(
+                f"Duplicate feature names in MVA '{self.name}': {sorted(dup)}"
+            )
         return self
+
 
 # ------------------------
 # Top-level configuration
@@ -891,7 +1075,10 @@ class Config(SubscriptableModel):
     ]
     jax: Annotated[
         Optional[JaxConfig],
-        Field(default=None, description="JAX configuration block for differentiable analysis"),
+        Field(
+            default=None,
+            description="JAX configuration block for differentiable analysis",
+        ),
     ]
     ghost_observables: Annotated[
         Optional[List[GhostObservable]],
@@ -914,8 +1101,9 @@ class Config(SubscriptableModel):
         Optional[GoodObjectMasksBlockConfig],
         Field(
             default={},
-            description="Good object masks to apply before channel selection in analysis or pre-training of MVAs. "
-            "The mask functions are applied to the object in the 'object' field"
+            description="Good object masks to apply before channel "
+            + "selection in analysis or pre-training of MVAs."
+            "The mask functions are applied to the object in the 'object' field",
         ),
     ]
     channels: Annotated[
@@ -941,15 +1129,15 @@ class Config(SubscriptableModel):
         Optional[List[MVAConfig]],
         Field(
             default=None,
-            description="List of MVA configurations for pre-training and inference"
+            description="List of MVA configurations for pre-training and inference",
         ),
     ]
     plotting: Annotated[
         Optional[PlottingConfig],
         Field(
             default=None,
-            description="Global plotting configuration (all keys are optional)"
-        )
+            description="Global plotting configuration (all keys are optional)",
+        ),
     ]
 
     @model_validator(mode="after")
@@ -1017,7 +1205,8 @@ class Config(SubscriptableModel):
             seen_objects = set()
             if object_mask.object in seen_objects:
                 raise ValueError(
-                    f"Duplicate object '{object_mask.object}' found in good object masks collection 'analysis'."
+                    f"Duplicate object '{object_mask.object}' found in good object"
+                    "masks collection 'analysis'."
                 )
             seen_objects.add(object_mask.object)
 
@@ -1025,7 +1214,8 @@ class Config(SubscriptableModel):
             seen_objects = set()
             if object_mask.object in seen_objects:
                 raise ValueError(
-                    f"Duplicate object '{object_mask.object}' found in good object masks collection 'mva'."
+                    f"Duplicate object '{object_mask.object}' found in good object"
+                    "masks collection 'mva'."
                 )
             seen_objects.add(object_mask.object)
 
@@ -1048,7 +1238,7 @@ def load_config_with_restricted_cli(
 ) -> dict:
     """
     Load base config and override only `general`, `preprocess`, or `statistics`
-    keys via CLI arguments in dotlist form.
+    keys via CLI arguments in dotlist form. Raises error for non-existent keys.
 
     Parameters
     ----------
@@ -1061,35 +1251,83 @@ def load_config_with_restricted_cli(
     -------
     dict
         Full merged config (with overrides applied to whitelisted sections only).
-    """
-    ALLOWED_CLI_TOPLEVEL_KEYS = {"general", "preprocess", "statistics"}
 
-    # Deep copy so we don’t modify the original
+    Raises
+    ------
+    ValueError
+        If attempting to override a non-existent key or disallowed section
+    KeyError
+        If attempting to override a non-existent setting in allowed sections
+    """
+    # {"general", "preprocess", "statistics", "channels"}
+    ALLOWED_CLI_TOPLEVEL_KEYS = {}
+
+    # Deep copy so we don't modify the original
     base_copy = copy.deepcopy(base_cfg)
 
-    # Filter CLI args to allowed keys only
+    # Create safe base config with only allowed top-level keys
+    safe_base = {
+        k: v for k, v in base_copy.items() if k in ALLOWED_CLI_TOPLEVEL_KEYS
+    }
+
+    if safe_base == {}:
+        safe_base = base_copy
+
+    safe_base_oc = OmegaConf.create(safe_base, flags={"allow_objects": True})
+
+    # Create a set of all valid keys in the safe base config
+    valid_keys = set()
+    for key_path, _ in OmegaConf.to_container(safe_base_oc).items():
+        # Flatten nested dictionary keys
+        if isinstance(safe_base_oc[key_path], DictConfig):
+            for subkey in safe_base_oc[key_path].keys():
+                valid_keys.add(f"{key_path}.{subkey}")
+        else:
+            valid_keys.add(key_path)
+
+    # Filter CLI args to allowed keys only and check existence
     filtered_cli = []
     for arg in cli_args:
-        top_key = arg.split("=", 1)[0].split(".", 1)[0]
-        if top_key in ALLOWED_CLI_TOPLEVEL_KEYS:
-            filtered_cli.append(arg)
-        else:
+        try:
+            key, value = arg.split("=", 1)
+        except ValueError:
             raise ValueError(
-                f"Override of top-level key `{top_key}` is not allowed. "
-                f"Allowed keys: {', '.join(ALLOWED_CLI_TOPLEVEL_KEYS)}"
+                f"Invalid CLI argument format: {arg}. Expected 'key=value'"
             )
+
+        top_key = key.split(".", 1)[0]
+
+        # Check if top-level key is allowed
+        if ALLOWED_CLI_TOPLEVEL_KEYS != {}:
+            if top_key not in ALLOWED_CLI_TOPLEVEL_KEYS:
+                raise ValueError(
+                    f"Override of top-level key `{top_key}` is not allowed. "
+                    f"Allowed keys: {', '.join(ALLOWED_CLI_TOPLEVEL_KEYS)}"
+                )
+
+        # Check if full key exists in base config
+        if key not in valid_keys:
+            raise KeyError(
+                f"Cannot override non-existent setting: {key}. "
+                f"Valid settings in section '{top_key}':\
+                {', '.join(sorted(k for k in valid_keys
+                                  if k.startswith(top_key)))}"
+            )
+
+        filtered_cli.append(arg)
 
     # Merge CLI with OmegaConf
     cli_cfg = OmegaConf.from_dotlist(filtered_cli)
-    safe_base = OmegaConf.create(
-        {k: v for k, v in base_copy.items() if k in ALLOWED_CLI_TOPLEVEL_KEYS}
-    )
-    merged_cfg = OmegaConf.merge(safe_base, cli_cfg)
+    merged_cfg = OmegaConf.merge(safe_base_oc, cli_cfg)
     updated_subsections = OmegaConf.to_container(merged_cfg, resolve=True)
 
     # Patch back into full config
-    for k in ALLOWED_CLI_TOPLEVEL_KEYS:
-        if k in updated_subsections:
+    if ALLOWED_CLI_TOPLEVEL_KEYS != {}:
+        for k in ALLOWED_CLI_TOPLEVEL_KEYS:
+            if k in updated_subsections:
+                base_copy[k] = updated_subsections[k]
+    else:
+        for k in updated_subsections.keys():
             base_copy[k] = updated_subsections[k]
 
     return base_copy

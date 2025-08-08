@@ -9,7 +9,9 @@ from typing import NamedTuple, Optional, List, Dict, Tuple, Callable
 from jaxtyping import Array, PyTree
 from tabulate import tabulate
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s: %(name)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="[%(levelname)s: %(name)s] %(message)s"
+)
 logger = logging.getLogger("evermore")
 logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 
@@ -19,6 +21,7 @@ jax.config.update("jax_enable_x64", True)
 # =============================================================================
 # Data Structures
 # =============================================================================
+
 
 # =============================================================================
 # FitResult
@@ -40,11 +43,13 @@ class FitResult(NamedTuple):
     param_values : Dict[str, float]
         Parameter values for summary printing (name: value)
     """
+
     params: PyTree
     loss: float
     uncertainties: Dict[str, float]
     covariance: Array
     param_values: Dict[str, float]
+
 
 # =============================================================================
 # ChannelData
@@ -70,10 +75,12 @@ class ChannelData(NamedTuple):
                 key: Systematic name
                 value: Varied histogram (JAX array)
     """
+
     region: str
     observable: str
     data: Array
     processes: Dict[str, Dict]
+
 
 # =============================================================================
 # Parameters
@@ -91,13 +98,16 @@ class Parameters(NamedTuple):
     nuis : Dict[str, evm.NormalParameter]
         Nuisance parameters keyed by systematic name
     """
+
     mu: evm.Parameter
     norm: Dict[str, evm.Parameter]
     nuis: Dict[str, evm.NormalParameter]
 
+
 # =============================================================================
 # Core Significance Calculation
 # =============================================================================
+
 
 # =============================================================================
 # calculate_significance
@@ -178,6 +188,7 @@ def calculate_significance(histograms: Dict, channels: List) -> Array:
 # Enhanced Table-Based Result Summarization
 # =============================================================================
 
+
 # =============================================================================
 # summarize_fit_result
 # =============================================================================
@@ -196,15 +207,23 @@ def summarize_fit_result(result: FitResult) -> None:
         value = result.param_values[name]
         unc = result.uncertainties.get(name, None)
         # Format value ± uncertainty
-        val_str = f"{jax.device_get(value).item():.4f} ± {jax.device_get(unc).item():.4f}"
+        val_str = (
+            f"{jax.device_get(value).item():.4f} ± "
+            f"{jax.device_get(unc).item():.4f}"
+        )
         param_table.append([name, val_str])
 
     # Prepare fit quality metrics
     quality_table = [
-        ["Negative Log-Likelihood", f"{jax.device_get(result.loss).item():.4f}"],
+        [
+            "Negative Log-Likelihood",
+            f"{jax.device_get(result.loss).item():.4f}",
+        ],
         ["Number of Parameters", len(result.param_values)],
-        ["Covariance Condition",
-         f"{jax.device_get(jnp.linalg.cond(result.covariance)).item():.2e}"]
+        [
+            "Covariance Condition",
+            f"{jax.device_get(jnp.linalg.cond(result.covariance)).item():.2e}",
+        ],
     ]
 
     if param_table:
@@ -213,17 +232,16 @@ def summarize_fit_result(result: FitResult) -> None:
             param_table,
             headers=["Parameter", "Value ± Uncertainty"],
             tablefmt="grid",
-            floatfmt=".4f"
+            floatfmt=".4f",
         )
         logger.info("Fitted parameter values:\n%s", table_str)
 
     # Format quality table with newline
     table_str = tabulate(
-        quality_table,
-        headers=["Metric", "Value"],
-        tablefmt="grid"
+        quality_table, headers=["Metric", "Value"], tablefmt="grid"
     )
     logger.info("Fit quality metrics:\n%s", table_str)
+
 
 # =============================================================================
 # print_significance_summary
@@ -247,17 +265,17 @@ def print_significance_summary(significance: float, q0: float) -> None:
 
     # Format table with newline for proper separation
     table_str = tabulate(
-        results_table,
-        headers=["Metric", "Value"],
-        tablefmt="grid"
+        results_table, headers=["Metric", "Value"], tablefmt="grid"
     )
 
     # Using logger for formatted output with proper newlines
     logger.info("Significance results :\n%s" + table_str)
 
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
 
 # =============================================================================
 # _get_valid_channels
@@ -282,12 +300,12 @@ def _get_valid_channels(channels: List) -> List[Tuple[str, str]]:
         if ch.use_in_diff and hasattr(ch, "fit_observable")
     ]
 
+
 # =============================================================================
 # _prepare_channel_data
 # =============================================================================
 def _prepare_channel_data(
-    histograms: Dict,
-    channels: List[Tuple[str, str]]
+    histograms: Dict, channels: List[Tuple[str, str]]
 ) -> Tuple[List[ChannelData], List[str], List[str]]:
     """
     Prepare structured channel data from raw histograms.
@@ -312,10 +330,12 @@ def _prepare_channel_data(
 
     for region, obs in channels:
         # Extract data histogram using nested dict lookups
-        data_hist = (histograms.get("data", {})
-                     .get("nominal", {})
-                     .get(region, {})
-                     .get(obs))
+        data_hist = (
+            histograms.get("data", {})
+            .get("nominal", {})
+            .get(region, {})
+            .get(obs)
+        )
         if data_hist is None:
             continue
 
@@ -325,9 +345,9 @@ def _prepare_channel_data(
                 continue
 
             # Get nominal histogram for this process/region/observable
-            nominal_hist = (variations.get("nominal", {})
-                            .get(region, {})
-                            .get(obs))
+            nominal_hist = (
+                variations.get("nominal", {}).get(region, {}).get(obs)
+            )
             if nominal_hist is None:
                 continue
 
@@ -343,30 +363,28 @@ def _prepare_channel_data(
 
             process_info[pname] = {
                 "nominal": nominal_hist,
-                "systematics": syst_vars
+                "systematics": syst_vars,
             }
             processes.add(pname)
 
         if process_info:
-            channel_objects.append(ChannelData(
-                region=region,
-                observable=obs,
-                data=data_hist,
-                processes=process_info
-            ))
+            channel_objects.append(
+                ChannelData(
+                    region=region,
+                    observable=obs,
+                    data=data_hist,
+                    processes=process_info,
+                )
+            )
 
-    return (
-        channel_objects,
-        sorted(systematics),
-        sorted(processes)
-    )
+    return (channel_objects, sorted(systematics), sorted(processes))
+
 
 # =============================================================================
 # _create_parameter_structure
 # =============================================================================
 def _create_parameter_structure(
-    processes: List[str],
-    systematics: List[str]
+    processes: List[str], systematics: List[str]
 ) -> NamedTuple:
     """
     Define parameter structure for the fit.
@@ -389,9 +407,12 @@ def _create_parameter_structure(
     return Parameters(
         mu=evm.Parameter(1.0, lower=0, upper=1000),
         # Only ttbar_semilep gets free normalization
-        norm={p: evm.Parameter(1.0) for p in processes if p == "ttbar_semilep"},
+        norm={
+            p: evm.Parameter(1.0) for p in processes if p == "ttbar_semilep"
+        },
         nuis={s: evm.NormalParameter(0.0) for s in systematics},
     )
+
 
 # =============================================================================
 # _create_model_function
@@ -405,10 +426,13 @@ def _create_model_function() -> Callable:
     Callable
         Function that computes expected histograms given parameters and channel data
     """
+
     # =============================================================================
     # model
     # =============================================================================
-    def model(params: NamedTuple, channel_data: List[ChannelData]) -> List[Array]:
+    def model(
+        params: NamedTuple, channel_data: List[ChannelData]
+    ) -> List[Array]:
         expectations = []
         for ch in channel_data:
             total = jnp.zeros_like(ch.data)
@@ -427,7 +451,9 @@ def _create_model_function() -> Callable:
                 total += scaled
             expectations.append(total)
         return expectations
+
     return model
+
 
 # =============================================================================
 # _fit_hypothesis
@@ -437,7 +463,7 @@ def _fit_hypothesis(
     model_fn: Callable,
     channel_data: List[ChannelData],
     frozen_mu: Optional[float] = None,
-    steps: int = 100
+    steps: int = 100,
 ) -> FitResult:
     """
     Fit a single hypothesis (either null or alternative).
@@ -501,7 +527,9 @@ def _fit_hypothesis(
     # =============================================================================
     def hess_fn(flat_params):
         params_unraveled = unravel_fn(flat_params)
-        loss_val = _make_loss_fn(model_fn, channel_data)(params_unraveled, static)
+        loss_val = _make_loss_fn(model_fn, channel_data)(
+            params_unraveled, static
+        )
         return jnp.sum(loss_val)  # Ensure scalar output for hessian
 
     hess = jax.hessian(hess_fn)(flat_params)
@@ -511,28 +539,26 @@ def _fit_hypothesis(
     # Prepare parameter names and values for results
     param_names = _get_unfrozen_parameter_names(clean_diffable)
     param_values_dict = {
-        name: val.astype(float)
-        for name, val in zip(param_names, flat_params)
+        name: val.astype(float) for name, val in zip(param_names, flat_params)
     }
     uncertainties = {
-        name: std.astype(float)
-        for name, std in zip(param_names, std_devs)
+        name: std.astype(float) for name, std in zip(param_names, std_devs)
     }
 
     return FitResult(
         params=final_params,
-        loss=loss_val, #float(jax.device_get(loss_val).item()),
+        loss=loss_val,  # float(jax.device_get(loss_val).item()),
         uncertainties=uncertainties,
         covariance=cov_matrix,
-        param_values=param_values_dict
+        param_values=param_values_dict,
     )
+
 
 # =============================================================================
 # _make_loss_fn
 # =============================================================================
 def _make_loss_fn(
-    model_fn: Callable,
-    channel_data: List[ChannelData]
+    model_fn: Callable, channel_data: List[ChannelData]
 ) -> Callable:
     """
     Create negative log-likelihood loss function.
@@ -549,6 +575,7 @@ def _make_loss_fn(
     Callable
         Loss function that computes negative log-likelihood
     """
+
     # =============================================================================
     # loss
     # =============================================================================
@@ -558,11 +585,15 @@ def _make_loss_fn(
         total_nll = 0.0
         # Poisson NLL for each channel
         for i, ch in enumerate(channel_data):
-            total_nll -= evm.pdf.Poisson(expectations[i]).log_prob(ch.data).sum()
+            total_nll -= (
+                evm.pdf.Poisson(expectations[i]).log_prob(ch.data).sum()
+            )
         # Constraint terms for parameters
         total_nll -= evm.util.sum_over_leaves(evm.loss.get_log_probs(params))
         return jnp.sum(total_nll)
+
     return loss
+
 
 # =============================================================================
 # _remove_frozen_parameters
@@ -588,20 +619,20 @@ def _remove_frozen_parameters(tree: PyTree) -> PyTree:
             if _remove_frozen_parameters(v) is not None
         }
     elif hasattr(tree, "_fields"):  # NamedTuple
-        return type(tree)(*(
-            _remove_frozen_parameters(getattr(tree, f))
-            for f in tree._fields
-        ))
+        return type(tree)(
+            *(
+                _remove_frozen_parameters(getattr(tree, f))
+                for f in tree._fields
+            )
+        )
     else:
         return tree if not getattr(tree, "frozen", False) else None
+
 
 # =============================================================================
 # _get_unfrozen_parameter_names
 # =============================================================================
-def _get_unfrozen_parameter_names(
-    tree: PyTree,
-    prefix: str = ""
-) -> List[str]:
+def _get_unfrozen_parameter_names(tree: PyTree, prefix: str = "") -> List[str]:
     """
     Get full paths for unfrozen parameters in PyTree.
 
@@ -628,10 +659,10 @@ def _get_unfrozen_parameter_names(
     elif hasattr(tree, "_fields"):  # NamedTuple
         for field in tree._fields:
             new_prefix = f"{prefix}{field}."
-            names.extend(_get_unfrozen_parameter_names(
-                getattr(tree, field), new_prefix
-            ))
+            names.extend(
+                _get_unfrozen_parameter_names(getattr(tree, field), new_prefix)
+            )
     else:
         # Remove trailing dot from final parameter name
-        names.append(prefix.rstrip('.'))
+        names.append(prefix.rstrip("."))
     return names

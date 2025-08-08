@@ -3,8 +3,8 @@ import logging
 import awkward as ak
 import numba
 import numpy as np
-from tensorflow.keras.models import load_model  # type: ignore
 import vector
+from tensorflow.keras.models import load_model  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +41,11 @@ def get_mtt(
         Flattened array of reconstructed m_tt values per event.
     """
 
-    #jets = jets[(jets.btagDeepB > 0.5) & (jets.jetId > 4)]
+    # jets = jets[(jets.btagDeepB > 0.5) & (jets.jetId > 4)]
     jets = jets[:, 0]  # only the first jet per event
     fatjets = fatjets[:, 0]
     muons = muons[:, 0]  # only the first muon per event
-    #p4mu,p4fj,p4j,p4met = ak.unzip(ak.cartesian([muons, fatjets, jets, met]))
+    # p4mu,p4fj,p4j,p4met = ak.unzip(ak.cartesian([muons, fatjets, jets, met]))
     # Convert to 4-vectors
     p4mu, p4fj, p4j = [
         ak.zip(
@@ -92,41 +92,46 @@ def solve_neutrino_pz(lepton, met, mW=80.4):
     px_nu = met.pt * np.cos(met.phi)
     py_nu = met.pt * np.sin(met.phi)
 
-    pt_l_sq = lepton.pt ** 2
-    pt_nu_sq = met.pt ** 2
+    pt_l_sq = lepton.pt**2
+    pt_nu_sq = met.pt**2
 
     # mu = (mW^2 / 2) + px_l * px_nu + py_l * py_nu
     mu = (mW**2) / 2 + px_l * px_nu + py_l * py_nu
 
     a = mu * pz_l / pt_l_sq
-    A = (mu ** 2) * (pz_l ** 2)
-    B = (e_l ** 2) * (pt_l_sq * pt_nu_sq)
-    C = (mu ** 2) * pt_l_sq
+    A = (mu**2) * (pz_l**2)
+    B = (e_l**2) * (pt_l_sq * pt_nu_sq)
+    C = (mu**2) * pt_l_sq
     discriminant = A - B + C
 
-    sqrt_discriminant = ak.where(discriminant >= 0,
-                                  np.sqrt(discriminant),
-                                  np.sqrt(-discriminant) * 1j)
+    sqrt_discriminant = ak.where(
+        discriminant >= 0, np.sqrt(discriminant), np.sqrt(-discriminant) * 1j
+    )
     pz_nu_1 = a + sqrt_discriminant / pt_l_sq
     pz_nu_2 = a - sqrt_discriminant / pt_l_sq
 
     return pz_nu_1, pz_nu_2
 
+
 def build_leptonic_tops(muon, met, lepjet, pz1, pz2):
     """
     Return list of leptonic top 4-vectors per event based on neutrino pz solutions.
     """
+
     # ============================================================
     # Solve for neutrino
     # ============================================================
     def make_nu(pz):
-        return ak.zip({
-            "pt": met.pt,
-            "phi": met.phi,
-            "eta": ak.zeros_like(met.pt),
-            "mass": ak.zeros_like(met.pt),
-            "pz": ak.real(pz),
-        }, with_name="Momentum4D")
+        return ak.zip(
+            {
+                "pt": met.pt,
+                "phi": met.phi,
+                "eta": ak.zeros_like(met.pt),
+                "mass": ak.zeros_like(met.pt),
+                "pz": ak.real(pz),
+            },
+            with_name="Momentum4D",
+        )
 
     def ak_is_real(array):
         return ak.real(array) == array
@@ -137,8 +142,6 @@ def build_leptonic_tops(muon, met, lepjet, pz1, pz2):
     # Count real solutions
     disc = (pz1 - pz2) ** 2
     two_real = ak_is_real(pz1) & (disc != 0)
-    one_real = ak_is_real(pz1) & (disc == 0)
-    no_real = ~ak_is_real(pz1)
 
     # Always build all 3 cases per element — rely on masking
     nu1 = make_nu(pz1)
@@ -153,7 +156,7 @@ def build_leptonic_tops(muon, met, lepjet, pz1, pz2):
     lep_top_candidates = ak.where(
         ak.firsts(two_real, axis=1),
         ak.concatenate([lep_top1_masked, lep_top2_masked], axis=1),
-        lep_top1
+        lep_top1,
     )
     return lep_top_candidates
 
@@ -175,21 +178,24 @@ def build_index(index_values, a_lengths, b_offsets):
     """
     pos = 0
     for i in range(len(a_lengths)):
-        len_a_i = a_lengths[i]               # number of entries in a[i]
-        start_b_i = b_offsets[i]             # start of b[i] in flat_b
-        stop_b_i = b_offsets[i + 1]          # end of b[i]
-        len_b_i = stop_b_i - start_b_i       # number of entries in b[i]
+        len_a_i = a_lengths[i]  # number of entries in a[i]
+        start_b_i = b_offsets[i]  # start of b[i] in flat_b
+        stop_b_i = b_offsets[i + 1]  # end of b[i]
+        len_b_i = stop_b_i - start_b_i  # number of entries in b[i]
 
         if len_b_i == 0:
             if len_a_i != 0:
-                raise ValueError(f"Incompatible: a[{i}] has length {len_a_i} "
-                                 f"but b[{i}] is empty.")
+                raise ValueError(
+                    f"Incompatible: a[{i}] has length {len_a_i} "
+                    f"but b[{i}] is empty."
+                )
             continue  # skip if both are empty
 
         # Repeat b[i] cyclically to fill a[i]
         for j in range(len_a_i):
             index_values[pos] = start_b_i + (j % len_b_i)
             pos += 1
+
 
 def map_a_to_b(a: ak.Array, b: ak.Array) -> ak.Array:
     """
@@ -206,7 +212,8 @@ def map_a_to_b(a: ak.Array, b: ak.Array) -> ak.Array:
     Returns
     -------
     ak.Array
-        Jagged array with the same outer structure as `a`, filled with elements from `b`.
+        Jagged array with the same outer structure as `a` filled with
+        elements from `b`.
     """
     # Ensure inputs are Awkward Arrays
     a = ak.Array(a)
@@ -262,12 +269,12 @@ def ttbar_reco(
         Tuple of (chi2, mtt) values for the best ttbar reconstruction per event.
     """
     # Define Gaussian means and widths for chi2 computation
-    mean_mlep = 175.
-    sigma_mlep = 19.
-    mean_mhad_fj = 173.
-    sigma_mhad_fj = 15.
-    mean_mhad_nofj = 177.
-    sigma_mhad_nofj = 16.
+    mean_mlep = 175.0
+    sigma_mlep = 19.0
+    mean_mhad_fj = 173.0
+    sigma_mhad_fj = 15.0
+    mean_mhad_nofj = 177.0
+    sigma_mhad_nofj = 16.0
 
     # Define which events have at least one fatjet
     has_fatjet = ak.num(fatjets, axis=1) > 0
@@ -329,10 +336,12 @@ def ttbar_reco(
     )
 
     # Leptonic top: muon + MET + jet
-    #lep_top_fj = valid_muons_4vec + valid_met_4vec + valid_jets_4vec
+    # lep_top_fj = valid_muons_4vec + valid_met_4vec + valid_jets_4vec
     # Solve for neutrino
     pz1_fj, pz2_fj = solve_neutrino_pz(valid_muons_4vec, valid_met_4vec)
-    lep_top_fj = build_leptonic_tops(valid_muons_4vec, valid_met_4vec, valid_jets_4vec, pz1_fj, pz2_fj)
+    lep_top_fj = build_leptonic_tops(
+        valid_muons_4vec, valid_met_4vec, valid_jets_4vec, pz1_fj, pz2_fj
+    )
     had_mass_broadcast = ak.broadcast_arrays(lep_top_fj, had_top_fj)[1].mass
 
     # Chi² for each combination
@@ -344,17 +353,19 @@ def ttbar_reco(
     # Combinatoric AK4 reconstruction (no fatjets)
     # ============================================================
 
-    jets_nofj = ak.mask(jets, no_fatjet)
     muons_nofj = ak.mask(muons, no_fatjet)[:, 0]
     met_nofj = ak.mask(met, no_fatjet)
 
     # All jet pairs -> one jet for leptonic top, two for hadronic top
     # combs = ak.combinations(jets_nofj, 2, axis=1, replacement=False)
     # lepjet, hadjets = combs["0"], combs["1"]
-    four_jet_combos = ak.combinations(jets, 4, fields=["j1", "j2", "j3", "j4"])  # trijet candidates
+    four_jet_combos = ak.combinations(
+        jets, 4, fields=["j1", "j2", "j3", "j4"]
+    )  # trijet candidates
     lepjet = four_jet_combos["j4"]
-    had_top_nofj = four_jet_combos["j1"] + four_jet_combos["j2"] + four_jet_combos["j3"]
-    hadjets = ak.concatenate([four_jet_combos["j1"], four_jet_combos["j2"], four_jet_combos["j3"]], axis=1)
+    had_top_nofj = (
+        four_jet_combos["j1"] + four_jet_combos["j2"] + four_jet_combos["j3"]
+    )
 
     # Broadcast muon and MET to pair structure
     muon_broadcast = ak.broadcast_arrays(lepjet, muons_nofj)[1]
@@ -390,19 +401,11 @@ def ttbar_reco(
     )
 
     pz1_nofj, pz2_nofj = solve_neutrino_pz(muon_4vec, met_4vec)
-    lep_top_nofj = build_leptonic_tops(muon_4vec, met_4vec, lepjet_4vec, pz1_nofj, pz2_nofj)
+    lep_top_nofj = build_leptonic_tops(
+        muon_4vec, met_4vec, lepjet_4vec, pz1_nofj, pz2_nofj
+    )
 
     # Hadronic top = dijet system
-    hadjets_4vec = ak.zip(
-        {
-            "pt": hadjets.pt,
-            "eta": hadjets.eta,
-            "phi": hadjets.phi,
-            "mass": hadjets.mass,
-        },
-        with_name="Momentum4D",
-    )
-    had_top_nofj_2 = ak.sum(hadjets_4vec, axis=1)
     had_top_nofj = ak.zip(
         {
             "pt": had_top_nofj.pt,
@@ -417,7 +420,9 @@ def ttbar_reco(
 
     # Make sure if we don't have a leptonic top, we don't have a hadronic top
     lep_empty = ak.num(lep_top_nofj, axis=1) == 0
-    had_top_nofj = ak.where(lep_empty, ak.Array([[]] * len(lep_top_nofj)), had_top_nofj)
+    had_top_nofj = ak.where(
+        lep_empty, ak.Array([[]] * len(lep_top_nofj)), had_top_nofj
+    )
 
     # Chi² for each combination
     chi2_nofj = ((lep_top_nofj.mass - mean_mlep) / sigma_mlep) ** 2 + (
@@ -586,16 +591,44 @@ def get_mva_vars(muons: ak.Array, jets: ak.Array) -> ak.Array:
     return tuple(d.values())
 
 
-get_n_jet = lambda mva: mva.n_jet
-get_leading_jet_mass = lambda mva: mva.leading_jet_mass
-get_subleading_jet_mass = lambda mva: mva.subleading_jet_mass
-get_st = lambda mva: mva.st
-get_leading_jet_btag_score = lambda mva: mva.leading_jet_btag_score
-get_subleading_jet_btag_score = lambda mva: mva.subleading_jet_btag_score
-get_S_zz   = lambda mva: mva.S_zz
-get_deltaR = lambda mva: mva.deltaR
-get_pt_rel  = lambda mva: mva.pt_rel
-get_deltaR_times_pt = lambda mva: mva.deltaR_times_pt
+def get_n_jet(mva):
+    return mva.n_jet
+
+
+def get_leading_jet_mass(mva):
+    return mva.leading_jet_mass
+
+
+def get_subleading_jet_mass(mva):
+    return mva.subleading_jet_mass
+
+
+def get_st(mva):
+    return mva.st
+
+
+def get_leading_jet_btag_score(mva):
+    return mva.leading_jet_btag_score
+
+
+def get_subleading_jet_btag_score(mva):
+    return mva.subleading_jet_btag_score
+
+
+def get_S_zz(mva):
+    return mva.S_zz
+
+
+def get_deltaR(mva):
+    return mva.deltaR
+
+
+def get_pt_rel(mva):
+    return mva.pt_rel
+
+
+def get_deltaR_times_pt(mva):
+    return mva.deltaR_times_pt
 
 
 def compute_mva_scores(
@@ -632,8 +665,9 @@ def compute_mva_scores(
     X = np.column_stack(list(mva_vars.values())).astype(float)
     scores[idx] = model.predict(X, batch_size=1024).flatten()
     # need to map scores to -1 -> 1 instead of 0 -> 1
-    scores = scores*2 - 1
+    scores = scores * 2 - 1
     return scores
 
 
-get_mva_scores = lambda mva: mva.nn_score
+def get_mva_scores(mva):
+    return mva.nn_score

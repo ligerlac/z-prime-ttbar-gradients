@@ -1,20 +1,17 @@
 import awkward as ak
-from coffea.analysis_tools import PackedSelection
-import numpy as np
 import jax
 import jax.numpy as jnp
-from functools import partial
+import numpy as np
+from coffea.analysis_tools import PackedSelection
 
 ak.jax.register_and_check()
 
-#===================
+
+# ===================
 # Select good run data
-#===================
+# ===================
 def lumi_mask(
-    lumifile: str,
-    run: ak.Array,
-    lumiBlock: ak.Array,
-    jax: bool = False
+    lumifile: str, run: ak.Array, lumiBlock: ak.Array, jax: bool = False
 ) -> ak.Array:
     """
     Create a boolean mask selecting events that pass the good run/lumi criteria.
@@ -109,14 +106,11 @@ def lumi_mask(
     return mask
 
 
-#===================
-#Selection which is applied to all regions
-#===================
+# ===================
+# Selection which is applied to all regions
+# ===================
 def Zprime_baseline(
-    muons: ak.Array,
-    jets: ak.Array,
-    fatjets: ak.Array,
-    met: ak.Array
+    muons: ak.Array, jets: ak.Array, fatjets: ak.Array, met: ak.Array
 ) -> PackedSelection:
     """
     Define baseline selection criteria used across all analysis regions.
@@ -152,13 +146,11 @@ def Zprime_baseline(
     return selections
 
 
-#===================
-#Selection which will not be optimised from WS
-#===================
+# ===================
+# Selection which will not be optimised from WS
+# ===================
 def Zprime_hardcuts(
-    muons: ak.Array,
-    jets: ak.Array,
-    fatjets: ak.Array
+    muons: ak.Array, jets: ak.Array, fatjets: ak.Array
 ) -> PackedSelection:
     """
     Define non-optimizable kinematic cuts (used in JAX analysis)
@@ -193,10 +185,11 @@ def Zprime_hardcuts(
     # ---------------------
     selections.add(
         "Zprime_channel",
-        selections.all("exactly_1mu", "atleast_2jet", "atleast_1fj")
+        selections.all("exactly_1mu", "atleast_2jet", "atleast_1fj"),
     )
 
     return selections
+
 
 def Zprime_hardcuts_no_fj(
     muons: ak.Array,
@@ -231,24 +224,20 @@ def Zprime_hardcuts_no_fj(
     # Composite region selection
     # ---------------------
     selections.add(
-        "Zprime_channel_no_fj",
-        selections.all("exactly_1mu", "atleast_2jet")
+        "Zprime_channel_no_fj", selections.all("exactly_1mu", "atleast_2jet")
     )
 
     return selections
 
 
-#===================
+# ===================
 # All selection from workshop
-#===================
+# ===================
 # -----------------------------------------------------------------------------
 # Zprime Softcuts (non-JAX, Workshop Version) — PackedSelection
 # -----------------------------------------------------------------------------
 def Zprime_workshop_cuts(
-    muons: ak.Array,
-    jets: ak.Array,
-    fatjets: ak.Array,
-    met: ak.Array
+    muons: ak.Array, jets: ak.Array, fatjets: ak.Array, met: ak.Array
 ) -> PackedSelection:
     """
     Apply all selection cuts for Zprime analysis from CMS workshop 2024.
@@ -280,7 +269,7 @@ def Zprime_workshop_cuts(
     selections.add("exactly_1mu", ak.num(muons, axis=1) == 1)
     selections.add(
         "atleast_1b",
-        ak.sum((jets.btagDeepB > 0.5) & (jets.jetId >= 4), axis=1) > 0
+        ak.sum((jets.btagDeepB > 0.5) & (jets.jetId >= 4), axis=1) > 0,
     )
     selections.add("met_cut", met.pt > 50)
 
@@ -296,9 +285,9 @@ def Zprime_workshop_cuts(
     selections.add(
         "exactly_1fatjet",
         ak.sum(
-            (fatjets.particleNet_TvsQCD > 0.5) & (fatjets.pt > 500.0),
-            axis=1
-        ) == 1
+            (fatjets.particleNet_TvsQCD > 0.5) & (fatjets.pt > 500.0), axis=1
+        )
+        == 1,
     )
 
     # ---------------------
@@ -311,22 +300,18 @@ def Zprime_workshop_cuts(
             "atleast_1b",
             "met_cut",
             "muon_ht",
-            "exactly_1fatjet"
-        )
+            "exactly_1fatjet",
+        ),
     )
 
     return selections
 
-#====================
+
+# ====================
 # JAX version of the workshop selection
-#====================
+# ====================
 def Zprime_softcuts_jax_workshop(
-    muons: ak.Array,
-    jets: ak.Array,
-    met: ak.Array,
-    jet_mass: ak.Array,
-    nn,
-    params: dict
+    muons: ak.Array, jets: ak.Array, met: ak.Array, nn, params: dict
 ) -> jnp.ndarray:
     """
     Differentiable version of workshop-style softcuts using JAX.
@@ -342,6 +327,8 @@ def Zprime_softcuts_jax_workshop(
         Jet collection in JAX backend.
     met : ak.Array
         MET collection in JAX backend.
+    nn : dict
+        Neural network instance and features.
     params : dict
         Dictionary of cut thresholds and scales (e.g. for MET cut).
 
@@ -356,26 +343,30 @@ def Zprime_softcuts_jax_workshop(
     nn_score = nn_instance.forward_pass(params, nn_features)
 
     # Choose a fixed numebr of jets
-    max_jets = 8   # for example
+    max_jets = 8  # for example
     padded = ak.pad_none(jets, target=max_jets, axis=1, clip=True)
-    # Convert “None” slots to zero‐score
+    # Convert "None" slots to zero‐score
     padded = ak.fill_none(padded, -1.0)
     # Now we have an array of shape (n_events, max_jets) as Awkward; convert to JAX:
     jets_jax = jnp.asarray(ak.to_jax(padded))  # dtype=float32 or float64
 
-    # 2) Compute “soft count of b‐tagged jets”:
-    btag_thr = params["btag_threshold"]  # e.g. 0.5 or whatever; make sure it is a JAX scalar
+    # 2) Compute "soft count of b‐tagged jets":
+    btag_thr = params[
+        "btag_threshold"
+    ]  # e.g. 0.5 or whatever; make sure it is a JAX scalar
 
-    # We do “(score − thr)*10” inside a sigmoid, so that any score ≳ thr becomes ~1,
+    # We do "(score − thr)*10" inside a sigmoid, so that any score ≳ thr becomes ~1,
     # and any score ≲ thr becomes ~0. Then we sum across the jet dimension
-    # to get an approximate “number of jets above threshold.”
-    inner = (jets_jax - btag_thr) * 10.0   # still a (n_events × max_jets) JAX array
-    soft_flags = jax.nn.sigmoid(inner)    # same shape (n_events × max_jets)
-    soft_counts = jnp.sum(soft_flags, axis=1)      # shape (n_events,)
-    btag_cut   = jax.nn.sigmoid(soft_counts * 10)       # shape (n_events,)
+    # to get an approximate "number of jets above threshold."
+    inner = (
+        jets_jax - btag_thr
+    ) * 10.0  # still a (n_events × max_jets) JAX array
+    soft_flags = jax.nn.sigmoid(inner)  # same shape (n_events × max_jets)
+    soft_counts = jnp.sum(soft_flags, axis=1)  # shape (n_events,)
+    btag_cut = jax.nn.sigmoid(soft_counts * 10)  # shape (n_events,)
 
     # this works because there's always exactly 1 muon in the event
-    lep_ht = ak.to_jax(muons + met).flatten()
+    lep_ht = ak.to_jax(muons[:, 0] + met).flatten()
 
     # ---------------------
     # Define differentiable sigmoid cuts
@@ -384,18 +375,16 @@ def Zprime_softcuts_jax_workshop(
         "met_cut": jax.nn.sigmoid(
             (ak.to_jax(met) - params["met_threshold"]) / 25.0
         ),
-        'btag_cut': btag_cut,
-        'lep_ht_cut': jax.nn.sigmoid(
-            (lep_ht - params['lep_ht_threshold']) / 5.0
+        "btag_cut": btag_cut,
+        "lep_ht_cut": jax.nn.sigmoid(
+            (lep_ht - params["lep_ht_threshold"]) / 5.0
         ),
-        'nn_cut': jax.nn.sigmoid(
-            (nn_score - 0.05) * 10.0
-        ),
+        "nn_cut": jax.nn.sigmoid((nn_score - 0.05) * 10.0),
     }
     # ---------------------
     # Combine cut weights multiplicatively (AND logic)
     # ---------------------
-    cut_values = jnp.stack([cuts["met_cut"], cuts["btag_cut"], cuts["lep_ht_cut"], cuts["nn_cut"]]) #
+    cut_values = jnp.stack([v for k, v in cuts.items()])
     selection_weight = jnp.prod(cut_values, axis=0)
     return selection_weight
 
@@ -404,10 +393,7 @@ def Zprime_softcuts_jax_workshop(
 # Zprime Selection Regions Based on Physics Paper Definitions
 # ===========================================================
 def Zprime_softcuts_nonjax_paper(
-    muons: ak.Array,
-    jets: ak.Array,
-    fatjets: ak.Array,
-    met: ak.Array
+    muons: ak.Array, jets: ak.Array, fatjets: ak.Array, met: ak.Array
 ) -> PackedSelection:
     """
     Paper-based soft selection cuts for the Zprime analysis.
@@ -453,14 +439,14 @@ def Zprime_softcuts_nonjax_paper(
     selections.add(
         "lepton_2d",
         ak.fill_none(
-            ak.sum((min_deltaR > 0.4) | (pt_rel > 25.), axis=1) > 0, False
-        )
+            ak.sum((min_deltaR > 0.4) | (pt_rel > 25.0), axis=1) > 0, False
+        ),
     )
     selections.add("at_least_1_150gev_jet", ak.sum(jets.pt > 150, axis=1) > 0)
     selections.add("at_least_1_50gev_jet", ak.sum(jets.pt > 50, axis=1) > 0)
     selections.add(
         "nomore_than_1_top_tagged_jet",
-        ak.sum(fatjets.particleNet_TvsQCD > 0.5, axis=1) < 2
+        ak.sum(fatjets.particleNet_TvsQCD > 0.5, axis=1) < 2,
     )
 
     return selections
@@ -472,7 +458,7 @@ def Zprime_softcuts_SR_tag(
     fatjets: ak.Array,
     met: ak.Array,
     ttbar_reco: ak.Array,
-    mva: ak.Array
+    mva: ak.Array,
 ) -> PackedSelection:
     """
     Signal Region (1-tag) selection following Sec. 7.2 of the Zprime paper.
@@ -500,9 +486,9 @@ def Zprime_softcuts_SR_tag(
     selections.add("lep_ht_cut", ak.fill_none(ak.firsts(lep_ht) > 150, False))
     selections.add(
         "exactly_1fatjet",
-        ak.sum(fatjets.particleNet_TvsQCD > 0.5, axis=1) == 1
+        ak.sum(fatjets.particleNet_TvsQCD > 0.5, axis=1) == 1,
     )
-    selections.add("chi2_cut", ttbar_reco.chi2 < 30.)
+    selections.add("chi2_cut", ttbar_reco.chi2 < 30.0)
     selections.add("nn_score", mva.nn_score >= 0.5)
 
     return selections
@@ -514,7 +500,7 @@ def Zprime_softcuts_SR_notag(
     fatjets: ak.Array,
     met: ak.Array,
     ttbar_reco: ak.Array,
-    mva: ak.Array
+    mva: ak.Array,
 ) -> PackedSelection:
     """
     Signal Region (0-tag) selection (no top-tagged fatjets).
@@ -539,7 +525,7 @@ def Zprime_softcuts_SR_notag(
     selections.add("met_cut", met.pt > 50)
     selections.add("lep_ht_cut", ak.fill_none(ak.firsts(lep_ht) > 150, False))
     selections.add("exactly_0fatjet", ak.num(fatjets) == 0)
-    selections.add("chi2_cut", ttbar_reco.chi2 < 30.)
+    selections.add("chi2_cut", ttbar_reco.chi2 < 30.0)
     selections.add("nn_score", mva.nn_score >= 0.5)
 
     return selections
@@ -551,7 +537,7 @@ def Zprime_softcuts_CR1(
     fatjets: ak.Array,
     met: ak.Array,
     ttbar_reco: ak.Array,
-    mva: ak.Array
+    mva: ak.Array,
 ) -> PackedSelection:
     """
     Control Region 1 (W+jets enriched) selection as in paper Sec. 7.2.
@@ -566,7 +552,7 @@ def Zprime_softcuts_CR1(
     selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
     selections.add("met_cut", met.pt > 50)
     selections.add("lep_ht_cut", ak.fill_none(ak.firsts(lep_ht) > 150, False))
-    selections.add("chi2_cut", ttbar_reco.chi2 < 30.)
+    selections.add("chi2_cut", ttbar_reco.chi2 < 30.0)
     selections.add("nn_score", mva.nn_score < -0.75)
 
     return selections
@@ -578,7 +564,7 @@ def Zprime_softcuts_CR2(
     fatjets: ak.Array,
     met: ak.Array,
     ttbar_reco: ak.Array,
-    mva: ak.Array
+    mva: ak.Array,
 ) -> PackedSelection:
     """
     Control Region 2 (ttbar enriched) selection.
@@ -593,10 +579,9 @@ def Zprime_softcuts_CR2(
     selections.add("atleast_1b", ak.sum(jets.btagDeepB > 0.5, axis=1) > 0)
     selections.add("met_cut", met.pt > 50)
     selections.add("lep_ht_cut", ak.fill_none(ak.firsts(lep_ht) > 150, False))
-    selections.add("chi2_cut", ttbar_reco.chi2 < 30.)
+    selections.add("chi2_cut", ttbar_reco.chi2 < 30.0)
     selections.add(
-        "nn_score_range",
-        (mva.nn_score > 0.0) & (mva.nn_score < 0.5)
+        "nn_score_range", (mva.nn_score > 0.0) & (mva.nn_score < 0.5)
     )
 
     return selections

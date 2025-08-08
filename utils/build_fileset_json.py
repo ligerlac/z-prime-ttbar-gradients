@@ -1,166 +1,265 @@
 """
-Utility to generate JSON metadata for NanoAOD ROOT files used in
-ZprimeTtbar analysis.
+Utility module to generate JSON metadata for NanoAOD ROOT datasets
+used in ZprimeTtbar analysis.
 
-For each process, this script reads ROOT file paths from `.txt` files in a
-specified location, extracts the number of events per file using uproot,
-and stores the data in a JSON dictionary for downstream usage.
+This script provides:
+  - `get_root_file_paths`: Read .txt listings to gather ROOT file paths.
+  - `count_events_in_files`: Query each ROOT file for total and weighted event counts.
+  - `NanoAODMetadataGenerator`: Class-based API to build and export metadata.
+  - CLI entrypoint for standalone execution.
 
-Based on original code from AGC repo:
+Original inspiration from:
 https://github.com/iris-hep/analysis-grand-challenge/blob/main/datasets/
 cms-open-data-2015/build_ntuple_json.py
 """
 
-from collections import defaultdict
-from glob import glob
 import json
 import logging
-import os
 import time
+from collections import defaultdict
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import awkward as ak
 import uproot
 
 
+# Configure module-level logger
 logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
-# Mapping of process names to folder paths containing .txt files listing ROOT files
-PROCESS_TO_DATASETS_FOLDER = {
-    "signal": "datasets/signal/m400_w40/",
-    "ttbar_semilep": "datasets/ttbar_semilep/",
-    "ttbar_had": "datasets/ttbar_had/",
-    "ttbar_lep": "datasets/ttbar_lep/",
-    "wjets": "datasets/wjets/",
-    "data": "datasets/data/",
+
+# Default directory mapping for each physics process
+DEFAULT_DATASET_DIRECTORIES: Dict[str, Path] = {
+    "signal": Path("datasets/signal/m400_w40/"),
+    "ttbar_semilep": Path("datasets/ttbar_semilep/"),
+    "ttbar_had": Path("datasets/ttbar_had/"),
+    "ttbar_lep": Path("datasets/ttbar_lep/"),
+    "wjets": Path("datasets/wjets/"),
+    "data": Path("datasets/data/"),
 }
 
 
-def get_paths(folder: str, recids=None) -> list[str]:
+def get_root_file_paths(
+    directory: Union[str, Path],
+    identifiers: Optional[Union[int, List[int]]] = None,
+) -> List[Path]:
     """
-    Get a list of ROOT file paths based on .txt file(s) in the given folder.
+    Collect ROOT file paths from text listings in a directory.
 
-    If `recids` is provided, it will only read .txt files with those identifiers.
-    Otherwise, all .txt files in the folder are used.
+    Searches for `*.txt` files in the specified directory (or specific
+    `<id>.txt` files if `identifiers` is given) and reads each line as a
+    ROOT file path.
 
-    Args:
-        folder (str): Path to the folder containing .txt files.
-        recids (Optional[int or list[int]]): Optional list of IDs for specific text
-        files.
+    Parameters
+    ----------
+    directory : str or Path
+        Path to the folder containing text listing files.
+    identifiers : int or list of ints, optional
+        Specific listing file IDs (without `.txt`) to process. If `None`, all
+        `.txt` files in the folder are used.
 
-    Returns:
-        list[str]: List of ROOT file paths.
+    Returns
+    -------
+    List[Path]
+        Resolved list of ROOT file paths.
+
+    Raises
+    ------
+    FileNotFoundError
+        If no listing files are found or any specified file is missing.
     """
-    if recids is None:
-        text_files = glob(f"{folder}/*.txt")
+    dir_path = Path(directory)
+    # Determine which text files to parse
+    if identifiers is None:
+        listing_files = list(dir_path.glob("*.txt"))
     else:
-        if not isinstance(recids, list):
-            recids = [recids]
-        text_files = [f"{folder}/{str(recid)}.txt" for recid in recids]
+        ids = [identifiers] if isinstance(identifiers, int) else identifiers
+        listing_files = [dir_path / f"{i}.txt" for i in ids]
 
-    all_files = []
-    for text_file in text_files:
-        with open(text_file) as f:
-            root_files = f.readlines()
-        all_files.extend(f.strip() for f in root_files)
+    if not listing_files:
+        raise FileNotFoundError(f"No listing files found in {dir_path}")
 
-    return all_files
+    root_paths: List[Path] = []
+    for txt_file in listing_files:
+        if not txt_file.is_file():
+            raise FileNotFoundError(f"Missing listing file: {txt_file}")
+        # Read all non-empty lines as file paths
+        for line in txt_file.read_text().splitlines():
+            path_str = line.strip()
+            if path_str:
+                root_paths.append(Path(path_str))
+
+    return root_paths
 
 
-def num_events_list(files: list[str]) -> list[int]:
+def count_events_in_files(files: List[Path]) -> Tuple[List[int], List[float]]:
     """
-    Retrieve the number of events from each ROOT file.
+    Query ROOT files for event counts and sum of generator weights.
 
-    Args:
-        files (list[str]): List of ROOT file paths.
+    Opens each file with uproot, reads the "Events" TTree,
+    and accumulates the number of entries and sum of "genWeight".
 
-    Returns:
-        list[int]: List of event counts for each file.
+    Parameters
+    ----------
+    files : list of Path
+        Paths to ROOT files to inspect.
+
+    Returns
+    -------
+    num_entries : list of int
+        Number of events in each file's "Events" tree.
+    sum_weights : list of float
+        Total of `genWeight` values per file.
     """
-    num_events = []
-    num_weight_events = []
-    t0 = time.time()
+    num_entries: List[int] = []
+    sum_weights: List[float] = []
+    start_time = time.time()
 
-    for i, filename in enumerate(files):
-        if i % 10 == 0 or i == len(files) - 1:
-            logger.info(f"{i+1} / {len(files)} in {time.time() - t0:.0f} s")
+    for idx, file_path in enumerate(files):
+        # Log progress every 10 files and at completion
+        if idx % 10 == 0 or idx == len(files) - 1:
+            elapsed = int(time.time() - start_time)
+            logger.info(
+                f"Reading file {idx+1}/{len(files)} ({elapsed}s elapsed)"
+            )
         try:
-            with uproot.open(filename) as f:
-                num_events.append(f["Events"].num_entries)
-                num_weight_events.append(
-                    float(ak.sum(f["Events"]["genWeight"].array()))
-                )
-        except Exception as e:
-            logger.warning(f"Could not read {filename}: {e}")
-            num_events.append(0)
-            num_weight_events.append(0)
+            with uproot.open(file_path) as root_file:
+                tree = root_file["Events"]
+                num_entries.append(tree.num_entries)
+                weights = tree["genWeight"].array(library="ak")
+                sum_weights.append(float(ak.sum(weights)))
+        except Exception as err:
+            logger.warning(f"Error reading {file_path}: {err}")
+            num_entries.append(0)
+            sum_weights.append(0.0)
 
-    return num_events, num_weight_events
+    return num_entries, sum_weights
 
 
-def update_dict(
-    file_dict: dict, process: str, folder: str, variation: str, recid
-) -> dict:
+class NanoAODMetadataGenerator:
     """
-    Update the file_dict with information about a given process and variation.
+    Class-based API to build and export metadata for NanoAOD datasets.
 
-    Args:
-        file_dict (dict): Dictionary to be updated.
-        process (str): Name of the physics process.
-        folder (str): Folder containing .txt file(s) listing ROOT files.
-        variation (str): Variation name (e.g. "nominal", "JESUp").
-        recid: Optional specific .txt file ID(s).
+    Attributes
+    ----------
+    process_directories : Dict[str, Path]
+        Map from process name to directory of `.txt` listings.
+    output_directory : Path
+        Directory where individual JSON files and master index will be written.
 
-    Returns:
-        dict: Updated file_dict.
+    Methods
+    -------
+    get_metadata(identifiers=None)
+        Build metadata dict without writing to disk.
+    run(identifiers=None)
+        Generate metadata dict and write JSON files.
     """
-    logger.info(f"Processing: {process}")
-    files = get_paths(folder, recid)
-    nevts_list, nevts_wt_list = num_events_list(files)
 
-    file_dict[process].update(
-        {
-            variation: {
-                "files": [
-                    {"path": f, "nevts": n, "nevts_wt": n_wt}
-                    for f, n, n_wt in zip(files, nevts_list, nevts_wt_list)
-                ],
-                "nevts_total": sum(nevts_list),
-                "nevts_wt_total": sum(nevts_wt_list),
-            }
+    def __init__(
+        self,
+        process_directories: Optional[Dict[str, Union[str, Path]]] = None,
+        output_directory: Union[
+            str, Path
+        ] = "datasets/nanoaods_jsons_per_process",
+    ):
+        # Initialize mapping from process to directory path
+        raw_map = process_directories or DEFAULT_DATASET_DIRECTORIES
+        self.process_directories: Dict[str, Path] = {
+            name: Path(path) for name, path in raw_map.items()
         }
-    )
+        # Ensure output directory exists
+        self.output_directory = Path(output_directory)
+        self.output_directory.mkdir(parents=True, exist_ok=True)
 
-    os.makedirs("datasets/nanoaods_jsons_per_proces", exist_ok=True)
-    # Create partial backup JSON file
-    write_to_file(
-        file_dict,
-        f"datasets/nanoaods_jsons_per_proces/nanoaods_{process}_{variation}.json",
-    )
+    def get_metadata(
+        self, identifiers: Optional[Union[int, List[int]]] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Assemble metadata for each process/variation without file I/O.
 
-    return file_dict
+        Parameters
+        ----------
+        identifiers : int or list of ints, optional
+            Specific listing IDs to process. If None, all listings are used.
+
+        Returns
+        -------
+        metadata : dict
+            Nested structure: metadata[process]["nominal"] = {
+              "files": [ {"path": str, "nevts": int, "nevts_wt": float}, ... ],
+              "nevts_total": int,
+              "nevts_wt_total": float
+            }
+        """
+        results: Dict[str, Dict[str, Any]] = defaultdict(dict)
+
+        for process_name, listing_dir in self.process_directories.items():
+            logger.info(f"Processing process: {process_name}")
+            try:
+                file_paths = get_root_file_paths(listing_dir, identifiers)
+            except FileNotFoundError as fnf:
+                logger.error(fnf)
+                continue
+
+            entries_count, weight_sums = count_events_in_files(file_paths)
+            variation_label = "nominal"
+            file_records = [
+                {"path": str(fp), "nevts": cnt, "nevts_wt": wt}
+                for fp, cnt, wt in zip(file_paths, entries_count, weight_sums)
+            ]
+
+            results[process_name][variation_label] = {
+                "files": file_records,
+                "nevts_total": sum(entries_count),
+                "nevts_wt_total": sum(weight_sums),
+            }
+
+        return results
+
+    def run(self, identifiers: Optional[Union[int, List[int]]] = None) -> None:
+        """
+        Generate metadata and write individual JSON files and a master index.
+
+        Parameters
+        ----------
+        identifiers : int or list of ints, optional
+            Specific listing IDs to process. If None, all listings are used.
+        """
+        metadata = self.get_metadata(identifiers)
+
+        # Write per-process JSON files
+        for process_name, variations in metadata.items():
+            for variation_label, data in variations.items():
+                output_file = (
+                    self.output_directory
+                    / f"nanoaods_{process_name}_{variation_label}.json"
+                )
+                with output_file.open("w") as json_f:
+                    json.dump(
+                        {process_name: {variation_label: data}},
+                        json_f,
+                        indent=4,
+                    )
+                logger.debug(f"Wrote file: {output_file}")
+
+        # Write master metadata index
+        master_file = Path("datasets/nanoaods.json")
+        master_file.parent.mkdir(parents=True, exist_ok=True)
+        with master_file.open("w") as mfile:
+            json.dump(metadata, mfile, indent=4)
+        logger.info(f"Master metadata written to {master_file}")
 
 
-def write_to_file(file_dict: dict, path: str):
+# CLI entrypoint for standalone usage
+def main() -> None:
     """
-    Write the file_dict to a JSON file at the given path.
-
-    Args:
-        file_dict (dict): The dictionary to write.
-        path (str): Destination path for the output JSON file.
+    Command-line interface: instantiate the generator and run.
     """
-    with open(path, "w") as f:
-        json.dump(file_dict, f, indent=4)
-        f.write("\n")
+    logging.basicConfig(level=logging.INFO)
+    generator = NanoAODMetadataGenerator()
+    generator.run()
 
 
-# Main execution block
 if __name__ == "__main__":
-    file_dict = defaultdict(dict)
-
-    for process, folder in PROCESS_TO_DATASETS_FOLDER.items():
-        update_dict(
-            file_dict, process, folder, variation="nominal", recid=None
-        )
-
-    # Final master JSON
-    write_to_file(file_dict, "datasets/nanoaods.json")
+    main()

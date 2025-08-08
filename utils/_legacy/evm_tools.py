@@ -3,17 +3,21 @@ import logging
 import jax
 import jax.numpy as jnp
 import evermore as evm
-from typing import Any, NamedTuple, Dict
+from typing import NamedTuple, Dict
 from jaxtyping import Array, PyTree
 from tabulate import tabulate
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s: %(name)s: %(lineno)s - %(funcName)20s()] %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname)s: %(name)s: %(lineno)s - %(funcName)20s()] %(message)s",
+)
 logger = logging.getLogger("EvmTools")
 logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 
 # =============================================================================
 # Data Structures
 # =============================================================================
+
 
 # =============================================================================
 # FitResult
@@ -35,11 +39,13 @@ class FitResult(NamedTuple):
     param_values : Dict[str, float]
         Parameter values for summary printing (name: value)
     """
+
     params: PyTree
     loss: float
     uncertainties: Dict[str, float]
     covariance: Array
     param_values: Dict[str, float]
+
 
 # =============================================================================
 # ChannelData
@@ -65,10 +71,12 @@ class ChannelData(NamedTuple):
                 key: Systematic name
                 value: Varied histogram (JAX array)
     """
+
     region: str
     observable: str
     data: Array
     processes: Dict[str, Dict]
+
 
 # =============================================================================
 # Parameters
@@ -86,9 +94,11 @@ class Parameters(NamedTuple):
     nuis : Dict[str, evm.NormalParameter]
         Nuisance parameters keyed by systematic name
     """
+
     mu: evm.Parameter
     norm: Dict[str, evm.Parameter]
     nuis: Dict[str, evm.NormalParameter]
+
 
 # =============================================================================
 # Summaries
@@ -111,15 +121,23 @@ def summarize_fit_result(result: FitResult) -> None:
         value = result.param_values[name]
         unc = result.uncertainties.get(name, None)
         # Format value ± uncertainty
-        val_str = f"{jax.device_get(value).item():.4f} ± {jax.device_get(unc).item():.4f}"
+        val_str = (
+            f"{jax.device_get(value).item():.4f} ±"
+            f"{jax.device_get(unc).item():.4f}"
+        )
         param_table.append([name, val_str])
 
     # Prepare fit quality metrics
     quality_table = [
-        ["Negative Log-Likelihood", f"{jax.device_get(result.loss).item():.4f}"],
+        [
+            "Negative Log-Likelihood",
+            f"{jax.device_get(result.loss).item():.4f}",
+        ],
         ["Number of Parameters", len(result.param_values)],
-        ["Covariance Condition",
-         f"{jax.device_get(jnp.linalg.cond(result.covariance)).item():.2e}"]
+        [
+            "Covariance Condition",
+            f"{jax.device_get(jnp.linalg.cond(result.covariance)).item():.2e}",
+        ],
     ]
 
     if param_table:
@@ -128,17 +146,16 @@ def summarize_fit_result(result: FitResult) -> None:
             param_table,
             headers=["Parameter", "Value ± Uncertainty"],
             tablefmt="grid",
-            floatfmt=".4f"
+            floatfmt=".4f",
         )
         logger.info("Fitted parameter values:\n%s", table_str)
 
     # Format quality table with newline
     table_str = tabulate(
-        quality_table,
-        headers=["Metric", "Value"],
-        tablefmt="grid"
+        quality_table, headers=["Metric", "Value"], tablefmt="grid"
     )
     logger.info("Fit quality metrics:\n%s", table_str)
+
 
 # =============================================================================
 # print_significance_summary
@@ -162,9 +179,7 @@ def print_significance_summary(significance: float, q0: float) -> None:
 
     # Format table with newline for proper separation
     table_str = tabulate(
-        results_table,
-        headers=["Metric", "Value"],
-        tablefmt="grid"
+        results_table, headers=["Metric", "Value"], tablefmt="grid"
     )
 
     # Using logger for formatted output with proper newlines

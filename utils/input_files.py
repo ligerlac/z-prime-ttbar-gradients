@@ -1,17 +1,83 @@
-"""
-Utilities for downloading and managing input files.
-
-Taken from the AGC project:
-https://github.com/MoAly98/analysis-grand-challenge/blob/main/analyses/cms-open-data-ttbar/utils/file_input.py
-"""
-
 import json
+import logging
+from pathlib import Path
+from typing import Any, Dict, Union
+
+from tabulate import tabulate
+
+defaul_dataset_json = Path("datasets/nanoaods.json")
+
+# Configure module-level logger
+logger = logging.getLogger(__name__)
 
 
-def construct_fileset(n_files_max_per_sample, preprocessor="uproot"):
+def construct_fileset(
+    max_files_per_sample: int,
+    preprocessor: str = "uproot",
+    json_path: Union[str, Path] = defaul_dataset_json,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Build a structured fileset mapping for physics analyses including
+    file paths and metadata.
 
-    # x-secs are in pb
-    xsec_info = {
+    This function reads dataset definitions from a JSON file and constructs a nested
+    dictionary where each key is "<process>__<variation>" and values contain:
+      - files: a mapping of file or glob patterns to ROOT TTrees
+      - metadata: information on event counts, cross-sections, etc.
+
+    Parameters
+    ----------
+    max_files_per_sample : int
+        Maximum number of files to include for each sample. Use -1 to include all files.
+    preprocessor : str, optional
+        Type of file access to prepare. Supported values:
+        - "uproot": use glob patterns for directory-level access
+        - other: list each file individually
+        Default is "uproot".
+    json_path : str or Path, optional
+        Path to the JSON configuration file specifying samples
+        variations and file lists.
+        Defaults to 'datasets/nanoaods.json'.
+
+    Returns
+    -------
+    fileset : dict
+        Nested mapping where each key "<process>__<variation>" maps to:
+        - files (dict): {file_path_or_pattern: "Events"}
+        - metadata (dict): {
+            "process": str,
+            "variation": str,
+            "nevts": int,
+            "nevts_wt": float,
+            "xsec": float,
+        }
+
+    Raises
+    ------
+    FileNotFoundError
+        If the JSON configuration file does not exist.
+    ValueError
+        If `max_files_per_sample` is less than -1.
+    JSONDecodeError
+        If the JSON file cannot be parsed.
+    """
+    # Validate inputs
+    if max_files_per_sample < -1:
+        raise ValueError(
+            f"max_files_per_sample must be -1 or non-negative; "
+            f"got {max_files_per_sample}"
+        )
+
+    json_file = Path(json_path)
+    if not json_file.is_file():
+        raise FileNotFoundError(f"Dataset JSON file not found: {json_file}")
+
+    # Load dataset definitions
+    with json_file.open("r") as f:
+        dataset_info = json.load(f)
+
+    # Cross-section lookup (in picobarns)
+    cross_section_map: Dict[str, float] = {
         "signal": 1.0,
         "ttbar_semilep": 831.76 * 0.438,
         "ttbar_had": 831.76 * 0.457,
@@ -20,71 +86,82 @@ def construct_fileset(n_files_max_per_sample, preprocessor="uproot"):
         "data": 1.0,
     }
 
-    # list of files
-    with open("datasets/nanoaods.json") as f:
-        file_info = json.load(f)
+    fileset: Dict[str, Dict[str, Any]] = {}
 
-    # process into "fileset" summarizing all info
-    fileset = {}
-    for process in file_info.keys():
+    # Iterate over each process and its systematic variations
+    for process_name, variations in dataset_info.items():
+        for variation_name, info in variations.items():
+            # Extract raw file entries
+            raw_entries = info.get("files", [])
 
-        # if process == "data":   continue  # skip data
+            # Limit number of files if requested
+            if max_files_per_sample != -1:
+                raw_entries = raw_entries[:max_files_per_sample]
 
-        for variation in file_info[process].keys():
-            file_list = file_info[process][variation]["files"]
-            if n_files_max_per_sample != -1:
-                file_list = file_list[
-                    :n_files_max_per_sample
-                ]  # use partial set of samples
-
-            file_paths = {f["path"]: "Events" for f in file_list}
-            nevts_total = sum([f["nevts"] for f in file_list])
-            nevts_wt_total = sum([f["nevts_wt"] for f in file_list])
-
-            metadata = {
-                "process": process,
-                "variation": variation,
-                "nevts": nevts_total,
-                "nevts_wt": nevts_wt_total,
-                "xsec": xsec_info[process],
-            }
-            fileset.update(
-                {
-                    f"{process}__{variation}": {
-                        "files": file_paths,
-                        "metadata": metadata,
-                    }
-                }
+            # Compute total event counts
+            total_events = sum(entry.get("nevts", 0) for entry in raw_entries)
+            total_weighted = sum(
+                entry.get("nevts_wt", 0.0) for entry in raw_entries
             )
-        if preprocessor == "uproot":
-            # this is dangerous, assumes all files are in the same directory structure
-            # also, removing individual files from the .json will have no effect.
-            # n_max_per_sample has no effect, either.
-            # Hardcoding the glob path for data here makes it at least obvious.
-            if process == "data":
-                process_root_path = "root://eospublic.cern.ch//eos/opendata/cms/Run2016*/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1"
+
+            # Prepare metadata dict
+            metadata = {
+                "process": process_name,
+                "variation": variation_name,
+                "nevts": total_events,
+                "nevts_wt": total_weighted,
+                "xsec": cross_section_map.get(process_name, 0.0),
+            }
+
+            # Determine file path patterns or explicit paths
+            if preprocessor == "uproot":
+                # Use glob pattern for directory-based access
+                if process_name == "data":
+                    # CMS public EOS path for collision data
+                    base_pattern = (
+                        "root://eospublic.cern.ch//eos/opendata/cms/"
+                        "Run2016*/SingleMuon/NANOAOD/"
+                        "UL2016_MiniAODv2_NanoAODv9-v1"
+                    )
+                else:
+                    # Deduce directory from first file path
+                    first_path = raw_entries[0].get("path", "")
+                    base_pattern = str(Path(first_path).parents[1])
+
+                file_map = {f"{base_pattern}/*/*.root": "Events"}
             else:
-                file_list = file_info[process][variation]["files"]
-                a_file = file_list[0]
-                process_root_path = "/".join(a_file["path"].split("/")[:-2])
-            process_all_files = f"{process_root_path}/*/*.root"
-            nevts_total = sum([f["nevts"] for f in file_list])
-            nevts_wt_total = sum([f["nevts_wt"] for f in file_list])
-            metadata = {
-                "process": process,
-                "variation": variation,
-                "nevts": nevts_total,
-                "nevts_wt": nevts_wt_total,
-                "xsec": xsec_info[process],
-            }
-            file_paths = {process_all_files: "Events"}
-            fileset.update(
-                {
-                    f"{process}__{variation}": {
-                        "files": file_paths,
-                        "metadata": metadata,
-                    }
+                # Explicit file listings for other preprocessors
+                file_map = {
+                    entry.get("path", ""): "Events" for entry in raw_entries
                 }
+
+            key = f"{process_name}__{variation_name}"
+            fileset[key] = {"files": file_map, "metadata": metadata}
+
+            logger.debug(
+                f"Added fileset entry: {key} with {len(file_map)} files"
             )
+
+    logger.info(f"Constructed fileset with {len(fileset)} entries.")
+
+    # --- Add summary table ---
+    summary_data = []
+    headers = ["Key", "Process", "Variation", "# Files"]
+    for key, content in fileset.items():
+        process = content["metadata"]["process"]
+        variation = content["metadata"]["variation"]
+        num_files = len(content["files"])
+        summary_data.append([key, process, variation, num_files])
+
+    # Sort by key for consistent output
+    summary_data.sort(key=lambda x: x[0])
+
+    logger.info(
+        "Fileset Summary:\n"
+        + tabulate(summary_data, headers=headers, tablefmt="grid")
+    )
 
     return fileset
+
+
+# End of module
