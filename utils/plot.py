@@ -22,12 +22,14 @@ from matplotlib.ticker import ScalarFormatter
 from utils.logging import ColoredFormatter
 
 # Configure matplotlib global settings
-rcParams.update({
-    "axes.formatter.use_mathtext": True,
-    "text.usetex": True,
-    "font.family": "serif",
-    "axes.linewidth": 1.2,
-})
+rcParams.update(
+    {
+        "axes.formatter.use_mathtext": True,
+        "text.usetex": True,
+        "font.family": "serif",
+        "axes.linewidth": 1.2,
+    }
+)
 
 # Type alias for array-like objects (supports JAX, NumPy, etc.)
 ArrayLike = Union[np.ndarray, Any]
@@ -75,7 +77,9 @@ def format_scientific_latex(value: float, significant_digits: int = 2) -> str:
         raise ValueError("significant_digits must be positive")
     if isinstance(value, np.ndarray):
         if value.shape != ():
-            raise ValueError("Value must be a scalar, got shape {}".format(value.shape))
+            raise ValueError(
+                "Value must be a scalar, got shape {}".format(value.shape)
+            )
         value = value.item()
 
     try:
@@ -194,7 +198,10 @@ def create_cms_histogram(
 
         # Validate array shapes
         if len(data_array) != len(edges_array) - 1:
-            raise ValueError(f"Data length ({len(data_array)}) must match number of bins ({len(edges_array) - 1})")
+            raise ValueError(
+                f"Data length ({len(data_array)}) must match "
+                f"number of bins ({len(edges_array) - 1})"
+            )
 
         bin_centers = 0.5 * (edges_array[:-1] + edges_array[1:])
 
@@ -205,7 +212,8 @@ def create_cms_histogram(
 
         if process_order:
             process_order = [
-                p for p in process_order
+                p
+                for p in process_order
                 if p in templates and (show_signal or p.lower() != "signal")
             ]
         else:
@@ -213,14 +221,18 @@ def create_cms_histogram(
                 p for p in process_names if p.lower() != "signal"
             )
             signal_present = "signal" in templates and show_signal
-            process_order = background_processes + (["signal"] if signal_present else [])
+            process_order = background_processes + (
+                ["signal"] if signal_present else []
+            )
 
         logger.debug(f"Process order: {process_order}")
 
         # Scale templates according to fitted parameters
         signal_scale = fitted_params.get("mu", 1.0) if fitted_params else 1.0
         ttbar_scale = (
-            fitted_params.get("norm_ttbar_semilep", 1.0) if fitted_params else 1.0
+            fitted_params.get("norm_ttbar_semilep", 1.0)
+            if fitted_params
+            else 1.0
         )
 
         scaled_templates = {}
@@ -234,7 +246,9 @@ def create_cms_histogram(
 
         # Create figure with two panels (main + ratio)
         figure = plt.figure(figsize=figsize)
-        grid_spec = GridSpec(2, 1, height_ratios=(3, 1), hspace=0.1, figure=figure)
+        grid_spec = GridSpec(
+            2, 1, height_ratios=(3, 1), hspace=0.1, figure=figure
+        )
         main_axis = figure.add_subplot(grid_spec[0])
         ratio_axis = figure.add_subplot(grid_spec[1], sharex=main_axis)
 
@@ -278,7 +292,9 @@ def create_cms_histogram(
             annotation_lines = []
             for param, value in fitted_params.items():
                 latex_label = param_labels.get(param, param)
-                if not (latex_label.startswith("$") and latex_label.endswith("$")):
+                if not (
+                    latex_label.startswith("$") and latex_label.endswith("$")
+                ):
                     latex_label = f"${latex_label}$"
                 annotation_lines.append(f"{latex_label} = {value:.3f}")
 
@@ -299,9 +315,14 @@ def create_cms_histogram(
             )
 
         # Compute and plot ratio panel
-        total_prediction = np.sum([scaled_templates[p] for p in process_order], axis=0)
+        total_prediction = np.sum(
+            [scaled_templates[p] for p in process_order], axis=0
+        )
         ratio_values = np.divide(
-            data_array, total_prediction, out=np.ones_like(data_array), where=total_prediction > 0
+            data_array,
+            total_prediction,
+            out=np.ones_like(data_array),
+            where=total_prediction > 0,
         )
         ratio_errors = np.divide(
             np.sqrt(data_array),
@@ -311,12 +332,19 @@ def create_cms_histogram(
         )
 
         ratio_axis.errorbar(
-            bin_centers, ratio_values, yerr=ratio_errors, fmt="o", color="k", capsize=2
+            bin_centers,
+            ratio_values,
+            yerr=ratio_errors,
+            fmt="o",
+            color="k",
+            capsize=2,
         )
         ratio_axis.axhline(1, color="r", linestyle="--")
         ratio_axis.set_ylim(ratio_ylim)
         ratio_axis.set_xlabel(xlabel, fontsize=14)
-        ratio_axis.set_ylabel("Data/Pred.", fontsize=14, ha="center", labelpad=15)
+        ratio_axis.set_ylabel(
+            "Data/Pred.", fontsize=14, ha="center", labelpad=15
+        )
 
         return figure
 
@@ -444,7 +472,7 @@ def plot_pvalue_vs_parameters(
 
             # Configure axes
             display_name = param_labels.get(base_name, base_name)
-            ax.set_xlabel(f"{display_name} Value" , fontsize=10)
+            ax.set_xlabel(f"{display_name} Value", fontsize=10)
             if idx % grid_size == 0:
                 ax.set_ylabel(r"$p$-value", fontsize=10)
             ax.grid(True, alpha=0.3)
@@ -466,7 +494,9 @@ def plot_pvalue_vs_parameters(
         fig.savefig(filename, dpi=300)
         plt.close(fig)
 
-        logger.info(f"Successfully saved p-value vs parameters plot to {filename}")
+        logger.info(
+            f"Successfully saved p-value vs parameters plot to {filename}"
+        )
 
     except Exception as e:
         logger.error(f"Failed to create p-value vs parameters plot: {e}")
@@ -544,7 +574,9 @@ def plot_parameters_over_iterations(
             logger.warning("No varying parameters found - skipping plot")
             return
 
-        logger.debug(f"Found {len(non_constant_params)} varying parameters (including p-value)")
+        logger.debug(
+            f"Found {len(non_constant_params)} varying parameters (including p-value)"
+        )
 
         # Create subplot grid
         num_params = len(non_constant_params)
@@ -572,7 +604,11 @@ def plot_parameters_over_iterations(
             zip(axes_flat, non_constant_params.items())
         ):
             # Extract base parameter name
-            base_name = param_name.split("__", 1)[-1] if "__" in param_name else param_name
+            base_name = (
+                param_name.split("__", 1)[-1]
+                if "__" in param_name
+                else param_name
+            )
 
             # Create title string with gradient and learning rate
             title_parts = []
@@ -619,7 +655,9 @@ def plot_parameters_over_iterations(
         fig.savefig(filename, dpi=300)
         plt.close(fig)
 
-        logger.info(f"Successfully saved parameters vs iterations plot to {filename}")
+        logger.info(
+            f"Successfully saved parameters vs iterations plot to {filename}"
+        )
 
     except Exception as e:
         logger.error(f"Failed to create parameters vs iterations plot: {e}")
@@ -627,8 +665,7 @@ def plot_parameters_over_iterations(
 
 
 def _setup_process_ordering(
-    data_dict: Dict[str, Any],
-    plot_config: Dict[str, Any]
+    data_dict: Dict[str, Any], plot_config: Dict[str, Any]
 ) -> List[str]:
     """
     Set up consistent process ordering for plotting.
@@ -655,15 +692,20 @@ def _setup_process_ordering(
 
     process_order = plot_config.get("process_order", list(data_dict.keys()))
 
-    # Build ordered list: first those in process_order, then others in original insertion order
+    # Build ordered list: first those in process_order then others
+    # in original insertion order
     ordered_processes = [p for p in process_order if p in data_dict]
-    ordered_processes += [p for p in data_dict.keys() if p not in process_order]
+    ordered_processes += [
+        p for p in data_dict.keys() if p not in process_order
+    ]
 
     logger.debug(f"Process ordering: {ordered_processes}")
     return ordered_processes
 
 
-def _setup_plot_style_and_figure(figsize: Tuple[float, float] = (8, 6)) -> Tuple[plt.Figure, plt.Axes]:
+def _setup_plot_style_and_figure(
+    figsize: Tuple[float, float] = (8, 6)
+) -> Tuple[plt.Figure, plt.Axes]:
     """
     Set up consistent plot style and create figure.
 
@@ -695,10 +737,7 @@ def _setup_plot_style_and_figure(figsize: Tuple[float, float] = (8, 6)) -> Tuple
 
 
 def _save_plot_with_logging(
-    fig: plt.Figure,
-    plot_filename: Path,
-    plot_description: str,
-    dpi: int = 300
+    fig: plt.Figure, plot_filename: Path, plot_description: str, dpi: int = 300
 ) -> None:
     """
     Save plot with consistent logging and cleanup.
@@ -773,8 +812,10 @@ def plot_mva_feature_distributions(
             if isinstance(feature_binning, str):
                 # Parse binning string like "50,0,100" into bins
                 binning_str = feature_binning.strip()
-                parts = binning_str.split(',')
-                prelim_bins = np.linspace(float(parts[0]), float(parts[1]), int(parts[2])+1)
+                parts = binning_str.split(",")
+                prelim_bins = np.linspace(
+                    float(parts[0]), float(parts[1]), int(parts[2]) + 1
+                )
             elif isinstance(feature_binning, (list, tuple)):
                 # Assume binning is a list of bin edges
                 prelim_bins = np.asarray(feature_binning)
@@ -788,11 +829,17 @@ def plot_mva_feature_distributions(
             bins = prelim_bins
             if prelim_bins is None:
                 # Determine binning from data if not specified
-                all_values = np.concatenate([data[feature_name][scaling_version] for proc, data in feature_data.items() if feature_name in data])
+                all_values = np.concatenate(
+                    [
+                        data[feature_name][scaling_version]
+                        for proc, data in feature_data.items()
+                        if feature_name in data
+                    ]
+                )
                 bins = np.linspace(np.min(all_values), np.max(all_values), 50)
             else:
                 if scaling_version == "scaled":
-                    scaling = getattr(feature, 'scale', None)
+                    scaling = getattr(feature, "scale", None)
                     if scaling is not None:
                         # Scale feature data if specified in MVA config
                         bins = scaling(bins)
@@ -802,11 +849,19 @@ def plot_mva_feature_distributions(
                     bins = prelim_bins
 
             for process_name in ordered_processes:
-                logger.debug(f"Plotting {scaling_version} feature data '{feature_name}' for process '{process_name}'")
-                if process_name not in feature_data or feature_name not in feature_data[process_name]:
+                logger.debug(
+                    f"Plotting {scaling_version} feature data "
+                    f"'{feature_name}' for process '{process_name}'"
+                )
+                if (
+                    process_name not in feature_data
+                    or feature_name not in feature_data[process_name]
+                ):
                     continue
 
-                values = convert_to_numpy(feature_data[process_name][feature_name][scaling_version])
+                values = convert_to_numpy(
+                    feature_data[process_name][feature_name][scaling_version]
+                )
 
                 ax.hist(
                     values,
@@ -825,8 +880,15 @@ def plot_mva_feature_distributions(
             ax.tick_params(axis="both", labelsize=12)
             fig.tight_layout()
 
-            plot_filename = output_path / f"{mva_config['name']}_feats_{feature_name}_{scaling_version}.pdf"
-            _save_plot_with_logging(fig, plot_filename, f"MVA feature plot ({feature_name}, {scaling_version})")
+            plot_filename = (
+                output_path
+                / f"{mva_config['name']}_feats_{feature_name}_{scaling_version}.pdf"
+            )
+            _save_plot_with_logging(
+                fig,
+                plot_filename,
+                f"MVA feature plot ({feature_name}, {scaling_version})",
+            )
 
 
 def plot_mva_scores(
@@ -865,10 +927,12 @@ def plot_mva_scores(
     if bins <= 0:
         raise ValueError("Number of bins must be positive")
 
-    logger.info(f"Creating MVA scores plot with prefix '{prefix}' in {output_dir}")
+    logger.info(
+        f"Creating MVA scores plot with prefix '{prefix}' in {output_dir}"
+    )
 
     try:
-        output_path = Path(output_dir)  / "scores"
+        output_path = Path(output_dir) / "scores"
         output_path.mkdir(parents=True, exist_ok=True)
 
         process_colors = plot_config.get("process_colors", {})
@@ -890,7 +954,9 @@ def plot_mva_scores(
                 logger.warning(f"No scores found for process '{process_name}'")
                 continue
 
-            counts, _ = np.histogram(process_scores, bins=bin_edges, density=True)
+            counts, _ = np.histogram(
+                process_scores, bins=bin_edges, density=True
+            )
             if len(counts) > 0:
                 max_height = max(max_height, counts.max())
 
@@ -913,7 +979,9 @@ def plot_mva_scores(
         fig.tight_layout()
 
         plot_filename = output_path / f"{prefix}mva_score.pdf"
-        _save_plot_with_logging(fig, plot_filename, f"MVA score plot [{prefix}]")
+        _save_plot_with_logging(
+            fig, plot_filename, f"MVA score plot [{prefix}]"
+        )
 
     except Exception as e:
         logger.error(f"Failed to create MVA scores plot: {e}")

@@ -21,4 +21,6 @@ def set_logging() -> None:
 
     Logging can be alternatively customized with the Python ``logging`` module directly.
     """
-    logging.basicConfig(level=logging.INFO, format="[%(levelname)s: %(name)s] %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="[%(levelname)s: %(name)s] %(message)s"
+    )

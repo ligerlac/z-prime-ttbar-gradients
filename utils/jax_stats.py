@@ -18,9 +18,8 @@ Reference: CMS-NOTE-2011/005
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Tuple
 
-import awkward as ak
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -67,8 +66,8 @@ def poisson_log_likelihood(
     EPSILON = 1e-12  # Numerical stability constant
     return (
         observed_counts * jnp.log(expected_rates + EPSILON)  # k·ln(λ)
-        - expected_rates                                 # -λ
-        - jsp.special.gammaln(observed_counts + 1.0)     # -ln(k!)
+        - expected_rates  # -λ
+        - jsp.special.gammaln(observed_counts + 1.0)  # -ln(k!)
     )
 
 
@@ -212,13 +211,14 @@ class AllBackgroundsModelScalar(eqx.Module):
         - The signal template is scaled by μ (signal strength)
         - Only ttbar background has a free normalization (κ_tt)
         - Other backgrounds remain fixed at nominal values
-        - Returns empty auxiliary constraints as this model doesn't implement systematics
+        - Returns empty auxiliary constraints as this model doesn't
+          implement systematics
         """
         signal_strength = parameters["mu"]
         ttbar_scale = parameters["scale_ttbar"]
 
         main_expectations = []  # Expected rates per channel
-        aux_expectations = []   # Auxiliary constraints (empty)
+        aux_expectations = []  # Auxiliary constraints (empty)
 
         for channel in self.channels:
             # Start with zero expected events
@@ -269,7 +269,10 @@ class AllBackgroundsModelScalar(eqx.Module):
         - The function signature is fixed by the 'relaxed' library
         - The likelihood is the product of Poisson probabilities per bin
         - Total log-likelihood is the sum over all bins and channels
-        - This function is differentiable w.r.t. parameters (enables gradient-based inference)
+        - This function is differentiable w.r.t. parameters
+          (enables gradient-based inference)
+        - This function is differentiable w.r.t. parameters
+          (enables gradient-based inference)
         """
         observed_counts_per_channel, _ = data
         expected_rates_per_channel, _ = self.expected_rates(pars)
@@ -350,7 +353,9 @@ def build_channel_data_scalar(
             )
 
             if data_container is None:
-                logger.warning(f"Missing data for {channel_name}/{observable_key}")
+                logger.warning(
+                    f"Missing data for {channel_name}/{observable_key}"
+                )
                 continue
         except KeyError:
             logger.exception(f"Data access error for {channel_name}")
@@ -379,8 +384,7 @@ def build_channel_data_scalar(
             try:
                 # Extract nominal histogram for this process/channel/observable
                 nominal_hist = (
-                    variations
-                    .get("nominal", {})
+                    variations.get("nominal", {})
                     .get(channel_name, {})
                     .get(observable_key, None)
                 )
@@ -498,10 +502,10 @@ def compute_discovery_pvalue(
     # Use the 'relaxed' library to compute the profile likelihood ratio
     p_value, mle_parameters = relaxed.infer.hypotest(
         test_poi=signal_strength_test_value,  # Parameter of interest (μ)
-        data=experimental_data,               # Observed data
-        model=statistical_model,              # Statistical model
-        init_pars=parameters,         # Starting point for optimization
-        return_mle_pars=True,                 # Return fitted nuisance parameters
-        test_stat="q0",                       # Discovery test statistic
+        data=experimental_data,  # Observed data
+        model=statistical_model,  # Statistical model
+        init_pars=parameters,  # Starting point for optimization
+        return_mle_pars=True,  # Return fitted nuisance parameters
+        test_stat="q0",  # Discovery test statistic
     )
     return p_value, mle_parameters

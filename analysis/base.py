@@ -2,7 +2,17 @@ import gzip
 import logging
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Union,
+)
 
 import awkward as ak
 import vector
@@ -52,7 +62,8 @@ class Analysis:
 
     def __init__(self, config: Dict[str, Any]) -> None:
         """
-        Initialize analysis with configuration for systematics, corrections, and channels.
+        Initialize analysis with configuration for systematics, corrections,
+        and channels.
 
         Parameters
         ----------
@@ -102,7 +113,9 @@ class Analysis:
 
             if file_path.endswith(".json.gz"):
                 with gzip.open(file_path, "rt") as file_handle:
-                    evaluators[corr_name] = CorrectionSet.from_string(file_handle.read().strip())
+                    evaluators[corr_name] = CorrectionSet.from_string(
+                        file_handle.read().strip()
+                    )
             elif file_path.endswith(".json"):
                 evaluators[corr_name] = CorrectionSet.from_file(file_path)
             else:
@@ -132,7 +145,7 @@ class Analysis:
     def get_good_objects(
         self,
         object_copies: Dict[str, ak.Array],
-        masks: Iterable[GoodObjectMasksConfig] = []
+        masks: Iterable[GoodObjectMasksConfig] = [],
     ) -> Dict[str, ak.Array]:
         """
         Apply selection masks to objects.
@@ -152,14 +165,16 @@ class Analysis:
         good_objects = {}
         for mask_config in masks:
             mask_args = self._get_function_arguments(
-                                            mask_config.use,
-                                            object_copies,
-                                            function_name=mask_config.function.__name__
-                                        )
+                mask_config.use,
+                object_copies,
+                function_name=mask_config.function.__name__,
+            )
 
             selection_mask = mask_config.function(*mask_args)
             if not isinstance(selection_mask, ak.Array):
-                raise TypeError(f"Mask must be an awkward array. Got {type(selection_mask)}")
+                raise TypeError(
+                    f"Mask must be an awkward array. Got {type(selection_mask)}"
+                )
 
             obj_name = mask_config.object
             good_objects[obj_name] = object_copies[obj_name][selection_mask]
@@ -167,9 +182,7 @@ class Analysis:
         return good_objects
 
     def apply_object_masks(
-        self,
-        object_copies: Dict[str, ak.Array],
-        mask_set: str = "analysis"
+        self, object_copies: Dict[str, ak.Array], mask_set: str = "analysis"
     ) -> Dict[str, ak.Array]:
         """
         Apply predefined object masks to object copies.
@@ -238,7 +251,7 @@ class Analysis:
             "Applying correction: %s/%s (%s)",
             correction_name,
             correction_key,
-            direction
+            direction,
         )
 
         # Apply argument transformation if provided
@@ -254,8 +267,12 @@ class Analysis:
                 flat_args.append(arg)
 
         # Evaluate correction
-        correction_evaluator: Correction = self.corrlib_evaluators[correction_name][correction_key]
-        correction_values = correction_evaluator.evaluate(*flat_args, direction)
+        correction_evaluator: Correction = self.corrlib_evaluators[
+            correction_name
+        ][correction_key]
+        correction_values = correction_evaluator.evaluate(
+            *flat_args, direction
+        )
 
         # Restore jagged structure if needed
         if counts:
@@ -266,13 +283,17 @@ class Analysis:
                 backend = ak.backend(target[0])
                 correction_values = ak.to_backend(correction_values, backend)
                 return [
-                    self._apply_operation(operation, target_array, correction_values)
+                    self._apply_operation(
+                        operation, target_array, correction_values
+                    )
                     for target_array in target
                 ]
             else:
                 backend = ak.backend(target)
                 correction_values = ak.to_backend(correction_values, backend)
-                return self._apply_operation(operation, target, correction_values)
+                return self._apply_operation(
+                    operation, target, correction_values
+                )
 
         return correction_values
 
@@ -309,7 +330,10 @@ class Analysis:
         variation = syst_function(*function_args)
 
         if isinstance(affected_arrays, list):
-            return [self._apply_operation(operation, arr, variation) for arr in affected_arrays]
+            return [
+                self._apply_operation(operation, arr, variation)
+                for arr in affected_arrays
+            ]
         return self._apply_operation(operation, affected_arrays, variation)
 
     def _apply_operation(
@@ -351,7 +375,7 @@ class Analysis:
         self,
         arg_spec: List[Tuple[str, Optional[str]]],
         objects: Dict[str, ak.Array],
-        function_name: Optional[str] = "generic_function"
+        function_name: Optional[str] = "generic_function",
     ) -> List[ak.Array]:
         """
         Prepare function arguments from object dictionary.
@@ -368,6 +392,7 @@ class Analysis:
         List[ak.Array]
             Prepared arguments
         """
+
         def raise_error(field_name: str) -> None:
             """
             Raise KeyError if object is missing in objects dictionary.
@@ -381,7 +406,9 @@ class Analysis:
                 f"Field '{field_name}' needed for {function_name} \
                   is not found in objects dictionary"
             )
-            raise KeyError(f"Missing field: {field_name}, function: {function_name}")
+            raise KeyError(
+                f"Missing field: {field_name}, function: {function_name}"
+            )
 
         args = []
         for obj_name, field_name in arg_spec:
@@ -402,7 +429,7 @@ class Analysis:
         self,
         target_spec: Union[Tuple[str, str], List[Tuple[str, str]]],
         objects: Dict[str, ak.Array],
-        function_name: Optional[str] = "generic_target_function"
+        function_name: Optional[str] = "generic_target_function",
     ) -> List[ak.Array]:
         """
         Extract target arrays from object dictionary.
@@ -430,8 +457,10 @@ class Analysis:
                     f"Field {object_name}.{field_name} needed for {function_name} "
                     "is not found in objects dictionary"
                 )
-                raise KeyError(f"Missing target field: {object_name}.{field_name}, "
-                               f"function: {function_name}")
+                raise KeyError(
+                    f"Missing target field: {object_name}.{field_name}, "
+                    f"function: {function_name}"
+                )
 
         return targets
 
@@ -488,12 +517,14 @@ class Analysis:
 
             # Prepare arguments and targets
             args = self._get_function_arguments(
-                correction.use, object_copies,
-                function_name=f"correction::{correction.name}"
+                correction.use,
+                object_copies,
+                function_name=f"correction::{correction.name}",
             )
             targets = self._get_target_arrays(
-                correction.target, object_copies,
-                function_name=f"correction::{correction.name}"
+                correction.target,
+                object_copies,
+                function_name=f"correction::{correction.name}",
             )
             operation = correction.op
             transform = correction.transform
@@ -502,8 +533,9 @@ class Analysis:
             # Determine direction mapping
             dir_map = correction.up_and_down_idx
             corr_direction = (
-                dir_map[0] if direction == "up" else dir_map[1]
-                if direction in ["up", "down"] else "nominal"
+                dir_map[0]
+                if direction == "up"
+                else dir_map[1] if direction in ["up", "down"] else "nominal"
             )
 
             # Apply correction
@@ -568,10 +600,10 @@ class Analysis:
 
         # Prepare arguments
         args = self._get_function_arguments(
-                                        systematic.use,
-                                        object_copies,
-                                        function_name=f"systematic::{systematic.name}"
-                                    )
+            systematic.use,
+            object_copies,
+            function_name=f"systematic::{systematic.name}",
+        )
         operation = systematic.op
         key = systematic.key
         transform = systematic.transform
@@ -626,14 +658,14 @@ class Analysis:
             if not ghost.works_with_jax and use_jax:
                 logger.warning(
                     "Skipping JAX-incompatible ghost observable: %s",
-                    ghost.names
+                    ghost.names,
                 )
                 continue
 
             logger.debug("Computing ghost observables: %s", ghost.names)
-            args = self._get_function_arguments(ghost.use,
-                                                object_copies,
-                                                function_name=ghost.function.__name__)
+            args = self._get_function_arguments(
+                ghost.use, object_copies, function_name=ghost.function.__name__
+            )
             outputs = ghost.function(*args)
 
             # Normalize outputs to list
@@ -641,7 +673,9 @@ class Analysis:
                 outputs = [outputs]
 
             # Normalize names and collections
-            names = [ghost.names] if isinstance(ghost.names, str) else ghost.names
+            names = (
+                [ghost.names] if isinstance(ghost.names, str) else ghost.names
+            )
             collections = (
                 [ghost.collections] * len(names)
                 if isinstance(ghost.collections, str)
@@ -652,9 +686,9 @@ class Analysis:
             for value, name, collection in zip(outputs, names, collections):
                 # Handle single-field records
                 if (
-                    isinstance(value, ak.Array) and
-                    len(ak.fields(value)) == 1 and
-                    name in ak.fields(value)
+                    isinstance(value, ak.Array)
+                    and len(ak.fields(value)) == 1
+                    and name in ak.fields(value)
                 ):
                     value = value[name]
 

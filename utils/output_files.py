@@ -10,8 +10,7 @@ typing_logger = logging.getLogger(__name__)
 
 
 def save_histograms_to_pickle(
-    histograms: Dict[str, Dict[str, Any]],
-    pickle_path: Union[str, Path]
+    histograms: Dict[str, Dict[str, Any]], pickle_path: Union[str, Path]
 ) -> None:
     """
     Save a nested dictionary of histograms to a pickle file.
@@ -41,7 +40,7 @@ def save_histograms_to_pickle(
 
 
 def load_histograms_from_pickle(
-    pickle_path: Union[str, Path]
+    pickle_path: Union[str, Path],
 ) -> Dict[str, Dict[str, Any]]:
     """
     Load a nested dictionary of histograms from a pickle file.
@@ -80,7 +79,7 @@ def load_histograms_from_pickle(
 def save_histograms_to_root(
     histograms: Dict[str, Dict[str, Any]],
     root_path: Union[str, Path],
-    add_offset: bool = False
+    add_offset: bool = False,
 ) -> None:
     """
     Save histograms to a ROOT file using uproot.
@@ -125,7 +124,11 @@ def save_histograms_to_root(
                                 continue
 
                             # Construct key and histogram slice
-                            suffix = "" if variation == "nominal" else f"__{variation}"
+                            suffix = (
+                                ""
+                                if variation == "nominal"
+                                else f"__{variation}"
+                            )
                             hist_slice = hist[:, sample, variation]
 
                             # Check for non-empty histogram
@@ -133,12 +136,17 @@ def save_histograms_to_root(
                             if total_entries > empty_threshold:
                                 key = f"{channel}__{observable}__{sample}{suffix}"
                                 root_file[key] = hist_slice
-                                typing_logger.debug(f"Saved ROOT histogram: {key}")
+                                typing_logger.debug(
+                                    f"Saved ROOT histogram: {key}"
+                                )
                             else:
                                 typing_logger.warning(
-                                    f"Skipping empty histogram: {channel}__{observable}__{sample}{suffix}"
+                                    f"Skipping empty histogram: "
+                                    f"{channel}__{observable}__{sample}{suffix}"
                                 )
-        typing_logger.info(f"Histograms successfully written to ROOT file {path}")
+        typing_logger.info(
+            f"Histograms successfully written to ROOT file {path}"
+        )
     except Exception as exc:
         typing_logger.error(f"Failed to write ROOT file {path}: {exc}")
         raise
