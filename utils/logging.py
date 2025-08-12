@@ -8,6 +8,7 @@ MAGENTA = "\033[95m"
 GREEN = "\033[0;32m"
 RESET = "\033[0m"
 
+
 def _banner(text: str) -> str:
     """
     Creates a magenta-colored banner for logging.
@@ -26,6 +27,7 @@ def _banner(text: str) -> str:
         f"{' ' * ((80 - len(text)) // 2)}{text.upper()}\n"
         f"{'=' * 80}{RESET}"
     )
+
 
 class ColoredFormatter(logging.Formatter):
     """A custom logging formatter that adds colors based on log level."""
@@ -49,5 +51,5 @@ class ColoredFormatter(logging.Formatter):
         colored_prefix = f"{color}{prefix}{RESET}"
 
         # The message itself might have its own colors, which will be preserved.
-        message = record.getMessage().lstrip('\n')
+        message = record.getMessage().lstrip("\n")
         return f"{colored_prefix}{message}"

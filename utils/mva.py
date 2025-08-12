@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 # Abstract Base Class
 # =============================================================================
 
+
 class BaseNetwork(ABC, Analysis):
     """Abstract base class for MVA networks (e.g., JAX, TensorFlow).
 
@@ -85,7 +86,9 @@ class BaseNetwork(ABC, Analysis):
         self.name = mva_cfg.name
         self.parameters: Dict[str, Any] = {}  # For JAX models
         # process -> feature name -> {'scaled': np.ndarray, 'unscaled': np.ndarray}
-        self.process_to_features_map: Dict[str, Dict[str, Dict[str, np.ndarray]]] = {}
+        self.process_to_features_map: Dict[
+            str, Dict[str, Dict[str, np.ndarray]]
+        ] = {}
         # process -> MVA scores array
         self.process_to_scores_map: Dict[str, np.ndarray] = {}
         self.model: Any = None  # For TensorFlow models
@@ -157,8 +160,9 @@ class BaseNetwork(ABC, Analysis):
         for feature_cfg in feature_configs:
             # Extract input arguments from object collections
             args = self._get_function_arguments(
-                feature_cfg.use, object_collections,
-                function_name=feature_cfg.function.__name__
+                feature_cfg.use,
+                object_collections,
+                function_name=feature_cfg.function.__name__,
             )
 
             # Compute raw feature values
@@ -166,16 +170,19 @@ class BaseNetwork(ABC, Analysis):
 
             # Apply scaling if configured
             if feature_cfg.scale is not None:
-                feature_values_scaled = feature_cfg.scale(feature_values_unscaled)
+                feature_values_scaled = feature_cfg.scale(
+                    feature_values_unscaled
+                )
             else:
                 feature_values_scaled = feature_values_unscaled
 
             # Convert to NumPy array
             feature_arrays.append(np.asarray(feature_values_scaled))
 
-            features_dict[feature_cfg.name] = {"scaled": feature_values_scaled,
-                                               "unscaled": feature_values_unscaled
-                                            }
+            features_dict[feature_cfg.name] = {
+                "scaled": feature_values_scaled,
+                "unscaled": feature_values_unscaled,
+            }
 
         # Stack all features as columns
         return np.stack(feature_arrays, axis=1).astype(float), features_dict
@@ -284,7 +291,9 @@ class BaseNetwork(ABC, Analysis):
             # Resample each class
             for label in unique_labels:
                 label_indices = np.where(labels == label)[0]
-                replace = strategy == "oversample"  # Allow replacement for oversampling
+                replace = (
+                    strategy == "oversample"
+                )  # Allow replacement for oversampling
                 resampled_indices = rng.choice(
                     label_indices,
                     size=target,
@@ -355,21 +364,24 @@ class BaseNetwork(ABC, Analysis):
             # skip if no events
             batches = events_per_process.get(class_name, [])
             if not batches:
-                logger.warning(f"No events for class '{class_name}'. Skipping.")
+                logger.warning(
+                    f"No events for class '{class_name}'. Skipping."
+                )
                 continue
 
             for obj_dict, n_events in batches:
                 # always extract features
-                feats, feat_dict = self._extract_features(obj_dict,
-                                                         self.mva_cfg.features)
+                feats, feat_dict = self._extract_features(
+                    obj_dict, self.mva_cfg.features
+                )
                 # collect for process-to-features map
                 process_to_features_map[class_name].append(feat_dict)
 
                 # only assign labels & append to training if class is in training set
                 if entry in self.mva_cfg.classes:
-                    labels = self._make_labels(n_events,
-                                               class_name,
-                                               self.mva_cfg.classes)
+                    labels = self._make_labels(
+                        n_events, class_name, self.mva_cfg.classes
+                    )
                     all_features.append(feats)
                     all_labels.append(labels)
 
@@ -379,15 +391,21 @@ class BaseNetwork(ABC, Analysis):
             # All dicts share same keys
             combined = {
                 feature: {
-                    "scaled": np.concatenate([d[feature]["scaled"] for d in dict_list]),
-                    "unscaled":  np.concatenate([d[feature]["unscaled"] for d in dict_list])
+                    "scaled": np.concatenate(
+                        [d[feature]["scaled"] for d in dict_list]
+                    ),
+                    "unscaled": np.concatenate(
+                        [d[feature]["unscaled"] for d in dict_list]
+                    ),
                 }
                 for feature in dict_list[0].keys()
             }
             self.process_to_features_map[class_name] = combined
 
         if not all_features or not all_labels:
-            raise ValueError("No valid training data found for any training class.")
+            raise ValueError(
+                "No valid training data found for any training class."
+            )
 
         # build and balance dataset
         X = np.vstack(all_features)
@@ -451,16 +469,18 @@ class BaseNetwork(ABC, Analysis):
         events_per_process : Dict[str, List[Tuple[Dict, int]]]
             Dictionary mapping class names to list of (object_dict, event_count) tuples.
         custom_parameters : Optional[Dict[str, Any]]
-            Optional custom parameters to use for prediction (e.g., optimized parameters).
+             Optional custom parameters to use for prediction
+             (e.g. optimized parameters).
             If None, uses the current model parameters.
 
         Returns
         -------
         Dict[str, np.ndarray]
-            Dictionary mapping process names to MVA score arrays, ready for plot_mva_scores.
+             Dictionary mapping process names to MVA score arrays
+             ready for plot_mva_scores.
         """
         # Determine which processes to include based on plot_classes
-        plot_processes = getattr(self.mva_cfg, 'plot_processes', None)
+        plot_processes = getattr(self.mva_cfg, "plot_processes", None)
         if plot_processes is None:
             # Fall back to extracting process names from plot_classes
             plot_processes = []
@@ -480,17 +500,23 @@ class BaseNetwork(ABC, Analysis):
                 continue
 
             if not batches:
-                logger.warning(f"No events for class '{class_name}'. Skipping score generation.")
+                logger.warning(
+                    f"No events for class '{class_name}'. Skipping score generation."
+                )
                 continue
 
             all_scores = []
             for obj_dict, n_events in batches:
                 # Extract features
-                features, _ = self._extract_features(obj_dict, self.mva_cfg.features)
+                features, _ = self._extract_features(
+                    obj_dict, self.mva_cfg.features
+                )
 
                 # Generate predictions using custom parameters if provided
                 if custom_parameters is not None:
-                    scores = self._predict_with_custom_params(features, custom_parameters)
+                    scores = self._predict_with_custom_params(
+                        features, custom_parameters
+                    )
                 else:
                     scores = self.predict(features)
 
@@ -526,7 +552,10 @@ class BaseNetwork(ABC, Analysis):
         np.ndarray
             Prediction scores.
         """
-        logger.warning(f"Custom parameters not supported for {self.__class__.__name__}. Using default parameters.")
+        logger.warning(
+            f"Custom parameters not supported for "
+            f"{self.__class__.__name__}. Using default parameters."
+        )
         return self.predict(inputs)
 
     @abstractmethod
@@ -555,6 +584,7 @@ class BaseNetwork(ABC, Analysis):
 # =============================================================================
 # JAXNetwork Implementation
 # =============================================================================
+
 
 class JAXNetwork(BaseNetwork):
     """JAX-based MVA implementation with manual gradient descent.
@@ -622,9 +652,7 @@ class JAXNetwork(BaseNetwork):
         for layer_config in self.mva_cfg.layers:
             weights = parameters[f"__NN_{self.name}_{layer_config.weights}"]
             biases = parameters[f"__NN_{self.name}_{layer_config.bias}"]
-            activations = layer_config.activation(
-                activations, weights, biases
-            )
+            activations = layer_config.activation(activations, weights, biases)
         return activations.squeeze()
 
     def compute_loss(
@@ -776,8 +804,12 @@ class JAXNetwork(BaseNetwork):
             # Mini-batch training
             else:
                 current_loss = 0.0
-                for batch_start in range(0, shuffled_inputs.shape[0], batch_size):
-                    batch_end = min(batch_start + batch_size, shuffled_inputs.shape[0])
+                for batch_start in range(
+                    0, shuffled_inputs.shape[0], batch_size
+                ):
+                    batch_end = min(
+                        batch_start + batch_size, shuffled_inputs.shape[0]
+                    )
                     batch_inputs = shuffled_inputs[batch_start:batch_end]
                     batch_labels = shuffled_labels[batch_start:batch_end]
                     parameters, current_loss = self._update_step(
@@ -789,9 +821,7 @@ class JAXNetwork(BaseNetwork):
 
             # Log progress
             if epoch % log_frequency == 0 or epoch == total_epochs:
-                train_acc = self.compute_accuracy(
-                    parameters, train_x, train_y
-                )
+                train_acc = self.compute_accuracy(parameters, train_x, train_y)
                 msg = (
                     f"{self.mva_cfg.name} | Epoch {epoch}: "
                     f"loss={current_loss:.4f}, acc={train_acc:.4f}"
@@ -845,13 +875,14 @@ class JAXNetwork(BaseNetwork):
         model_params = {}
         for param_name, param_value in custom_parameters.items():
             if param_name.startswith(f"__NN_{self.name}_"):
-                # Remove the model-specific prefix to get the original parameter name
-                original_name = param_name.replace(f"__NN_{self.name}_", "")
                 model_params[param_name] = param_value
 
         # If no custom parameters found for this model, use default parameters
         if not model_params:
-            logger.warning(f"No custom parameters found for model '{self.name}'. Using default parameters.")
+            logger.warning(
+                f"No custom parameters found for model '{self.name}'. "
+                f"Using default parameters."
+            )
             return np.asarray(self.predict(jnp.asarray(inputs)))
 
         # Use custom parameters for prediction
@@ -863,6 +894,7 @@ class JAXNetwork(BaseNetwork):
 # =============================================================================
 # TFNetwork Implementation
 # =============================================================================
+
 
 class TFNetwork(BaseNetwork):
     """TensorFlow/Keras-based MVA implementation using built-in .fit().

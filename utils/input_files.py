@@ -17,7 +17,8 @@ def construct_fileset(
     json_path: Union[str, Path] = defaul_dataset_json,
 ) -> Dict[str, Dict[str, Any]]:
     """
-    Build a structured fileset mapping for physics analyses, including file paths and metadata.
+    Build a structured fileset mapping for physics analyses including
+    file paths and metadata.
 
     This function reads dataset definitions from a JSON file and constructs a nested
     dictionary where each key is "<process>__<variation>" and values contain:
@@ -34,7 +35,8 @@ def construct_fileset(
         - other: list each file individually
         Default is "uproot".
     json_path : str or Path, optional
-        Path to the JSON configuration file specifying samples, variations, and file lists.
+        Path to the JSON configuration file specifying samples
+        variations and file lists.
         Defaults to 'datasets/nanoaods.json'.
 
     Returns
@@ -62,7 +64,8 @@ def construct_fileset(
     # Validate inputs
     if max_files_per_sample < -1:
         raise ValueError(
-            f"max_files_per_sample must be -1 or non-negative; got {max_files_per_sample}"
+            f"max_files_per_sample must be -1 or non-negative; "
+            f"got {max_files_per_sample}"
         )
 
     json_file = Path(json_path)
@@ -97,7 +100,9 @@ def construct_fileset(
 
             # Compute total event counts
             total_events = sum(entry.get("nevts", 0) for entry in raw_entries)
-            total_weighted = sum(entry.get("nevts_wt", 0.0) for entry in raw_entries)
+            total_weighted = sum(
+                entry.get("nevts_wt", 0.0) for entry in raw_entries
+            )
 
             # Prepare metadata dict
             metadata = {
@@ -126,12 +131,16 @@ def construct_fileset(
                 file_map = {f"{base_pattern}/*/*.root": "Events"}
             else:
                 # Explicit file listings for other preprocessors
-                file_map = {entry.get("path", ""): "Events" for entry in raw_entries}
+                file_map = {
+                    entry.get("path", ""): "Events" for entry in raw_entries
+                }
 
             key = f"{process_name}__{variation_name}"
             fileset[key] = {"files": file_map, "metadata": metadata}
 
-            logger.debug(f"Added fileset entry: {key} with {len(file_map)} files")
+            logger.debug(
+                f"Added fileset entry: {key} with {len(file_map)} files"
+            )
 
     logger.info(f"Constructed fileset with {len(fileset)} entries.")
 
@@ -147,8 +156,12 @@ def construct_fileset(
     # Sort by key for consistent output
     summary_data.sort(key=lambda x: x[0])
 
-    logger.info("Fileset Summary:\n" + tabulate(summary_data, headers=headers, tablefmt="grid"))
+    logger.info(
+        "Fileset Summary:\n"
+        + tabulate(summary_data, headers=headers, tablefmt="grid")
+    )
 
     return fileset
+
 
 # End of module

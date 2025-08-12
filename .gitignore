@@ -8,3 +8,6 @@ venv/
 .env/
 .cache/
 docs/_build
+# pixi environments
+.pixi/*
+!.pixi/config.toml

@@ -43,30 +43,38 @@ class SubscriptableModel(BaseModel):
 class FunctorConfig(SubscriptableModel):
     function: Annotated[
         Callable,
-        Field(
-            description="A Python callable to be executed."
-        ),
+        Field(description="A Python callable to be executed."),
     ]
     use: Annotated[
         Optional[List[ObjVar]],
         Field(
             default=None,
-            description="A list of (object, variable) tuples specifying the inputs for the function.",
+            description="A list of (object variable) tuples specifying "
+            "the inputs for the function.",
         ),
     ]
 
+
 class GoodObjectMasksConfig(SubscriptableModel):
     object: Annotated[
-        str, Field(description="The object collection to which this mask applies (e.g., 'Jet').")
+        str,
+        Field(
+            description="The object collection to which this mask applies "
+            "(e.g. 'Jet')."
+        ),
     ]
     function: Annotated[
         Callable,
-        Field(description="A callable that takes object collections and returns a boolean mask.")
+        Field(
+            description="A callable that takes object collections and "
+            "returns a boolean mask."
+        ),
     ]
     use: Annotated[
         List[ObjVar],
         Field(
-            description="A list of (object, variable) tuples specifying the inputs for the mask function.",
+            description="A list of (object variable) tuples specifying "
+            "the inputs for the mask function."
         ),
     ]
 
@@ -75,19 +83,25 @@ class GoodObjectMasksConfig(SubscriptableModel):
         """Validate that the object is a recognised type."""
         if self.object not in ["Muon", "Jet", "FatJet"]:
             raise ValueError(
-                f"Invalid object '{self.object}'. Must be one of 'Muon', 'Jet', or 'FatJet'."
+                f"Invalid object '{self.object}'. Must be one of "
+                f"'Muon' 'Jet' or 'FatJet'."
             )
 
         return self
 
+
 class GoodObjectMasksBlockConfig(SubscriptableModel):
     """Configuration block for defining 'good' object masks."""
+
     analysis: Annotated[
-        List[GoodObjectMasksConfig], Field(description="Masks for the main physics analysis branch.")
+        List[GoodObjectMasksConfig],
+        Field(description="Masks for the main physics analysis branch."),
     ]
     mva: Annotated[
-        List[GoodObjectMasksConfig], Field(description="Masks for the MVA training data branch.")
+        List[GoodObjectMasksConfig],
+        Field(description="Masks for the MVA training data branch."),
     ]
+
 
 # ------------------------
 # General configuration
@@ -105,26 +119,41 @@ class GeneralConfig(SubscriptableModel):
     ]
     analysis: Annotated[
         Optional[str],
-        Field(default="nondiff",
-              description="The analysis mode to run: 'diff' (differentiable), 'nondiff', or 'both'."),
+        Field(
+            default="nondiff",
+            description="The analysis mode to run: 'diff' (differentiable) "
+            "'nondiff' or 'both'.",
+        ),
     ]
     max_files: Annotated[
         Optional[int],
-        Field(default=1, description="Maximum number of files to process per dataset. Use -1 for no limit."),
+        Field(
+            default=1,
+            description="Maximum number of files to process per dataset. "
+            "Use -1 for no limit.",
+        ),
     ]
     run_preprocessing: Annotated[
         bool,
-        Field(default=False, description="If True, run the initial NanoAOD skimming and filtering step."),
+        Field(
+            default=False,
+            description="If True, run the initial NanoAOD skimming and filtering step.",
+        ),
     ]
     run_histogramming: Annotated[
         bool,
-        Field(default=True, description="If True, run the histogramming step for the non-differentiable analysis."),
+        Field(
+            default=True,
+            description="If True run the histogramming step for the "
+            "non-differentiable analysis.",
+        ),
     ]
     run_statistics: Annotated[
         bool,
         Field(
             default=True,
-            description="If True, run the statistical analysis (e.g., cabinetry fit) in non-differentiable analysis.",
+            description="If True run the statistical analysis "
+            "(e.g. cabinetry fit) in non-differentiable analysis.",
         ),
     ]
     run_systematics: Annotated[
@@ -138,7 +167,8 @@ class GeneralConfig(SubscriptableModel):
         bool,
         Field(
             default=False,
-            description="If True, load cached results and generate plots without re-running the analysis.",
+            description="If True load cached results and generate plots "
+            "without re-running the analysis.",
         ),
     ]
     run_mva_training: Annotated[
@@ -152,22 +182,32 @@ class GeneralConfig(SubscriptableModel):
         bool,
         Field(
             default=True,
-            description="If True, read preprocessed data from the cache directory if available.",
+            description="If True, read preprocessed data from the cache directory "
+            "if available.",
         ),
     ]
 
     output_dir: Annotated[
         Optional[str],
-        Field(default="output/", description="Root directory for all analysis outputs (plots, models, etc.)."),
+        Field(
+            default="output/",
+            description="Root directory for all analysis outputs "
+            "(plots, models, etc.).",
+        ),
     ]
     preprocessor: Annotated[
         Literal["uproot", "dak"],
-        Field(default="uproot", description="The engine to use for preprocessing: 'uproot' or 'dask-awkward'."),
+        Field(
+            default="uproot",
+            description="The engine to use for preprocessing: 'uproot' or "
+            "'dask-awkward'.",
+        ),
     ]
     preprocessed_dir: Annotated[
         Optional[str],
         Field(
-            default=None, description="Directory containing pre-processed (skimmed) ROOT files."
+            default=None,
+            description="Directory containing pre-processed (skimmed) ROOT files.",
         ),
     ]
     cache_dir: Annotated[
@@ -181,14 +221,16 @@ class GeneralConfig(SubscriptableModel):
         Optional[List[str]],
         Field(
             default=None,
-            description="If specified, limit the analysis to this list of process names.",
+            description="If specified, limit the analysis to this list "
+            "of process names.",
         ),
     ]
     channels: Annotated[
         Optional[List[str]],
         Field(
             default=None,
-            description="If specified, limit the analysis to this list of channel names.",
+            description="If specified, limit the analysis to this list "
+            "of channel names.",
         ),
     ]
 
@@ -202,6 +244,7 @@ class GeneralConfig(SubscriptableModel):
 
         return self
 
+
 # ------------------------
 # JAX configuration
 # ------------------------
@@ -209,12 +252,16 @@ class JaxConfig(SubscriptableModel):
     soft_selection: Annotated[
         FunctorConfig,
         Field(
-            description="The differentiable selection function. It should return a per-event weight."
+            description="The differentiable selection function. It "
+            "should return a per-event weight."
         ),
     ]
     params: Annotated[
         dict[str, float],
-        Field(description="A dictionary of all optimizable parameters and their initial values."),
+        Field(
+            description="A dictionary of all optimizable "
+            + "parameters and their initial values."
+        ),
     ]
     optimise: Annotated[
         bool,
@@ -238,20 +285,23 @@ class JaxConfig(SubscriptableModel):
         ),
     ]
     param_updates: Annotated[
-            dict[str, Callable[[float, float], float]],
-            Field(
-                default_factory=dict,
-                description="Optional per-parameter update/clamping rules. Maps a parameter name "
-                            "to a callable that accepts (current_value, update_delta) and returns "
-                            "the new value. Example: {'met_threshold': lambda x, d: jnp.clip(x + d, 20, 150)}",
-            ),
-        ]
+        dict[str, Callable[[float, float], float]],
+        Field(
+            default_factory=dict,
+            description="Optional per-parameter update/clamping rules. "
+            + "Maps a parameter name to a callable that accepts "
+            + "(current_value, update_delta) and returns "
+            + "the new value. Example: "
+            + "{'met_threshold': lambda x, d: jnp.clip(x + d, 20, 150)}",
+        ),
+    ]
 
     learning_rates: Annotated[
         Optional[dict[str, float]],
         Field(
             default=None,
-            description="A dictionary of parameter-specific learning rates, overriding the default.",
+            description="A dictionary of parameter-specific learning rates, \
+                        overriding the default.",
         ),
     ]
 
@@ -259,9 +309,12 @@ class JaxConfig(SubscriptableModel):
         bool,
         Field(
             default=False,
-            description="If True, use a manual optimisation loop instead of the `jaxopt` solver.",
+            description="If True, use a manual optimisation loop instead of the \
+                `jaxopt` solver.",
         ),
     ]
+
+
 # ------------------------
 # Preprocessing configuration
 # ------------------------
@@ -327,7 +380,8 @@ class StatisticalConfig(SubscriptableModel):
     cabinetry_config: Annotated[
         str,
         Field(
-            description="Path to the YAML configuration file for the `cabinetry` statistical tool (non-differentiable analysis).",
+            description="Path to the YAML configuration file for the `cabinetry` \
+                statistical tool (non-differentiable analysis).",
         ),
     ]
 
@@ -340,28 +394,37 @@ class ObservableConfig(SubscriptableModel):
     binning: Annotated[
         Union[str, List[float]],
         Field(
-            description="Histogram binning, specified as a 'low,high,nbins' string or a list of explicit bin edges."
+            description="Histogram binning, specified as a 'low,high,nbins' string "
+            + "or a list of explicit bin edges."
         ),
     ]
     function: Annotated[
         Callable,
-        Field(description="A callable that computes the observable values from event data."),
+        Field(
+            description="A callable that computes the "
+            + "observable values from event data."
+        ),
     ]
     use: Annotated[
         List[ObjVar],
         Field(
-            description="A list of (object, variable) tuples specifying the inputs for the function.",
+            description="A list of (object, variable) tuples specifying the inputs \
+                for the function.",
         ),
     ]
     label: Annotated[
         Optional[str],
-        Field(default="observable", description="A LaTeX-formatted string for plot axis labels."),
+        Field(
+            default="observable",
+            description="A LaTeX-formatted string for plot axis labels.",
+        ),
     ]
     works_with_jax: Annotated[
         bool,
         Field(
             default=True,
-            description="If True, the function is compatible with the JAX backend for differentiable analysis.",
+            description="If True, the function is compatible with the JAX backend "
+            "for differentiable analysis.",
         ),
     ]
 
@@ -411,21 +474,28 @@ class ObservableConfig(SubscriptableModel):
 # ------------------------
 class GhostObservable(SubscriptableModel):
     """Represents a derived quantity computed once and attached to the event record."""
+
     names: Annotated[
         Union[str, List[str]],
-        Field(description="Name(s) of the computed observable(s).")
+        Field(description="Name(s) of the computed observable(s)."),
     ]
     collections: Annotated[
         Union[str, List[str]],
-        Field(description="The collection(s) to which the new observable(s) should be attached.")
+        Field(
+            description="The collection(s) to which the "
+            + "new observable(s) should be attached."
+        ),
     ]
     function: Annotated[
         Callable,
-        Field(description="A callable that computes the ghost observables.")
+        Field(description="A callable that computes the ghost observables."),
     ]
     use: Annotated[
         List[ObjVar],
-        Field(description="A list of (object, variable) tuples specifying the inputs for the function.")
+        Field(
+            description="A list of (object, variable) tuples "
+            + "specifying the inputs for the function."
+        ),
     ]
     works_with_jax: Annotated[
         bool,
@@ -443,12 +513,11 @@ class ChannelConfig(SubscriptableModel):
     name: Annotated[str, Field(description="Name of the analysis channel")]
     observables: Annotated[
         List[ObservableConfig],
-        Field(description="A list of observable configurations for this channel."),
+        Field(
+            description="A list of observable configurations for this channel."
+        ),
     ]
-    fit_observable: Annotated[
-        str,
-        Field
-    ]
+    fit_observable: Annotated[str, Field]
     selection: Annotated[
         Optional[FunctorConfig],
         Field(
@@ -561,9 +630,10 @@ class CorrectionConfig(SubscriptableModel):
                 raise ValueError(
                     "If correction 'type' is 'object', 'target' must be specified."
                 )
-            if target[2] is None:
+            if self.target[2] is None:
                 raise ValueError(
-                    "If correction 'type' is 'object', target variable must not be None."
+                    "If correction 'type' is 'object', \
+                        target variable must not be None."
                 )
         return self
 
@@ -625,20 +695,21 @@ class SystematicConfig(SubscriptableModel):
 
         return self
 
+
 class PlottingJaxConfig(SubscriptableModel):
     aux_param_labels: Annotated[
         Optional[dict[str, str]],
         Field(
             default=None,
-            description="LaTeX labels for auxiliary parameters in JAX‐scan plots"
-        )
+            description="LaTeX labels for auxiliary parameters in JAX‐scan plots",
+        ),
     ]
     fit_param_labels: Annotated[
         Optional[dict[str, str]],
         Field(
             default=None,
-            description="LaTeX labels for fit parameters in JAX‐scan plots"
-        )
+            description="LaTeX labels for fit parameters in JAX‐scan plots",
+        ),
     ]
 
 
@@ -646,50 +717,43 @@ class PlottingConfig(SubscriptableModel):
     output_dir: Annotated[
         Optional[str],
         Field(
-            default=None,
-            description="Directory where plots will be written"
-        )
+            default=None, description="Directory where plots will be written"
+        ),
     ]
     process_colors: Annotated[
         Optional[dict[str, str]],
-        Field(
-            default=None,
-            description="Hex colors for each process key"
-        )
+        Field(default=None, description="Hex colors for each process key"),
     ]
     process_labels: Annotated[
         Optional[dict[str, str]],
         Field(
             default=None,
-            description="LaTeX‐style legend labels for each process"
-        )
+            description="LaTeX‐style legend labels for each process",
+        ),
     ]
     process_order: Annotated[
         Optional[List[str]],
-        Field(
-            default=None,
-            description="Draw/order sequence for processes"
-        )
+        Field(default=None, description="Draw/order sequence for processes"),
     ]
     jax: Annotated[
         Optional[PlottingJaxConfig],
-        Field(
-            default=None,
-            description="JAX‐specific label overrides"
-        )
+        Field(default=None, description="JAX‐specific label overrides"),
     ]
+
 
 # =================================
 # MVA configuration
 # =================================
 
+
 # ========
 # Activation functions
 # ========
 class ActivationKey(str, Enum):
-    relu    = "relu"
-    tanh    = "tanh"
+    relu = "relu"
+    tanh = "tanh"
     sigmoid = "sigmoid"
+
 
 # ========
 # Gradient optimisation configuration
@@ -699,31 +763,32 @@ class GradOptimConfig(SubscriptableModel):
         bool,
         Field(
             default=True,
-            description="Include this MVA’s weights in the global optimisation"
+            description="Include this MVA’s weights in the global optimisation",
         ),
     ]
     learning_rate: Annotated[
         float,
         Field(
             default=1e-3,
-            description="Learning rate for this MVA when optimise=True"
+            description="Learning rate for this MVA when optimise=True",
         ),
     ]
     log_param_changes: Annotated[
         bool,
         Field(
             default=False,
-            description="If True, log the mean of weight/bias changes during optimisation."
-        )
+            description="If True, log the mean of weight/bias changes \
+                during optimisation.",
+        ),
     ]
+
 
 # ========
 # Network layers configuration
 # ========
 class LayerConfig(SubscriptableModel):
     ndim: Annotated[
-        int,
-        Field(..., description="Output dimension of this layer")
+        int, Field(..., description="Output dimension of this layer")
     ]
     activation: Annotated[
         Union[Callable, ActivationKey],
@@ -732,47 +797,58 @@ class LayerConfig(SubscriptableModel):
             description=(
                 "For framework='jax', a Python callable; "
                 "for TF/Keras, one of the ActivationKey enums"
-            )
+            ),
         ),
     ]
     weights: Annotated[
         str,
-        Field(..., description="Parameter name for the weight tensor in this layer")
+        Field(
+            ...,
+            description="Parameter name for the weight tensor in this layer",
+        ),
     ]
     bias: Annotated[
         str,
-        Field(..., description="Parameter name for the bias vector in this layer")
+        Field(
+            ..., description="Parameter name for the bias vector in this layer"
+        ),
     ]
+
 
 # ========
 # Features to train the MVA on
 # ========
 class FeatureConfig(SubscriptableModel):
-    name: Annotated[
-        str,
-        Field(..., description="Feature name")
-    ]
+    name: Annotated[str, Field(..., description="Feature name")]
     label: Annotated[
         Optional[str],
         Field(
             default=None,
-            description="Optional label for plots (e.g. LaTeX string)"
-        )
+            description="Optional label for plots (e.g. LaTeX string)",
+        ),
     ]
     function: Annotated[
         Callable,
-        Field(..., description="Callable extracting the raw feature (e.g. lambda mva: mva.n_jet)")
+        Field(
+            ...,
+            description="Callable extracting the raw feature \
+                (e.g. lambda mva: mva.n_jet)",
+        ),
     ]
     use: Annotated[
         List[ObjVar],
-        Field(..., description="(object, variable) pairs to pass into function, e.g. [('mva', None)]")
+        Field(
+            ...,
+            description="(object, variable) pairs to pass into function, \
+                e.g. [('mva', None)]",
+        ),
     ]
     scale: Annotated[
         Optional[Callable],
         Field(
             default=None,
-            description="Optional callable to scale the extracted feature"
-        )
+            description="Optional callable to scale the extracted feature",
+        ),
     ]
     binning: Annotated[
         Optional[Union[str, List[float]]],
@@ -781,9 +857,10 @@ class FeatureConfig(SubscriptableModel):
             description=(
                 "Optional histogramming binning for diagnostics: "
                 "either 'low,high,nbins' or explicit edge list"
-            )
-        )
+            ),
+        ),
     ]
+
     @model_validator(mode="after")
     def validate_binning(self) -> "FeatureConfig":
         """Validate the binning format and values."""
@@ -824,43 +901,42 @@ class FeatureConfig(SubscriptableModel):
                 raise ValueError("Binning edges must be strictly increasing.")
         return self
 
+
 # ========
 # Full MVA configuration
 # ========
 class MVAConfig(SubscriptableModel):
     name: Annotated[
-        str,
-        Field(..., description="Unique name for this neural network")
+        str, Field(..., description="Unique name for this neural network")
     ]
     use_in_diff: Annotated[
         bool,
         Field(
             default=False,
-            description="Whether to include this MVA in the global JAX gradient"
+            description="Whether to include this MVA in the global JAX gradient",
         ),
-    ] # is this useful?
+    ]  # is this useful?
     framework: Annotated[
         Literal["jax", "keras", "tf"],
-        Field(..., description="Framework to use for building/training")
+        Field(..., description="Framework to use for building/training"),
     ]
     # Global pre-training learning rate:
     learning_rate: Annotated[
         float,
         Field(
-            default=0.01,
-            description="Step size for pre-training the network"
-        )
+            default=0.01, description="Step size for pre-training the network"
+        ),
     ]
     grad_optimisation: Annotated[
         GradOptimConfig,
         Field(
             default_factory=GradOptimConfig,
-            description="Per-MVA optimisation settings"
+            description="Per-MVA optimisation settings",
         ),
     ]
     layers: Annotated[
         List[LayerConfig],
-        Field(..., description="Sequential layer definitions")
+        Field(..., description="Sequential layer definitions"),
     ]
     loss: Annotated[
         Union[Callable, str],
@@ -869,12 +945,12 @@ class MVAConfig(SubscriptableModel):
             description=(
                 "For 'jax': a Python callable (preds, features, targets)->scalar; "
                 "for TF/Keras: string loss key (e.g. 'binary_crossentropy')"
-            )
-        )
+            ),
+        ),
     ]
     features: Annotated[
         List[FeatureConfig],
-        Field(..., description="List of input features for this network")
+        Field(..., description="List of input features for this network"),
     ]
 
     classes: Annotated[
@@ -882,13 +958,14 @@ class MVAConfig(SubscriptableModel):
         Field(
             ...,
             description=(
-                "List of class definitions for training the classifier. Each entry can be:\n"
+                "List of class definitions for training the classifier. Each entry"
+                "can be:\n"
                 "- a single process name (e.g. 'wjets'), or\n"
                 "- a dictionary mapping a class label to multiple process names "
                 "(e.g. {'ttbar': ['ttbar_semilep', 'ttbar_had', 'ttbar_lep']}).\n"
                 "The index of each entry determines the class label."
             ),
-        )
+        ),
     ]
 
     plot_classes: Annotated[
@@ -896,8 +973,8 @@ class MVAConfig(SubscriptableModel):
         Field(
             default=None,
             description=(
-                "Optional list of class names to use in MVA-related plotting." \
-                "For example, features/scores will be plotted for this set of classes." \
+                "Optional list of class names to use in MVA-related plotting."
+                "For example, features/scores will be plotted for this set of classes."
                 "If None, defaults to all classes in `classes`."
             ),
         ),
@@ -911,7 +988,8 @@ class MVAConfig(SubscriptableModel):
                 "- `none`: leave as is\n"
                 "- `undersample`: down-sample every class to the smallest class size\n"
                 "- `oversample`: up-sample every class to the largest class size\n"
-                "- `class_weight`: compute sample-weights inversely proportional to class frequency"
+                "- `class_weight`: compute sample-weights inversely proportional "
+                "to class frequency"
             ),
         ),
     ]
@@ -928,19 +1006,29 @@ class MVAConfig(SubscriptableModel):
     # -------------------------------------------------------------------------
     epochs: Annotated[
         int,
-        Field(default=1000, description="Number of training epochs for this MVA")
+        Field(
+            default=1000, description="Number of training epochs for this MVA"
+        ),
     ]
     batch_size: Annotated[
         Optional[int],
-        Field(default=32, description="Batch size for training; None for full-batch GD")
+        Field(
+            default=32,
+            description="Batch size for training; None for full-batch GD",
+        ),
     ]
     validation_split: Annotated[
         float,
-        Field(default=0.2, description="Fraction of data reserved for validation")
+        Field(
+            default=0.2, description="Fraction of data reserved for validation"
+        ),
     ]
     log_interval: Annotated[
         int,
-        Field(default=100, description="Epoch interval for logging training progress")
+        Field(
+            default=100,
+            description="Epoch interval for logging training progress",
+        ),
     ]
 
     @model_validator(mode="after")
@@ -950,7 +1038,9 @@ class MVAConfig(SubscriptableModel):
                 raise ValueError("JAX 'loss' must be a callable.")
             for L in self.layers:
                 if not callable(L.activation):
-                    raise ValueError("JAX 'activation' must be a Python callable.")
+                    raise ValueError(
+                        "JAX 'activation' must be a Python callable."
+                    )
         else:
             if not isinstance(self.loss, str):
                 raise ValueError("TF/Keras 'loss' must be a string key.")
@@ -970,8 +1060,11 @@ class MVAConfig(SubscriptableModel):
         names = [feat.name for feat in self.features]
         dup = {n for n in names if names.count(n) > 1}
         if dup:
-            raise ValueError(f"Duplicate feature names in MVA '{self.name}': {sorted(dup)}")
+            raise ValueError(
+                f"Duplicate feature names in MVA '{self.name}': {sorted(dup)}"
+            )
         return self
+
 
 # ------------------------
 # Top-level configuration
@@ -982,7 +1075,10 @@ class Config(SubscriptableModel):
     ]
     jax: Annotated[
         Optional[JaxConfig],
-        Field(default=None, description="JAX configuration block for differentiable analysis"),
+        Field(
+            default=None,
+            description="JAX configuration block for differentiable analysis",
+        ),
     ]
     ghost_observables: Annotated[
         Optional[List[GhostObservable]],
@@ -1005,8 +1101,9 @@ class Config(SubscriptableModel):
         Optional[GoodObjectMasksBlockConfig],
         Field(
             default={},
-            description="Good object masks to apply before channel selection in analysis or pre-training of MVAs. "
-            "The mask functions are applied to the object in the 'object' field"
+            description="Good object masks to apply before channel "
+            + "selection in analysis or pre-training of MVAs."
+            "The mask functions are applied to the object in the 'object' field",
         ),
     ]
     channels: Annotated[
@@ -1032,15 +1129,15 @@ class Config(SubscriptableModel):
         Optional[List[MVAConfig]],
         Field(
             default=None,
-            description="List of MVA configurations for pre-training and inference"
+            description="List of MVA configurations for pre-training and inference",
         ),
     ]
     plotting: Annotated[
         Optional[PlottingConfig],
         Field(
             default=None,
-            description="Global plotting configuration (all keys are optional)"
-        )
+            description="Global plotting configuration (all keys are optional)",
+        ),
     ]
 
     @model_validator(mode="after")
@@ -1108,7 +1205,8 @@ class Config(SubscriptableModel):
             seen_objects = set()
             if object_mask.object in seen_objects:
                 raise ValueError(
-                    f"Duplicate object '{object_mask.object}' found in good object masks collection 'analysis'."
+                    f"Duplicate object '{object_mask.object}' found in good object"
+                    "masks collection 'analysis'."
                 )
             seen_objects.add(object_mask.object)
 
@@ -1116,7 +1214,8 @@ class Config(SubscriptableModel):
             seen_objects = set()
             if object_mask.object in seen_objects:
                 raise ValueError(
-                    f"Duplicate object '{object_mask.object}' found in good object masks collection 'mva'."
+                    f"Duplicate object '{object_mask.object}' found in good object"
+                    "masks collection 'mva'."
                 )
             seen_objects.add(object_mask.object)
 
@@ -1192,7 +1291,9 @@ def load_config_with_restricted_cli(
         try:
             key, value = arg.split("=", 1)
         except ValueError:
-            raise ValueError(f"Invalid CLI argument format: {arg}. Expected 'key=value'")
+            raise ValueError(
+                f"Invalid CLI argument format: {arg}. Expected 'key=value'"
+            )
 
         top_key = key.split(".", 1)[0]
 
@@ -1208,7 +1309,9 @@ def load_config_with_restricted_cli(
         if key not in valid_keys:
             raise KeyError(
                 f"Cannot override non-existent setting: {key}. "
-                f"Valid settings in section '{top_key}': {', '.join(sorted(k for k in valid_keys if k.startswith(top_key)))}"
+                f"Valid settings in section '{top_key}':\
+                {', '.join(sorted(k for k in valid_keys
+                                  if k.startswith(top_key)))}"
             )
 
         filtered_cli.append(arg)

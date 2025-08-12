@@ -1,5 +1,6 @@
 """
-Utility module to generate JSON metadata for NanoAOD ROOT datasets used in ZprimeTtbar analysis.
+Utility module to generate JSON metadata for NanoAOD ROOT datasets
+used in ZprimeTtbar analysis.
 
 This script provides:
   - `get_root_file_paths`: Read .txt listings to gather ROOT file paths.
@@ -11,11 +12,11 @@ Original inspiration from:
 https://github.com/iris-hep/analysis-grand-challenge/blob/main/datasets/
 cms-open-data-2015/build_ntuple_json.py
 """
+
 import json
 import logging
 import time
 from collections import defaultdict
-from glob import glob
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -41,7 +42,7 @@ DEFAULT_DATASET_DIRECTORIES: Dict[str, Path] = {
 
 def get_root_file_paths(
     directory: Union[str, Path],
-    identifiers: Optional[Union[int, List[int]]] = None
+    identifiers: Optional[Union[int, List[int]]] = None,
 ) -> List[Path]:
     """
     Collect ROOT file paths from text listings in a directory.
@@ -92,9 +93,7 @@ def get_root_file_paths(
     return root_paths
 
 
-def count_events_in_files(
-    files: List[Path]
-) -> Tuple[List[int], List[float]]:
+def count_events_in_files(files: List[Path]) -> Tuple[List[int], List[float]]:
     """
     Query ROOT files for event counts and sum of generator weights.
 
@@ -121,7 +120,9 @@ def count_events_in_files(
         # Log progress every 10 files and at completion
         if idx % 10 == 0 or idx == len(files) - 1:
             elapsed = int(time.time() - start_time)
-            logger.info(f"Reading file {idx+1}/{len(files)} ({elapsed}s elapsed)")
+            logger.info(
+                f"Reading file {idx+1}/{len(files)} ({elapsed}s elapsed)"
+            )
         try:
             with uproot.open(file_path) as root_file:
                 tree = root_file["Events"]
@@ -158,7 +159,9 @@ class NanoAODMetadataGenerator:
     def __init__(
         self,
         process_directories: Optional[Dict[str, Union[str, Path]]] = None,
-        output_directory: Union[str, Path] = "datasets/nanoaods_jsons_per_process"
+        output_directory: Union[
+            str, Path
+        ] = "datasets/nanoaods_jsons_per_process",
     ):
         # Initialize mapping from process to directory path
         raw_map = process_directories or DEFAULT_DATASET_DIRECTORIES
@@ -170,8 +173,7 @@ class NanoAODMetadataGenerator:
         self.output_directory.mkdir(parents=True, exist_ok=True)
 
     def get_metadata(
-        self,
-        identifiers: Optional[Union[int, List[int]]] = None
+        self, identifiers: Optional[Union[int, List[int]]] = None
     ) -> Dict[str, Dict[str, Any]]:
         """
         Assemble metadata for each process/variation without file I/O.
@@ -215,10 +217,7 @@ class NanoAODMetadataGenerator:
 
         return results
 
-    def run(
-        self,
-        identifiers: Optional[Union[int, List[int]]] = None
-    ) -> None:
+    def run(self, identifiers: Optional[Union[int, List[int]]] = None) -> None:
         """
         Generate metadata and write individual JSON files and a master index.
 
@@ -233,11 +232,15 @@ class NanoAODMetadataGenerator:
         for process_name, variations in metadata.items():
             for variation_label, data in variations.items():
                 output_file = (
-                    self.output_directory /
-                    f"nanoaods_{process_name}_{variation_label}.json"
+                    self.output_directory
+                    / f"nanoaods_{process_name}_{variation_label}.json"
                 )
                 with output_file.open("w") as json_f:
-                    json.dump({process_name: {variation_label: data}}, json_f, indent=4)
+                    json.dump(
+                        {process_name: {variation_label: data}},
+                        json_f,
+                        indent=4,
+                    )
                 logger.debug(f"Wrote file: {output_file}")
 
         # Write master metadata index

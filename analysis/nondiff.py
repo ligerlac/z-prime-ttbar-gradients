@@ -3,8 +3,6 @@ import logging
 import os
 import warnings
 from collections import defaultdict
-from functools import reduce
-from pathlib import Path
 from typing import Any, Literal, Optional
 
 import awkward as ak
@@ -18,9 +16,10 @@ from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 
 from analysis.base import Analysis
 from user.cuts import lumi_mask
-from utils.output_files import (load_histograms_from_pickle,
-                                save_histograms_to_pickle,
-                                save_histograms_to_root)
+from utils.output_files import (
+    save_histograms_to_pickle,
+    save_histograms_to_root,
+)
 from utils.preproc import pre_process_dak, pre_process_uproot
 from utils.stats import get_cabinetry_rebinning_router
 
@@ -38,6 +37,7 @@ logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 
 NanoAODSchema.warn_missing_crossrefs = False
 warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
+
 
 # -----------------------------
 # ZprimeAnalysis Class Definition
@@ -59,21 +59,23 @@ class NonDiffAnalysis(Analysis):
         self.nD_hists_per_region = self._init_histograms()
 
     def _prepare_dirs(self):
-            # 1) create top-level output
-            super()._prepare_dirs()
+        # 1) create top-level output
+        super()._prepare_dirs()
 
-            out = self.dirs["output"]
+        out = self.dirs["output"]
 
-            # 2) histograms lives under <output>/histograms
-            (out / "histograms").mkdir(parents=True, exist_ok=True)
+        # 2) histograms lives under <output>/histograms
+        (out / "histograms").mkdir(parents=True, exist_ok=True)
 
-            # 3) cabinetry workspaces & stats
-            (out / "statistics").mkdir(parents=True, exist_ok=True)
+        # 3) cabinetry workspaces & stats
+        (out / "statistics").mkdir(parents=True, exist_ok=True)
 
-            self.dirs.update({
-                "histograms":  out / "histograms",
-                "statistics":  out / "statistics",
-            })
+        self.dirs.update(
+            {
+                "histograms": out / "histograms",
+                "statistics": out / "statistics",
+            }
+        )
 
     def _init_histograms(self) -> dict[str, dict[str, hist.Hist]]:
         """
@@ -123,7 +125,6 @@ class NonDiffAnalysis(Analysis):
                 )
         return histograms
 
-
     def histogramming(
         self,
         object_copies: dict[str, ak.Array],
@@ -170,15 +171,13 @@ class NonDiffAnalysis(Analysis):
             if (req_channels := self.config.general.channels) is not None:
                 if channel_name not in req_channels:
                     continue
-            logger.info(
-                f"Applying selection for {channel_name} in {process}")
+            logger.info(f"Applying selection for {channel_name} in {process}")
             mask = 1
-            if (
-                selection_funciton := channel.selection.function
-            ) is not None:
+            if (selection_funciton := channel.selection.function) is not None:
                 selection_args = self._get_function_arguments(
-                    channel.selection.use, object_copies,
-                    function_name=channel.selection.function.__name__
+                    channel.selection.use,
+                    object_copies,
+                    function_name=channel.selection.function.__name__,
                 )
                 packed_selection = selection_funciton(*selection_args)
                 if not isinstance(packed_selection, PackedSelection):
@@ -204,9 +203,9 @@ class NonDiffAnalysis(Analysis):
                 continue
 
             object_copies_channel = {
-                                collection: variable[mask]
-                                for collection, variable in object_copies.items()
-                            }
+                collection: variable[mask]
+                for collection, variable in object_copies.items()
+            }
 
             if process != "data":
                 weights = (
@@ -222,14 +221,19 @@ class NonDiffAnalysis(Analysis):
                     weights, event_syst, direction, object_copies_channel
                 )
 
-            logger.info(f"Number of weighted events in {channel_name}: {ak.sum(weights):.2f}")
-            logger.info(f"Number of raw events in {channel_name}: {ak.sum(mask)}")
+            logger.info(
+                f"Number of weighted events in {channel_name}: {ak.sum(weights):.2f}"
+            )
+            logger.info(
+                f"Number of raw events in {channel_name}: {ak.sum(mask)}"
+            )
             for observable in channel.observables:
                 observable_name = observable.name
                 logger.info(f"Computing observable {observable_name}")
                 observable_args = self._get_function_arguments(
-                    observable.use, object_copies_channel,
-                    function_name=observable.function.__name__
+                    observable.use,
+                    object_copies_channel,
+                    function_name=observable.function.__name__,
                 )
                 observable_vals = observable.function(*observable_args)
                 self.nD_hists_per_region[channel_name][observable_name].fill(
@@ -239,9 +243,10 @@ class NonDiffAnalysis(Analysis):
                     weight=weights,
                 )
 
-
     def process(
-        self, events: ak.Array, metadata: dict[str, Any],
+        self,
+        events: ak.Array,
+        metadata: dict[str, Any],
     ) -> None:
         """
         Run the full analysis logic on a batch of events.
@@ -276,8 +281,9 @@ class NonDiffAnalysis(Analysis):
 
         # Apply baseline selection
         baseline_args = self._get_function_arguments(
-            self.config.baseline_selection.use, obj_copies,
-            function_name=self.config.baseline_selection.function.__name__
+            self.config.baseline_selection.use,
+            obj_copies,
+            function_name=self.config.baseline_selection.function.__name__,
         )
 
         packed_selection = self.config.baseline_selection.function(
@@ -334,7 +340,6 @@ class NonDiffAnalysis(Analysis):
                         direction=direction,
                     )
 
-
     def run_fit(
         self, cabinetry_config: dict[str, Any]
     ) -> tuple[Any, Any, Any, Any]:
@@ -387,7 +392,9 @@ class NonDiffAnalysis(Analysis):
                 if process_name not in req_processes:
                     continue
 
-            os.makedirs(f"{config.general.output_dir}/{dataset}", exist_ok=True)
+            os.makedirs(
+                f"{config.general.output_dir}/{dataset}", exist_ok=True
+            )
 
             logger.info("========================================")
             logger.info(f"🚀 Processing dataset: {dataset}")
@@ -425,18 +432,25 @@ class NonDiffAnalysis(Analysis):
 
                 skimmed_files = glob.glob(f"{output_dir}/part*.root")
                 skimmed_files = [f"{f}:{tree}" for f in skimmed_files]
-                remaining = sum(uproot.open(f).num_entries for f in skimmed_files)
-                logger.info(f"✅ Events retained after filtering: {remaining:,}")
+                remaining = sum(
+                    uproot.open(f).num_entries for f in skimmed_files
+                )
+                logger.info(
+                    f"✅ Events retained after filtering: {remaining:,}"
+                )
                 if config.general.run_histogramming:
                     for skimmed in skimmed_files:
                         logger.info(f"📘 Processing skimmed file: {skimmed}")
-                        logger.info("📈 Processing for non-differentiable analysis")
+                        logger.info(
+                            "📈 Processing for non-differentiable analysis"
+                        )
                         events = NanoEventsFactory.from_root(
                             skimmed, schemaclass=NanoAODSchema, delayed=False
                         ).events()
                         self.process(events, metadata)
-                        logger.info("📈 Non-differentiable histogram-filling complete.")
-
+                        logger.info(
+                            "📈 Non-differentiable histogram-filling complete."
+                        )
 
             logger.info(f"🏁 Finished dataset: {dataset}\n")
 
