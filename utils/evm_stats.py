@@ -30,7 +30,7 @@ def model_per_channel(params: Params, hists: dict[str, Hist1D]) -> dict[str, His
 
 def loss_per_channel(dynamic: Params, static: Params, hists: dict[str, Hist1D], observation: Hist1D) -> FScalar:
     params = evm.tree.combine(dynamic, static)
-    expected = model_per_channel(params, hists)
+    expected = evm.util.sum_over_leaves(model_per_channel(params, hists))
     # Poisson NLL of the expectation and observation
     log_likelihood = (
         evm.pdf.PoissonContinuous(lamb=expected).log_prob(observation).sum()
@@ -114,14 +114,14 @@ def q0_test(
     q0 = jnp.where(poi_hat >= test_poi, likelihood_ratio, 0.0)
     # p = 1 - Φ(√q₀)
     p0 = 1.0 - jax.scipy.stats.norm.cdf(jnp.sqrt(q0))
-    return (p0, bestfit_params)
+    return (p0, evm.tree.pure(bestfit_params))
 
 
 
 def build_channel_data_scalar(
     histogram_dictionary: PyTree[Hist1D],
     channel_configurations: list[Any],
-) -> list[ChannelData]:
+) -> tuple[list[ChannelData], None]:
     """
     Construct ChannelData objects from nested histogram dictionary.
 
@@ -253,7 +253,7 @@ def build_channel_data_scalar(
             bin_edges=bin_edges,
         )
         channel_data_list.append(channel_data)
-    return channel_data_list
+    return channel_data_list, None
 
 
 def compute_discovery_pvalue(
@@ -303,7 +303,7 @@ def compute_discovery_pvalue(
     # =====================================================================
     # Step 1: Prepare data and model
     # =====================================================================
-    channels = build_channel_data_scalar(
+    channels, _ = build_channel_data_scalar(
         histogram_dictionary, channel_configurations
     )
 
