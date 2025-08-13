@@ -35,6 +35,7 @@ vector = "==1.5.1" # ">=1.6.3,<2"
 python = ">=3.12.11,<3.13"
 xrootd = ">=5.8.1,<6"
 optimistix = ">=0.0.10"
+ipython = ">=9.4.0,<10"
 
 [pypi-dependencies]
 relaxed = { git = "https://github.com/pfackeldey/relaxed.git", branch = "fixes_for_zprime" }

@@ -36,7 +36,7 @@ from tabulate import tabulate
 from analysis.base import Analysis
 from user.cuts import lumi_mask
 # from utils.jax_stats import build_channel_data_scalar, compute_discovery_pvalue
-from utils.evm_stats import build_channel_data_scalar, compute_discovery_pvalue
+from utils.evm_stats import build_channel_data_scalar, compute_discovery_pvalue, fit_params
 from utils.logging import BLUE, GREEN, RED, RESET, _banner
 from utils.mva import JAXNetwork, TFNetwork
 from utils.plot import (
@@ -1492,8 +1492,8 @@ class DifferentiableAnalysis(Analysis):
 
                 info_logger(
                     f"Histogramming: {process} | {variation} | {channel_name} | "
-                    "{obs_name} | Events (Raw): {nevents:,} | "
-                    "Events(Weighted): {ak.sum(weights):,.2f}"
+                    f"{obs_name} | Events (Raw): {nevents:,} | "
+                    f"Events(Weighted): {ak.sum(weights):,.2f}"
                 )
 
                 # Evaluate observable function
@@ -2206,7 +2206,7 @@ class DifferentiableAnalysis(Analysis):
 
             all_parameters = {
                 "aux": auxiliary_parameters,
-                "fit": {"mu": 1.0, "scale_ttbar": 1.0},
+                "fit": fit_params,
             }
 
             # ---------------------------------------------------------------------

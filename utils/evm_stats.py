@@ -18,17 +18,53 @@ jax.config.update("jax_enable_x64", True)  # Use 64-bit precision
 
 FScalar: TypeAlias = Float[Array, ""]  # Scalar float array type
 Hist1D: TypeAlias = Float[Array, "bins"]  # 1D histogram type (sumw)
+Hists1D: TypeAlias = dict[str, Hist1D]  # Dictionary of 1D histograms
 Params: TypeAlias = dict[str, evm.AbstractParameter[FScalar]]  # Parameter dictionary
 
 
-def model_per_channel(params: Params, hists: dict[str, Hist1D]) -> dict[str, Hist1D]:
-    hists["signal"] = params["mu"].scale()(hists["signal"])
-    hists["ttbar_semilep"] = params["scale_ttbar"].scale()(hists["ttbar_semilep"])
-    # Other backgrounds are fixed, no scaling applied
+# Initial fit parameters for the analysis
+# These are the "internal" parameters used by evermore for the fit and they contain more information than just the values (like names, constraints, etc)
+# These parameters are meant to be extended!!
+evm_params: Params = {
+    "mu": evm.Parameter(value=1.0, name="mu"),  # Signal strength parameter
+    "scale_ttbar": evm.Parameter(value=1.0, name="scale_ttbar"),  # ttbar scaling factor
+}
+
+# These are the pure values of the parameters that will be optimized by the analysis
+# They are supposed to be trainable and do not contain any extra information (that is not meant to be optimized!)
+fit_params = evm.tree.pure(evm_params)
+
+
+# Function to update evermore (internal) parameters with new values from the analysis optimization loop
+@eqx.filter_jit  # JIT compile for performance
+def update(params: Params, values: PyTree[FScalar]) -> Params:
+    return jax.tree.map(
+        evm.parameter.replace_value,
+        params,
+        values,
+        is_leaf=evm.filter.is_parameter,
+    )
+
+
+def model_per_channel(params: Params, hists: Hists1D) -> Hists1D:
+    # we put all modifiers into a list, so that we can compose them for application (scaling).
+    # composing is important! it ensures that there's no order dependency in the application of the modifiers,
+    # and it allows us to apply multiple modifiers at once through batching (vmap) of the same modifier types, 
+    # which greatly improves performance and reduces compiletime.
+
+    # signal, add more modifiers to this list if needed
+    modifier = evm.modifier.Compose(*[params["mu"].scale()])
+    hists["signal"] = modifier(hists["signal"])
+
+    # ttbar semilep, add more modifiers to this list if needed
+    modifier = evm.modifier.Compose(*[params["scale_ttbar"].scale()])
+    hists["ttbar_semilep"] = modifier(hists["ttbar_semilep"])
+
+    # Other backgrounds stay as they are, no scaling applied (yet)
     return hists
 
 
-def loss_per_channel(dynamic: Params, static: Params, hists: dict[str, Hist1D], observation: Hist1D) -> FScalar:
+def loss_per_channel(dynamic: Params, static: Params, hists: Hists1D, observation: Hist1D) -> FScalar:
     params = evm.tree.combine(dynamic, static)
     expected = evm.util.sum_over_leaves(model_per_channel(params, hists))
     # Poisson NLL of the expectation and observation
@@ -46,7 +82,7 @@ def loss_per_channel(dynamic: Params, static: Params, hists: dict[str, Hist1D], 
 class ChannelData(NamedTuple):
     name: str
     observed_counts: Hist1D
-    templates: dict[str, Hist1D]
+    templates: Hists1D
     bin_edges: jax.Array
 
 
@@ -89,7 +125,7 @@ def fit(params: Params, channels: list[ChannelData]) -> Params:
     return (nll, bestfit_params)
 
 
-@eqx.filter_jit
+@eqx.filter_jit  # JIT compile for performance
 def q0_test(
     params: Params,
     channels: list[ChannelData],
@@ -114,6 +150,7 @@ def q0_test(
     q0 = jnp.where(poi_hat >= test_poi, likelihood_ratio, 0.0)
     # p = 1 - Φ(√q₀)
     p0 = 1.0 - jax.scipy.stats.norm.cdf(jnp.sqrt(q0))
+    # return p0 and bestfit parameters (as pure values, i.e. without extra info like names, constraints, etc)
     return (p0, evm.tree.pure(bestfit_params))
 
 
@@ -259,7 +296,7 @@ def build_channel_data_scalar(
 def compute_discovery_pvalue(
     histogram_dictionary: PyTree[Hist1D],
     channel_configurations: list[Any],
-    parameters: Params,
+    parameters: PyTree[FScalar],
     signal_strength_test_value: float = 0.0,
 ) -> tuple[FScalar, Params]:
     """
@@ -312,13 +349,9 @@ def compute_discovery_pvalue(
         logger.error("Discovery calculation aborted: no valid channels")
         return jnp.array(0.0), {}
     
-    # wrap the parameters in a dictionary of evm.Parameter
-    # should probably be done by the caller already
-    params = {
-        "mu": evm.Parameter(value=parameters["mu"], name="mu"),
-        "scale_ttbar": evm.Parameter(value=parameters["scale_ttbar"], name="scale_ttbar"),
-    }
-
+    # update the internal evm parameters with the provided values optimized by the analysis
+    # the internal evm_params have much more information that is needed for the fit (like names, constraints, etc), but they are not supposed to be trainable
+    params = update(evm_params, parameters)
     return q0_test(
         params=params,
         channels=channels,
