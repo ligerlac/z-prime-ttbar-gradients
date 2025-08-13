@@ -12,7 +12,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import jax
 import jax.numpy as jnp
 import numpy as np
-import tensorflow as tf
 from jax import jit, random, value_and_grad
 from itertools import chain
 from sklearn.model_selection import train_test_split
@@ -905,6 +904,8 @@ class TFNetwork(BaseNetwork):
     """
 
     def init_network(self) -> None:
+        import tensorflow as tf
+
         """Construct and compile Keras Sequential model."""
         input_dimension = len(self.mva_cfg.features)
         keras_layers = []
@@ -937,7 +938,7 @@ class TFNetwork(BaseNetwork):
         training_labels: Any,
         validation_inputs: Optional[Any] = None,
         validation_labels: Optional[Any] = None,
-    ) -> tf.keras.Model:
+    ) -> "tf.keras.Model":
         """Train model using Keras .fit() method.
 
         Parameters

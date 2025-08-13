@@ -4,7 +4,6 @@ import awkward as ak
 import numba
 import numpy as np
 import vector
-from tensorflow.keras.models import load_model  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -653,6 +652,8 @@ def compute_mva_scores(
     np.ndarray
         Flat array of MVA scores per event.
     """
+    from tensorflow.keras.models import load_model  # type: ignore
+
 
     model = load_model(model_path, compile=False)
     logger.info(model.summary())
