@@ -11,3 +11,9 @@ docs/_build
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+# others
+preproc_uproot/
+skimmed/
+test*
+output*
+_*
