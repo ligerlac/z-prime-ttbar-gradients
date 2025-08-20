@@ -50,8 +50,8 @@ general_config = {
     "output_dir": "outputs/traced_zprime_with_jax_nn/",
     "preprocessed_dir": "./preproc_uproot/z-prime-ttbar-data/",
     "processor": "uproot",
-    "lumifile": "./corrections/Cert_271036-284044_13TeV_Legacy2016_"
-    "Collisions16_JSON.txt",
+    "lumifile": "./corrections/Cert_271036-284044_13TeV_Legacy2016_"\
+        "Collisions16_JSON.txt",
     "cache_dir": "/tmp/gradients_analysis/",
 }
 
