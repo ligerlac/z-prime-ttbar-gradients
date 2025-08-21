@@ -37,7 +37,7 @@ python = ">=3.12.11,<3.13"
 xrootd = ">=5.8.1,<6"
 
 [pypi-dependencies]
-relaxed = "-=0.4.0"
+relaxed = "==0.4.0"
 
 [feature.lab.dependencies]
 notebook = ">=7.4.5,<8"
