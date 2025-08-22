@@ -7,7 +7,7 @@ import optimistix as optx
 import evermore as evm
 
 from jaxtyping import Array, Float, PyTree
-from typing import NamedTuple, TypeAlias, Any, Callable
+from typing import TypeAlias, Any, Callable
 
 import logging
 # Configure module-level logger for debugging and monitoring
@@ -36,7 +36,6 @@ fit_params = evm.tree.pure(evm_params)
 
 
 # Function to update evermore (internal) parameters with new values from the analysis optimization loop
-@eqx.filter_jit  # JIT compile for performance
 def update(params: Params, values: PyTree[FScalar]) -> Params:
     return jax.tree.map(
         evm.parameter.replace_value,
@@ -51,17 +50,27 @@ def model_per_channel(params: Params, hists: Hists1D) -> Hists1D:
     # composing is important! it ensures that there's no order dependency in the application of the modifiers,
     # and it allows us to apply multiple modifiers at once through batching (vmap) of the same modifier types, 
     # which greatly improves performance and reduces compiletime.
+    out = {}
 
-    # signal, add more modifiers to this list if needed
-    modifier = evm.modifier.Compose(*[params["mu"].scale()])
-    hists["signal"] = modifier(hists["signal"])
-
-    # ttbar semilep, add more modifiers to this list if needed
-    modifier = evm.modifier.Compose(*[params["scale_ttbar"].scale()])
-    hists["ttbar_semilep"] = modifier(hists["ttbar_semilep"])
+    for proc, hist in hists.items():
+        # we can use pattern matching to select which modifiers to apply to which processes
+        # this is available in python 3.10+ (and we use atleast python 3.11 in this repo due to JAX requirements)
+        match proc:
+            case "signal":
+                # signal, add more modifiers to this list if needed
+                modifier = evm.modifier.Compose(*[params["mu"].scale()])
+                out[proc] = modifier(hist)
+            case "ttbar_semilep":
+                # ttbar semilep, add more modifiers to this list if needed
+                modifier = evm.modifier.Compose(*[params["scale_ttbar"].scale()])
+                out[proc] = modifier(hist)
+            case _:
+                # For all other processes, we currently do not apply any scaling
+                # This is a placeholder for future modifications, e.g., for background processes
+                out[proc] = hist
 
     # Other backgrounds stay as they are, no scaling applied (yet)
-    return hists
+    return out
 
 
 def loss_per_channel(dynamic: Params, static: Params, hists: Hists1D, observation: Hist1D) -> FScalar:
@@ -79,8 +88,8 @@ def loss_per_channel(dynamic: Params, static: Params, hists: Hists1D, observatio
     return -jnp.sum(log_likelihood)
 
 
-class ChannelData(NamedTuple):
-    name: str
+class ChannelData(eqx.Module):
+    name: str = eqx.field(static=True)
     observed_counts: Hist1D
     templates: Hists1D
     bin_edges: jax.Array
@@ -99,10 +108,14 @@ def total_loss(dynamic: Params, static: Params, channels: list[ChannelData]) -> 
     return loss
 
 
-def fit(params: Params, channels: list[ChannelData]) -> Params:
+
+def fit(
+    params: Params,
+    channels: list[ChannelData],
+) -> tuple[FScalar, tuple[Params, PyTree[FScalar]]]:
     solver = optx.BFGS(rtol=1e-5, atol=1e-7)
 
-    dynamic, static = evm.tree.partition(params)
+    dynamic, static = evm.tree.partition(params, filter=evm.filter.is_not_frozen)
 
     # wrap the loss function to match optimistix's expectations
     def optx_loss(dynamic, args):
@@ -120,27 +133,40 @@ def fit(params: Params, channels: list[ChannelData]) -> Params:
     )
     # NLL
     nll = total_loss(fitresult.value, static, channels)
+    
     # bestfit parameters
     bestfit_params = evm.tree.combine(fitresult.value, static)
-    return (nll, bestfit_params)
+
+    # bestfit parameter uncertainties
+    # We use the Cramer-Rao bound to estimate uncertainties
+    # use the bestfit parameters to compute the uncertainties, and split it by value of the parameters
+    # we explicitly not use `filter=evm.filter.is_not_frozen` here, because we want to compute uncertainties 
+    # for all parameters, not just the "unfrozen" ones
+    dynamic, static = evm.tree.partition(bestfit_params, filter=evm.filter.is_value)
+    bestfit_params_uncertainties = evm.loss.cramer_rao_uncertainty(
+        loss_fn=jax.tree_util.Partial(total_loss, static=static, channels=channels),
+        tree=dynamic,
+    )
+    return (nll, (bestfit_params, bestfit_params_uncertainties))
 
 
 @eqx.filter_jit  # JIT compile for performance
-def q0_test(
+def pvalue_bestfitparams_uncertainties(
     params: Params,
     channels: list[ChannelData],
     test_poi: float,
     poi_where: Callable,
-) -> tuple[FScalar, Params]:
+) -> tuple[FScalar, tuple[Params, PyTree[FScalar]]]:
     """Calculate expected p-values via q0 test."""
     # global fit
-    two_nll, bestfit_params = fit(params, channels)
+    two_nll, (bestfit_params, bestfit_params_uncertainties) = fit(params, channels)
 
     # conditional fit at test_poi
     # Fix `mu` and freeze the parameter
     params = eqx.tree_at(lambda t: poi_where(t).frozen, params, True)
     params = eqx.tree_at(lambda t: poi_where(t).raw_value, params, evm.parameter.to_value(test_poi))
-    two_nll_conditional, _ = fit(params, channels)
+    two_nll_conditional, *_ = fit(params, channels)
+
 
     # Calculate the likelihood ratio
     # q0 = -2 ln [L(μ=0, θ̂̂) / L(μ̂, θ̂)]
@@ -150,8 +176,10 @@ def q0_test(
     q0 = jnp.where(poi_hat >= test_poi, likelihood_ratio, 0.0)
     # p = 1 - Φ(√q₀)
     p0 = 1.0 - jax.scipy.stats.norm.cdf(jnp.sqrt(q0))
-    # return p0 and bestfit parameters (as pure values, i.e. without extra info like names, constraints, etc)
-    return (p0, evm.tree.pure(bestfit_params))
+    # return p0, bestfit parameters (as pure values, i.e. without extra info like names, constraints, etc), and their uncertainties
+    # need to return 2 elements for `jax.value_and_grad(..., has_aux=True)` to work properly
+    aux = (evm.tree.pure(bestfit_params), bestfit_params_uncertainties)
+    return (p0, aux)
 
 
 
@@ -221,16 +249,10 @@ def build_channel_data_scalar(
             logger.exception(f"Data access error for {channel_name}")
             continue
 
-        # Handle different histogram storage formats
-        if isinstance(data_container, tuple):
-            # Tuple format: (counts, bin_edges)
-            observed_counts, bin_edges = data_container
-            observed_counts = jnp.asarray(observed_counts)
-            bin_edges = jnp.asarray(bin_edges)
-        else:
-            # Assume array is counts only
-            observed_counts = jnp.asarray(data_container)
-            bin_edges = jnp.array([])  # Empty bin edges
+        # Tuple format: (counts, bin_edges)
+        observed_counts, bin_edges = data_container
+        observed_counts = jnp.asarray(observed_counts)
+        bin_edges = jnp.asarray(bin_edges)
 
         # =====================================================================
         # Step 2: Build process templates
@@ -258,13 +280,8 @@ def build_channel_data_scalar(
                 )
                 continue
 
-            # Handle different storage formats
-            if isinstance(nominal_hist, tuple):
-                # Tuple format: (counts, edges) - extract counts only
-                counts = jnp.asarray(nominal_hist[0])
-            else:
-                # Assume it's counts array
-                counts = jnp.asarray(nominal_hist)
+            # Tuple format: (counts, edges) - extract counts only
+            counts = jnp.asarray(nominal_hist[0])
 
             process_templates[process_name] = counts
 
@@ -298,7 +315,7 @@ def compute_discovery_pvalue(
     channel_configurations: list[Any],
     parameters: PyTree[FScalar],
     signal_strength_test_value: float = 0.0,
-) -> tuple[FScalar, Params]:
+) -> tuple[FScalar, tuple[Params, PyTree[FScalar]]]:
     """
     Calculate discovery p-value using profile likelihood ratio.
 
@@ -352,7 +369,7 @@ def compute_discovery_pvalue(
     # update the internal evm parameters with the provided values optimized by the analysis
     # the internal evm_params have much more information that is needed for the fit (like names, constraints, etc), but they are not supposed to be trainable
     params = update(evm_params, parameters)
-    return q0_test(
+    return pvalue_bestfitparams_uncertainties(
         params=params,
         channels=channels,
         test_poi=signal_strength_test_value,
