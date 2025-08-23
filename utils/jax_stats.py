@@ -361,16 +361,10 @@ def build_channel_data_scalar(
             logger.exception(f"Data access error for {channel_name}")
             continue
 
-        # Handle different histogram storage formats
-        if isinstance(data_container, tuple):
-            # Tuple format: (counts, bin_edges)
-            observed_counts, bin_edges = data_container
-            observed_counts = jnp.asarray(observed_counts)
-            bin_edges = jnp.asarray(bin_edges)
-        else:
-            # Assume array is counts only
-            observed_counts = jnp.asarray(data_container)
-            bin_edges = jnp.array([])  # Empty bin edges
+        # Tuple format: (counts, bin_edges)
+        observed_counts, bin_edges = data_container
+        observed_counts = jnp.asarray(observed_counts)
+        bin_edges = jnp.asarray(bin_edges)
 
         # =====================================================================
         # Step 2: Build process templates
@@ -397,13 +391,8 @@ def build_channel_data_scalar(
                 )
                 continue
 
-            # Handle different storage formats
-            if isinstance(nominal_hist, tuple):
-                # Tuple format: (counts, edges) - extract counts only
-                counts = jnp.asarray(nominal_hist[0])
-            else:
-                # Assume it's counts array
-                counts = jnp.asarray(nominal_hist)
+            # Tuple format: (counts, edges) - extract counts only
+            counts = jnp.asarray(nominal_hist[0])
 
             process_templates[process_name] = counts
 

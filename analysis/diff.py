@@ -35,7 +35,8 @@ from tabulate import tabulate
 # =============================================================================
 from analysis.base import Analysis
 from user.cuts import lumi_mask
-from utils.jax_stats import build_channel_data_scalar, compute_discovery_pvalue
+# from utils.jax_stats import build_channel_data_scalar, compute_discovery_pvalue
+from utils.evm_stats import build_channel_data_scalar, compute_discovery_pvalue, fit_params
 from utils.logging import BLUE, GREEN, RED, RESET, _banner
 from utils.mva import JAXNetwork, TFNetwork
 from utils.plot import (
@@ -1491,8 +1492,8 @@ class DifferentiableAnalysis(Analysis):
 
                 info_logger(
                     f"Histogramming: {process} | {variation} | {channel_name} | "
-                    "{obs_name} | Events (Raw): {nevents:,} | "
-                    "Events(Weighted): {ak.sum(weights):,.2f}"
+                    f"{obs_name} | Events (Raw): {nevents:,} | "
+                    f"Events(Weighted): {ak.sum(weights):,.2f}"
                 )
 
                 # Evaluate observable function
@@ -1659,12 +1660,12 @@ class DifferentiableAnalysis(Analysis):
         histograms = nested_defaultdict_to_dict(process_histograms).copy()
 
         # Use relaxed to compute p-value and maximum likelihood estimators
-        pval, mle_pars = compute_discovery_pvalue(
+        pval, aux = compute_discovery_pvalue(
             histograms, self.channels, params
         )
 
         info_logger("✅ p-value calculation complete\n")
-        return pval, mle_pars
+        return pval, aux
 
     # -------------------------------------------------------------------------
     # The analysis workflow being optimised [histograms + statistics]
@@ -1772,14 +1773,14 @@ class DifferentiableAnalysis(Analysis):
         info_logger(
             " ✅ Histogram collection complete. Starting p-value calculation..."
         )
-        pvalue, mle_params = self._calculate_pvalue(
+        pvalue, aux = self._calculate_pvalue(
             histograms_by_process, params["fit"], silent=silent
         )
 
         # Store histograms for later plotting or debugging
         self._set_histograms(histograms_by_process)
 
-        return pvalue, mle_params
+        return pvalue, aux
 
     # -------------------------------------------------------------------------
     # Run the data processing code
@@ -2205,7 +2206,7 @@ class DifferentiableAnalysis(Analysis):
 
             all_parameters = {
                 "aux": auxiliary_parameters,
-                "fit": {"mu": 1.0, "scale_ttbar": 1.0},
+                "fit": fit_params,
             }
 
             # ---------------------------------------------------------------------
@@ -2243,7 +2244,7 @@ class DifferentiableAnalysis(Analysis):
             logger.info(
                 _banner("Running initial p-value computation (traced)")
             )
-            initial_pvalue, mle_parameters = self._run_traced_analysis_chain(
+            initial_pvalue, (mle_parameters, mle_parameters_uncertainties) = self._run_traced_analysis_chain(
                 all_parameters, processed_data
             )
             initial_histograms = self.histograms
@@ -2353,6 +2354,12 @@ class DifferentiableAnalysis(Analysis):
             }
             mle_history = {k: [] for k in mle_parameters}
 
+            # TODO: Add uncertainty tracking for MLE parameters, and do something with them
+            logger.info(f"Uncertainties: {mle_parameters_uncertainties}")
+            mle_unc_history = {
+                k: [] for k in mle_parameters_uncertainties
+            }
+
             # ----------------------------------------------------------------------
             # Optimisation
             # ----------------------------------------------------------------------
@@ -2399,7 +2406,7 @@ class DifferentiableAnalysis(Analysis):
 
                     # Record progress
                     pval = state.value
-                    mle = (
+                    (mle, mle_unc) = (
                         state.aux
                     )  # mle values are auxillary outputs of the optimiser
                     pval_history.append(float(pval))
@@ -2432,7 +2439,7 @@ class DifferentiableAnalysis(Analysis):
                 return state.value, state.aux, parameters
 
             # Run optimiser and collect result
-            final_pval, final_mle_pars, final_params = optimise_and_log(
+            final_pval, (final_mle_pars, final_mle_pars_uncs), final_params = optimise_and_log(
                 n_steps=self.config.jax.max_iterations
             )
 
