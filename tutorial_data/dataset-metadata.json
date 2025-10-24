@@ -1,0 +1,33 @@
+{
+  "title": "GRAEP HEP Tutorial Data: Z' to ttbar Search",
+  "id": "username/graep-hep-tutorial-data",
+  "licenses": [
+    {
+      "name": "CC0-1.0"
+    }
+  ],
+  "keywords": [
+    "physics",
+    "particle physics",
+    "high energy physics",
+    "machine learning",
+    "jax",
+    "optimization",
+    "differentiable programming"
+  ],
+  "description": "Pre-processed CMS Open Data for differentiable HEP analysis tutorial. Contains W+jets background, ttbar background, and Z' signal events with physics features extracted from detector measurements.",
+  "resources": [
+    {
+      "path": "wjets.npz",
+      "description": "W+jets background events (5,000 events, 12 features)"
+    },
+    {
+      "path": "ttbar.npz",
+      "description": "ttbar background events (10,000 events, 12 features)"
+    },
+    {
+      "path": "signal.npz",
+      "description": "Z' signal events at various masses (10,000 events, 12 features)"
+    }
+  ]
+}
