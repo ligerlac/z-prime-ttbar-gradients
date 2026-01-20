@@ -20,6 +20,8 @@ from coffea.nanoevents import NanoAODSchema
 from correctionlib import Correction, CorrectionSet
 
 from utils.schema import GoodObjectMasksConfig
+from utils.tools import get_function_arguments
+from utils.output_manager import OutputDirectoryManager
 
 # -----------------------------
 # Register backends
@@ -60,7 +62,12 @@ def is_jagged(array_like: ak.Array) -> bool:
 class Analysis:
     """Base class for physics analysis implementations."""
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        processed_datasets: Dict[str, List[Tuple[Any, Dict[str, Any]]]],
+        output_manager: OutputDirectoryManager,
+    ) -> None:
         """
         Initialize analysis with configuration for systematics, corrections,
         and channels.
@@ -73,26 +80,18 @@ class Analysis:
             - 'corrections': Correction configurations
             - 'channels': Analysis channel definitions
             - 'general': General settings including output directory
+        processed_datasets : Dict[str, List[Tuple[Any, Dict[str, Any]]]]
+            Pre-processed datasets from skimming (required)
+        output_manager : OutputDirectoryManager
+            Centralized output directory manager (required)
         """
         self.config = config
         self.channels = config.channels
         self.systematics = config.systematics
         self.corrections = config.corrections
+        self.processed_datasets = processed_datasets
+        self.output_manager = output_manager
         self.corrlib_evaluators = self._load_correctionlib()
-        self.dirs = self._prepare_dirs()
-
-    def _prepare_dirs(self) -> Dict[str, Path]:
-        """
-        Create output directories used by the analysis.
-
-        Returns
-        -------
-        Dict[str, Path]
-            Dictionary containing directory paths
-        """
-        output_dir = Path(self.config.general.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        return {"output": output_dir}
 
     def _load_correctionlib(self) -> Dict[str, CorrectionSet]:
         """
@@ -164,7 +163,7 @@ class Analysis:
         """
         good_objects = {}
         for mask_config in masks:
-            mask_args = self._get_function_arguments(
+            mask_args = get_function_arguments(
                 mask_config.use,
                 object_copies,
                 function_name=mask_config.function.__name__,
@@ -360,7 +359,7 @@ class Analysis:
             Result of operation
 
         Raises
-        ------
+        -------
         ValueError
             For unsupported operations
         """
@@ -370,60 +369,6 @@ class Analysis:
             return left_operand * right_operand
         else:
             raise ValueError(f"Unsupported operation: '{operation}'")
-
-    def _get_function_arguments(
-        self,
-        arg_spec: List[Tuple[str, Optional[str]]],
-        objects: Dict[str, ak.Array],
-        function_name: Optional[str] = "generic_function",
-    ) -> List[ak.Array]:
-        """
-        Prepare function arguments from object dictionary.
-
-        Parameters
-        ----------
-        arg_spec : List[Tuple[str, Optional[str]]]
-            List of (object, field) specifications
-        objects : Dict[str, ak.Array]
-            Object dictionary
-
-        Returns
-        -------
-        List[ak.Array]
-            Prepared arguments
-        """
-
-        def raise_error(field_name: str) -> None:
-            """
-            Raise KeyError if object is missing in objects dictionary.
-
-            Parameters
-            ----------
-            field_name : str
-                Missing field name
-            """
-            logger.error(
-                f"Field '{field_name}' needed for {function_name} \
-                  is not found in objects dictionary"
-            )
-            raise KeyError(
-                f"Missing field: {field_name}, function: {function_name}"
-            )
-
-        args = []
-        for obj_name, field_name in arg_spec:
-            if field_name:
-                try:
-                    args.append(objects[obj_name][field_name])
-                except KeyError:
-                    raise_error(f"{obj_name}.{field_name}")
-            else:
-                try:
-                    args.append(objects[obj_name])
-                except KeyError:
-                    raise_error(obj_name)
-
-        return args
 
     def _get_target_arrays(
         self,
@@ -516,7 +461,7 @@ class Analysis:
                 continue
 
             # Prepare arguments and targets
-            args = self._get_function_arguments(
+            args = get_function_arguments(
                 correction.use,
                 object_copies,
                 function_name=f"correction::{correction.name}",
@@ -599,7 +544,7 @@ class Analysis:
             return weights
 
         # Prepare arguments
-        args = self._get_function_arguments(
+        args = get_function_arguments(
             systematic.use,
             object_copies,
             function_name=f"systematic::{systematic.name}",
@@ -663,7 +608,7 @@ class Analysis:
                 continue
 
             logger.debug("Computing ghost observables: %s", ghost.names)
-            args = self._get_function_arguments(
+            args = get_function_arguments(
                 ghost.use, object_copies, function_name=ghost.function.__name__
             )
             outputs = ghost.function(*args)

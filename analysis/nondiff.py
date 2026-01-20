@@ -3,16 +3,13 @@ import logging
 import os
 import warnings
 from collections import defaultdict
-from typing import Any, Literal, Optional
-
+from typing import Any, Literal, Optional, Dict, List, Tuple
 import awkward as ak
 import cabinetry
 import hist
 import numpy as np
-import uproot
 import vector
 from coffea.analysis_tools import PackedSelection
-from coffea.nanoevents import NanoAODSchema, NanoEventsFactory
 
 from analysis.base import Analysis
 from user.cuts import lumi_mask
@@ -20,8 +17,9 @@ from utils.output_files import (
     save_histograms_to_pickle,
     save_histograms_to_root,
 )
-from utils.preproc import pre_process_dak, pre_process_uproot
+from utils.output_manager import OutputDirectoryManager
 from utils.stats import get_cabinetry_rebinning_router
+from utils.tools import get_function_arguments
 
 # -----------------------------
 # Register backends
@@ -35,47 +33,28 @@ vector.register_awkward()
 logger = logging.getLogger("NonDiffAnalysis")
 logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 
-NanoAODSchema.warn_missing_crossrefs = False
-warnings.filterwarnings("ignore", category=FutureWarning, module="coffea.*")
-
-
 # -----------------------------
 # ZprimeAnalysis Class Definition
 # -----------------------------
 class NonDiffAnalysis(Analysis):
 
-    def __init__(self, config: dict[str, Any]) -> None:
+    def __init__(self, config: dict[str, Any], processed_datasets: Dict[str, List[Tuple[Any, Dict[str, Any]]]], output_manager: OutputDirectoryManager) -> None:
         """
-        Initialize ZprimeAnalysis with configuration for systematics, corrections,
-        and channels.
+        Initialize ZprimeAnalysis with configuration and processed datasets.
 
         Parameters
         ----------
         config : dict
             Configuration dictionary with 'systematics', 'corrections', 'channels',
             and 'general'.
+        processed_datasets : Dict[str, List[Tuple[Any, Dict[str, Any]]]]
+            Pre-processed datasets from skimming (required)
+        output_manager : OutputDirectoryManager
+            Centralized output directory manager (required)
         """
-        super().__init__(config)
+        super().__init__(config, processed_datasets, output_manager)
         self.nD_hists_per_region = self._init_histograms()
 
-    def _prepare_dirs(self):
-        # 1) create top-level output
-        super()._prepare_dirs()
-
-        out = self.dirs["output"]
-
-        # 2) histograms lives under <output>/histograms
-        (out / "histograms").mkdir(parents=True, exist_ok=True)
-
-        # 3) cabinetry workspaces & stats
-        (out / "statistics").mkdir(parents=True, exist_ok=True)
-
-        self.dirs.update(
-            {
-                "histograms": out / "histograms",
-                "statistics": out / "statistics",
-            }
-        )
 
     def _init_histograms(self) -> dict[str, dict[str, hist.Hist]]:
         """
@@ -174,7 +153,7 @@ class NonDiffAnalysis(Analysis):
             logger.info(f"Applying selection for {channel_name} in {process}")
             mask = 1
             if (selection_funciton := channel.selection.function) is not None:
-                selection_args = self._get_function_arguments(
+                selection_args = get_function_arguments(
                     channel.selection.use,
                     object_copies,
                     function_name=channel.selection.function.__name__,
@@ -209,9 +188,9 @@ class NonDiffAnalysis(Analysis):
 
             if process != "data":
                 weights = (
-                    events[mask].genWeight
+                    events[mask][self.config.general.weight_branch]
                     * xsec_weight
-                    / abs(events[mask].genWeight)
+                    / abs(events[mask][self.config.general.weight_branch])
                 )
             else:
                 weights = np.ones(ak.sum(mask))
@@ -230,7 +209,7 @@ class NonDiffAnalysis(Analysis):
             for observable in channel.observables:
                 observable_name = observable.name
                 logger.info(f"Computing observable {observable_name}")
-                observable_args = self._get_function_arguments(
+                observable_args = get_function_arguments(
                     observable.use,
                     object_copies_channel,
                     function_name=observable.function.__name__,
@@ -280,7 +259,7 @@ class NonDiffAnalysis(Analysis):
         obj_copies = self.apply_object_masks(obj_copies)
 
         # Apply baseline selection
-        baseline_args = self._get_function_arguments(
+        baseline_args = get_function_arguments(
             self.config.baseline_selection.use,
             obj_copies,
             function_name=self.config.baseline_selection.function.__name__,
@@ -363,9 +342,7 @@ class NonDiffAnalysis(Analysis):
         # build the workspace
         ws = cabinetry.workspace.build(cabinetry_config)
         # save the workspace
-        workspace_path = self.config.general.output_dir + "/statistics/"
-        os.makedirs(workspace_path, exist_ok=True)
-        workspace_path += "workspace.json"
+        workspace_path = self.output_manager.get_statistics_dir() / "workspace.json"
         cabinetry.workspace.save(ws, workspace_path)
         # build the model and data
         model, data = cabinetry.model_utils.model_and_data(ws)
@@ -382,77 +359,29 @@ class NonDiffAnalysis(Analysis):
 
         return data, results, prefit_prediction, postfit_prediction
 
-    def run_analysis_chain(self, fileset):
+    def run_analysis_chain(self):
+        """
+        Run the complete non-differentiable analysis chain using pre-processed datasets.
+        """
         config = self.config
-        for dataset, content in fileset.items():
-            metadata = content["metadata"]
-            metadata["dataset"] = dataset
-            process_name = metadata["process"]
-            if (req_processes := config.general.processes) is not None:
-                if process_name not in req_processes:
-                    continue
 
-            os.makedirs(
-                f"{config.general.output_dir}/{dataset}", exist_ok=True
-            )
+        if not self.processed_datasets:
+            raise ValueError("No processed datasets provided to analysis")
 
+        # Loop over processed datasets
+        for dataset_name, events_list in self.processed_datasets.items():
             logger.info("========================================")
-            logger.info(f"🚀 Processing dataset: {dataset}")
+            logger.info(f"🚀 Processing dataset: {dataset_name}")
 
-            for idx, (file_path, tree) in enumerate(content["files"].items()):
-                output_dir = (
-                    f"output/{dataset}/file__{idx}/"
-                    if not config.general.preprocessed_dir
-                    else f"{config.general.preprocessed_dir}/{dataset}/file__{idx}/"
-                )
-                if (
-                    config.general.max_files != -1
-                    and idx >= config.general.max_files
-                ):
-                    continue
-                if config.general.run_preprocessing:
-                    logger.info(f"🔍 Preprocessing input file: {file_path}")
-                    logger.info(f"➡️  Writing to: {output_dir}")
-                    if config.general.preprocessor == "uproot":
-                        pre_process_uproot(
-                            file_path,
-                            tree,
-                            output_dir,
-                            config,
-                            is_mc=(dataset != "data"),
-                        )
-                    elif config.general.preprocessor == "dask":
-                        pre_process_dak(
-                            file_path,
-                            tree,
-                            output_dir + f"/part{idx}.root",
-                            config,
-                            is_mc=(dataset != "data"),
-                        )
+            # Process each (events, metadata) tuple
+            if config.general.run_histogramming:
+                for events, metadata in events_list:
+                    logger.info(f"📘 Processing events for {dataset_name}")
+                    logger.info("📈 Processing for non-differentiable analysis")
+                    self.process(events, metadata)
+                    logger.info("📈 Non-differentiable histogram-filling complete.")
 
-                skimmed_files = glob.glob(f"{output_dir}/part*.root")
-                skimmed_files = [f"{f}:{tree}" for f in skimmed_files]
-                remaining = sum(
-                    uproot.open(f).num_entries for f in skimmed_files
-                )
-                logger.info(
-                    f"✅ Events retained after filtering: {remaining:,}"
-                )
-                if config.general.run_histogramming:
-                    for skimmed in skimmed_files:
-                        logger.info(f"📘 Processing skimmed file: {skimmed}")
-                        logger.info(
-                            "📈 Processing for non-differentiable analysis"
-                        )
-                        events = NanoEventsFactory.from_root(
-                            skimmed, schemaclass=NanoAODSchema, delayed=False
-                        ).events()
-                        self.process(events, metadata)
-                        logger.info(
-                            "📈 Non-differentiable histogram-filling complete."
-                        )
-
-            logger.info(f"🏁 Finished dataset: {dataset}\n")
+            logger.info(f"🏁 Finished dataset: {dataset_name}\n")
 
         # Report end of processing
         logger.info("✅ All datasets processed.")
@@ -461,11 +390,11 @@ class NonDiffAnalysis(Analysis):
         if config.general.run_histogramming:
             save_histograms_to_root(
                 self.nD_hists_per_region,
-                output_file=f"{config.general.output_dir}/histograms/histograms.root",
+                output_file=self.output_manager.get_histograms_dir() / "histograms.root",
             )
             save_histograms_to_pickle(
                 self.nD_hists_per_region,
-                output_file=f"{config.general.output_dir}/histograms/histograms.pkl",
+                output_file=self.output_manager.get_histograms_dir() / "histograms.pkl",
             )
         # Run statistics for non-differentiable analysis
         if config.general.run_statistics:

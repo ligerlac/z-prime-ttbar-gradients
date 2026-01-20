@@ -22,88 +22,61 @@ This section guides you through running the default analysis configuration provi
 
 Before running, you must set up the Python environment and install the required dependencies. The recommended method is to use Pixi.
 
-##### Using Pixi
+**Option 1: Interactive Development with JupyterLab**
+```bash
+# Install Pixi if you haven't already
+curl -fsSL https://pixi.sh/install.sh | bash
 
-1. Install [Pixi](https://pixi.sh/latest/installation/).
-2. Run
-
-```
+# Launch JupyterLab with the full environment activated
 pixi run start
 ```
 
-from the top level of the repository.
-This will launch a JupyterLab interface with the environment described the by `pixi.toml` Pixi manifest and instantiated in the `pixi.lock` lock file activated.
-
-To interactively use the environment in your local machine's shell run
-
-```
-pixi shell
+**Option 2: Command-line Environment (Recommended for Analysis)**
+```bash
+# Activate a conda-like shell environment
+source pixi_activate.sh
 ```
 
-from the top level of the repository.
+The `pixi_activate.sh` script provides a traditional conda-like experience, activating the environment described in `pixi.toml` and `pixi.lock` for your current shell session. This is the recommended approach for running the analysis from the command line.
 
-##### Using `conda`
+#### Data Preparation
 
-The `environment.yml` file contains all the necessary packages. Create and activate the conda environment with the following commands:
+The analysis workflow includes metadata generation and data skimming steps. The metadata generation uses coffea's preprocessing tools to extract work-items (file chunks with entry ranges and metadata) from your dataset files. These work-items are then processed during skimming to apply event selections and create filtered output files.
 
 ```bash
-conda env create -f environment.yml
-conda activate zprime_diff_analysis
+# Full workflow: generate metadata, skim data, and run analysis (default)
+python analysis.py
+
+# Only generate metadata and skim data (no analysis)
+python analysis.py general.analysis=skip
+
+# Use existing metadata and skimmed files for analysis
+python analysis.py general.run_metadata_generation=False general.run_skimming=False
+
+# Generate fresh metadata but use existing skimmed files
+python analysis.py general.run_skimming=False
 ```
 
-##### Using `pip`
 
-We also provide a `requirements.txt` file, you can still leverage `conda` for environment management:
-
-```bash
-# Create a new environment with Python 3.10 (or adjust version as needed)
-conda create -n zprime_diff_analysis python=3.10
-
-# Activate the environment
-conda activate zprime_diff_analysis
-
-# Install all dependencies from requirements.txt
-pip install -r requirements.txt
-```
-Alternatively, you can use Python’s built-in virtual environment module:
-
-```bash
-# Create a virtual environment in a folder named .venv
-python3 -m venv .venv
-
-# Activate the virtual environment
-# On macOS/Linux:
-source .venv/bin/activate
-
-# Install dependencies
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-#### Data Pre-processing
-
-The analysis expects pre-processed data files. If you do not have them, you can generate them by running the pre-processing step. This will download the necessary data from the CERN Open Data Portal and skim it according to the configuration.
-
-```bash
-# This command overrides the default config to run only the pre-processing step.
-# It may take a while to download and process the data.
-python run.py general.run_preprocessing=True general.run_mva_training=False general.analysis=nondiff general.run_histogramming=False general.run_statistics=False
-```
+After the first run, you can set `general.run_metadata_generation=False` to read from existing metadata files, and `general.run_skimming=False` to use existing skimmed data, significantly speeding up subsequent runs.
 
 ### 2. Run the Differentiable Analysis
 
-Once the pre-processed data is available, you can run the main analysis with a single command:
+Once the skimmed data is available, you can run the main analysis with a single command:
 
 ```bash
-python run.py
+python analysis.py
 ```
 
 ### 3. What is Happening?
 
 The default configuration (`user/configuration.py`) is set up to perform a differentiable analysis. The command above will:
-1.  **MVA Pre-training**: First, it trains a small, JAX-based neural network to distinguish between `W+jets` and `ttbar` background events. The trained model parameters are saved to disk.
-2.  **Differentiable Optimisation**: It then runs the main analysis optimisation loop. The goal is to find the selection cuts that maximise the statistical significance of the Z' signal. At each step, it calculates the gradient of the significance with respect to the cut thresholds (e.g., `met_threshold`, `btag_threshold`) and uses the `optax` optimiser to update them.
-3.  **Outputs**: The analysis will produce plots in the `outputs/` directory showing the evolution of the parameters and significance during optimisation, along with the final histograms. The final optimised significance will be printed to the console.
+1.  **Output Directory Setup**: The framework creates a centralized `OutputDirectoryManager` that handles all output paths with proper fallback logic for metadata and skimmed files. This ensures consistent directory organization across all analysis components.
+2.  **Metadata Generation**: First, it uses coffea's preprocessing tools to extract work-items from your dataset listing files, creating JSON metadata files with file paths, entry ranges, and event counts.
+3.  **Data Skimming**: It processes the work-items in parallel using `dask.bag`, applying your skimming selection to filter events and create output ROOT files organised by dataset.
+4.  **MVA Pre-training**: If enabled, it trains a small, JAX-based neural network to distinguish between `W+jets` and `ttbar` background events. The trained model parameters are saved to disk.
+5.  **Differentiable Optimisation**: It then runs the main analysis optimisation loop. The goal is to find the selection cuts that maximise the statistical significance of the Z' signal. At each step, it calculates the gradient of the significance with respect to the cut thresholds (e.g., `met_threshold`, `btag_threshold`) and uses the `optax` optimiser to update them.
+6.  **Outputs**: The analysis will produce plots in the configured output directories showing the evolution of the parameters and significance during optimisation, along with the final histograms. The final optimised significance will be printed to the console.
 
 ## For Users: What You Need to Know
 
@@ -129,9 +102,17 @@ The default configuration (`user/configuration.py`) is set up to perform a diffe
   - [1. The Configuration File (`user/configuration.py`)](#1-the-configuration-file-userconfigurationpy)
   - [2. Defining Analysis Logic](#2-defining-analysis-logic)
   - [3. Running the Analysis](#3-running-the-analysis)
+- [Skimming Integration](#skimming-integration)
+  - [Usage Modes](#usage-modes)
+  - [Dataset Configuration](#dataset-configuration)
+  - [Skimming Configuration](#skimming-configuration)
+  - [Integration](#integration)
+  - [Running](#running)
 - [Configuration Reference](#configuration-reference)
   - [`general` Block](#general-block)
   - [`preprocess` Block](#preprocess-block)
+  - [`datasets` Block](#datasets-block)
+  - [`skimming` Block](#skimming-block)
   - [`jax` Block](#jax-block)
   - [`mva` Block](#mva-block)
   - [`channels` Block](#channels-block)
@@ -157,15 +138,17 @@ The central idea is to treat the entire analysis chain—from event selection to
 
 ### The Differentiable Workflow
 
-The analysis is orchestrated by the `DifferentiableAnalysis` class in `analysis/diff.py`. The workflow proceeds as follows:
+The analysis is orchestrated by the `DifferentiableAnalysis` class in `analysis/diff.py`, which receives an `OutputDirectoryManager` instance to handle all file I/O operations. The workflow proceeds as follows:
 
-1.  **Preprocessing**: Raw NanoAOD files are skimmed to keep only necessary branches and apply a baseline selection. This is a one-time, non-differentiable step to reduce data volume.
-2.  **MVA Pre-training (Optional)**: If configured, a Machine Learning model (e.g., a neural network) is trained on pre-selected data to serve as a powerful discriminator. The weights of this model can themselves become optimizable parameters.
-3.  **Event Processing**: For each event, object corrections and systematic variations are applied.
-4.  **Differentiable Histogramming**: Instead of making hard cuts, we apply "soft" selections using sigmoid functions. This results in a per-event weight. Histograms are filled using a Kernel Density Estimation (KDE) approach, which is smooth and differentiable.
-5.  **Statistical Significance**: The `relaxed` library is used to construct a statistical model from the histograms and compute an asymptotic significance (a differentiable quantity).
-6.  **Gradient Calculation**: `JAX` computes the gradient of the significance with respect to all optimizable parameters (cut thresholds, MVA weights, etc.).
-7.  **Parameter optimisation**: The `optax` optimizer takes a step in the direction of the gradient to update the parameters, aiming to maximize significance. Steps 4-7 are repeated for a set number of iterations.
+1.  **Output Directory Setup**: The `OutputDirectoryManager` is initialized with user-specified or default paths, creating necessary directories and validating existing ones.
+2.  **Preprocessing**: Raw NanoAOD files are skimmed to keep only necessary branches and apply a baseline selection. This is a one-time, non-differentiable step to reduce data volume.
+3.  **MVA Pre-training (Optional)**: If configured, a Machine Learning model (e.g., a neural network) is trained on pre-selected data to serve as a powerful discriminator. The weights of this model can themselves become optimizable parameters.
+4.  **Event Processing**: For each event, object corrections and systematic variations are applied.
+5.  **Differentiable Histogramming**: Instead of making hard cuts, we apply "soft" selections using sigmoid functions. This results in a per-event weight. Histograms are filled using a Kernel Density Estimation (KDE) approach, which is smooth and differentiable.
+6.  **Statistical Significance**: The `relaxed` library is used to construct a statistical model from the histograms and compute an asymptotic significance (a differentiable quantity).
+7.  **Gradient Calculation**: `JAX` computes the gradient of the significance with respect to all optimizable parameters (cut thresholds, MVA weights, etc.).
+8.  **Parameter optimisation**: The `optax` optimizer takes a step in the direction of the gradient to update the parameters, aiming to maximize significance. Steps 5-8 are repeated for a set number of iterations.
+9.  **Output Generation**: Results, plots, and models are saved using the `OutputDirectoryManager` to ensure consistent organization.
 
 ---
 
@@ -265,31 +248,80 @@ def Zprime_softcuts_jax_workshop(
 
 With the configuration and functions in place, you can run the analysis using a top-level script.
 
-#### Example `run.py` script
-A typical script would:
+#### Example `analysis.py` workflow
+The main analysis script orchestrates the complete workflow:
 1.  Load the base configuration from `user/configuration.py`.
 2.  Optionally, override configuration settings from the command line.
-3.  Construct the fileset of data samples.
-4.  Instantiate the `DifferentiableAnalysis` class from `analysis/diff.py`.
-5.  Call the main `run_analysis_optimisation` method.
+3.  Generate metadata and work-items from dataset listings.
+4.  Process work-items through skimming (if enabled).
+5.  Run the requested analysis (differentiable, non-differentiable, or both).
 
 ```python
-# In a hypothetical run.py
+# In analysis.py (simplified)
 import sys
 from analysis.diff import DifferentiableAnalysis
+from analysis.nondiff import NonDiffAnalysis
 from user.configuration import config
-from utils.schema import load_config_with_restricted_cli
-from utils.input_files import construct_fileset
+from utils.schema import Config, load_config_with_restricted_cli
+from utils.datasets import ConfigurableDatasetManager
+from utils.metadata_extractor import NanoAODMetadataGenerator
+from utils.skimming import process_workitems_with_skimming
+from utils.output_manager import OutputDirectoryManager
 
 if __name__ == "__main__":
-    # Load base config and override with CLI args
-    cfg = load_config_with_restricted_cli(config, sys.argv[1:])
+    # Load and validate configuration
+    cli_args = sys.argv[1:]
+    full_config = load_config_with_restricted_cli(config, cli_args)
+    config_obj = Config(**full_config)
 
-    fileset = construct_fileset(n_files_max_per_sample=cfg.general.max_files)
-    analysis = DifferentiableAnalysis(cfg)
-    final_histograms, final_significance = analysis.run_analysis_optimisation(fileset)
+    # Create centralized output directory manager
+    output_manager = OutputDirectoryManager(
+        root_output_dir=config_obj.general.output_dir,
+        cache_dir=config_obj.general.cache_dir,
+        metadata_dir=config_obj.general.metadata_dir,
+        skimmed_dir=config_obj.general.skimmed_dir
+    )
 
-    print(f"optimisation complete! Final significance: {final_significance:.3f}")
+    # Initialize dataset manager and metadata generator
+    dataset_manager = ConfigurableDatasetManager(config_obj.datasets)
+    metadata_generator = NanoAODMetadataGenerator(
+        dataset_manager=dataset_manager,
+        output_manager=output_manager
+    )
+
+    # Process data and run analysis
+    processed_datasets = process_workitems_with_skimming(
+        workitems, config_obj, output_manager, fileset, nanoaods_summary
+    )
+
+    # Run analysis with output manager
+    if config_obj.general.analysis == "diff":
+        analysis = DifferentiableAnalysis(config_obj, processed_datasets, output_manager)
+    else:
+        analysis = NonDiffAnalysis(config_obj, processed_datasets, output_manager)
+    cli_args = sys.argv[1:]
+    full_config = load_config_with_restricted_cli(config, cli_args)
+    config = Config(**full_config)
+
+    # Set up dataset management
+    dataset_manager = ConfigurableDatasetManager(config.datasets)
+
+    # Generate metadata and work-items
+    generator = NanoAODMetadataGenerator(dataset_manager=dataset_manager)
+    generator.run(generate_metadata=config.general.run_metadata_generation)
+
+    # Process work-items with skimming
+    processed_datasets = process_workitems_with_skimming(
+        generator.workitems, config, generator.fileset, generator.nanoaods_summary
+    )
+
+    # Run analysis based on mode
+    if config.general.analysis == "diff":
+        analysis = DifferentiableAnalysis(config, processed_datasets)
+        analysis.run_analysis_optimisation()
+    elif config.general.analysis == "nondiff":
+        analysis = NonDiffAnalysis(config, processed_datasets)
+        analysis.run_analysis_chain()
 ```
 
 #### Overriding Configuration from the Command Line
@@ -298,7 +330,7 @@ You can override certain configuration options directly from the command line us
 
 **Example:**
 ```python
-python run.py general.max_files=10 general.run_systematics=False
+python analysis.py general.max_files=10 general.run_systematics=False
 ```
 
 **Important Limitations:**
@@ -311,10 +343,142 @@ The allowed top-level keys for CLI overrides are:
 
 Attempting to override other keys (e.g., `jax.params`) will result in an error. To change these, you must edit the `user/configuration.py` file directly.
 
+## Skimming Integration
+
+The framework provides an integrated skimming system that handles data preprocessing before analysis using a work-item-based approach.
+
+### Dataset Configuration
+
+The dataset manager expects text files containing lists of ROOT file paths. Configure datasets in `user/skim.py`:
+
+```python
+# user/skim.py
+datasets_config = [
+    {
+        "name": "signal",
+        "directory": "datasets/signal/m2000_w20/",  # Directory containing .txt files
+        "cross_section": 1.0,
+        "file_pattern": "*.txt",  # Pattern to match listing files
+        "tree_name": "Events",
+        "weight_branch": "genWeight"
+    },
+    {
+        "name": "ttbar_semilep",
+        "directory": "datasets/ttbar_semilep/",
+        "cross_section": 831.76 * 0.438,
+        "file_pattern": "*.txt",
+        "tree_name": "Events",
+        "weight_branch": "genWeight"
+    },
+    # ... other datasets
+]
+
+dataset_manager_config = {
+    "datasets": datasets_config,
+    "max_files": None  # No limit by default
+}
+```
+
+Each dataset directory should contain `.txt` files where each line is a path to a ROOT file.
+
+### Skimming Configuration
+
+Define your skimming selection function and configure it:
+
+```python
+# user/skim.py
+def default_skim_selection(muons, puppimet, hlt):
+    """Default skimming selection function."""
+    selection = PackedSelection()
+
+    selection.add("trigger", hlt.TkMu50)
+    selection.add("met_cut", puppimet.pt > 50)
+    selection.add("skim", selection.all("trigger", "met_cut"))
+
+    return selection
+
+skimming_config = {
+    "selection_function": default_skim_selection,
+    "selection_use": [("Muon", None), ("PuppiMET", None), ("HLT", None)],
+    "chunk_size": 100_000,
+    "tree_name": "Events",
+}
+```
+
+### Integration
+
+Connect the configurations in `user/configuration.py`:
+
+```python
+# user/configuration.py
+from user.skim import dataset_manager_config, skimming_config
+
+config = {
+    "general": {
+        "output_dir": "example/outputs/",  # Root directory for all outputs
+        # Optional: specify existing directories to read from
+        # "metadata_dir": "/path/to/existing/metadata/",
+        # "skimmed_dir": "/path/to/existing/skimmed/",
+        "run_skimming": True,  # Enabled by default
+        "run_metadata_generation": True,
+    },
+    "preprocess": {
+        "branches": {
+            "Muon": ["pt", "eta", "phi", "mass", "tightId"],
+            "Jet": ["pt", "eta", "phi", "mass", "btagDeepB"],
+            "PuppiMET": ["pt", "phi"],
+            "HLT": ["TkMu50"],
+            # ... other branches
+        },
+        "skimming": skimming_config
+    },
+    "datasets": dataset_manager_config,
+    # ... rest of configuration
+}
+```
+
+### Running
+
+```bash
+# Full workflow (default): metadata generation, skimming, and analysis
+python analysis.py
+
+# Skim only (no analysis)
+python analysis.py general.analysis=skip
+
+# Use existing metadata and skimmed files
+python analysis.py general.run_metadata_generation=False general.run_skimming=False
+```
+
+The framework automatically:
+- Generates metadata using coffea's preprocessing tools to create work-items
+- Processes work-items in parallel using dask.bag for robust failure handling
+- Creates output directories following the pattern `{output_dir}/skimmed/{dataset}/file__{idx}/part_{chunk}.root`
+- Merges and caches events from multiple output files per dataset for efficient analysis
+
+---
+
 ## Configuration Reference
 
 The analysis is controlled by a central configuration dictionary, typically defined in `user/configuration.py`.
 The structure of this configuration is validated against a Pydantic schema in `utils/schema.py`.
+
+### Output Directory Management
+
+The framework uses a centralized `OutputDirectoryManager` to handle all output paths consistently. This manager provides:
+
+- **Centralized path management**: All output directories are managed through a single interface
+- **Fallback logic**: Automatic fallback to standard locations when user-specified paths are not provided
+- **Path normalization**: Proper handling of user home directory (`~`) expansion and absolute path resolution
+- **Cross-platform compatibility**: Uses system temporary directories instead of hardcoded paths
+
+**Key configuration options in the `general` block:**
+- `output_dir`: Root directory for all analysis outputs (default: `"output/"`)
+- `cache_dir`: Cache directory for temporary files (default: uses system temp directory with `"graep"` subdirectory)
+- `metadata_dir`: Directory for metadata JSON files (default: `output_dir/metadata/`)
+- `skimmed_dir`: Directory for skimmed ROOT files (default: `output_dir/skimmed/`)
+
+The manager automatically creates directories as needed and validates user-specified paths to ensure they exist and are directories.
 
 Below is a comprehensive reference for all available options, grouped by their top-level key.
 
@@ -329,19 +493,19 @@ Global settings that control the overall workflow of the analysis.
 | `lumi`              | `float`      | *Required*                  | Integrated luminosity in inverse picobarns (/pb).         |
 | `weights_branch`    | `str`        | *Required*                  | Branch name containing event weights (e.g. `genWeight`).  |
 | `lumifile`          | `str`        | *Required*                  | Path to the JSON file containing certified good luminosity sections (Golden JSON). |
-| `analysis`          | `str`        | `"nondiff"`                 | Analysis mode: `"nondiff"`, `"diff"`, or `"both"`.        |
-| `max_files`         | `int`        | `-1`                        | Max number of files per dataset. `-1` = unlimited.        |
-| `run_preprocessing` | `bool`       | `False`                     | Run NanoAOD skimming and filtering.                       |
+| `analysis`          | `str`        | `"nondiff"`                 | Analysis mode: `"nondiff"`, `"diff"`, `"both"`, or `"skip"`. |
+| `run_skimming`      | `bool`       | `True`                      | If `True`, run the initial NanoAOD skimming and filtering step. |
+| `run_metadata_generation` | `bool` | `True`                      | If `True`, run the work-items generation step before constructing fileset. |
 | `run_histogramming` | `bool`       | `True`                      | Run histogramming for non-differentiable analysis.        |
 | `run_statistics`    | `bool`       | `True`                      | Run statistical analysis step (e.g. `cabinetry` fit).     |
 | `run_systematics`   | `bool`       | `True`                      | Process systematic variations for non-differentiable analysis. |
 | `run_plots_only`    | `bool`       | `False`                     | Generate plots from cached results only.                  |
 | `run_mva_training`  | `bool`       | `False`                     | Run MVA model pre-training.                               |
 | `read_from_cache`   | `bool`       | `True`                      | Read preprocessed data from cache if available.           |
-| `output_dir`        | `str`        | `"output/"`                 | Root directory for all analysis outputs.                  |
-| `preprocessor`      | `str`        | `"uproot"`                  | Preprocessing engine: `"uproot"` or `"dask"`.            |
-| `preprocessed_dir`  | `str`        | `None`                      | Directory with pre-processed (skimmed) files.            |
-| `cache_dir`         | `str`        | `"/tmp/gradients_analysis/"`| Cache directory for differentiable analysis.             |
+| `output_dir`        | `str`        | `"output/"`                 | **Root directory for all analysis outputs.** All other outputs are organised as subdirectories under this path. |
+| `cache_dir`         | `str`        | `"/tmp/graep/"`| Cache directory for temporary files during differentiable analysis. |
+| `metadata_dir`      | `str`        | `None`                      | **Optional.** Directory containing existing metadata JSON files. If not specified, looks under `output_dir/metadata/`. |
+| `skimmed_dir`       | `str`        | `None`                      | **Optional.** Directory containing existing skimmed ROOT files. If not specified, looks under `output_dir/skimmed/`. |
 | `processes`         | `list[str]`  | `None`                      | Limit analysis to specific processes.                     |
 | `channels`          | `list[str]`  | `None`                      | Limit analysis to specific channels.                      |
 
@@ -356,6 +520,46 @@ Settings for the initial data skimming and filtering step.
 | `branches`       | `dict`     | *Required*  | Mapping of collection names to branch lists.        |
 | `ignore_missing` | `bool`     | `False`     | Ignore missing branches if `True`.                  |
 | `mc_branches`    | `dict`     | *Required*  | Additional branches for MC samples.                 |
+| `skimming`       | `dict`     | `None`      | Skimming configuration (see `skimming` block below). |
+
+---
+
+### `datasets` Block
+
+Configuration for dataset management and metadata generation.
+
+| Parameter            | Type       | Default           | Description                                    |
+|----------------------|------------|-------------------|------------------------------------------------|
+| `datasets`          | `list[dict]` | *Required*      | List of dataset configurations (see below).   |
+| `max_files`         | `int`      | `None`           | Maximum number of files to process per dataset. |
+
+#### Dataset Configuration
+
+Each dataset in the `datasets` list has the following structure:
+
+| Parameter        | Type       | Default     | Description                                         |
+|------------------|------------|-------------|-----------------------------------------------------|
+| `name`          | `str`      | *Required*  | Unique dataset identifier.                          |
+| `directory`     | `str`      | *Required*  | Path to directory containing `.txt` listing files. |
+| `cross_section` | `float`    | *Required*  | Cross-section in picobarns (pb).                  |
+| `file_pattern`  | `str`      | `"*.txt"`   | Pattern to match listing files in directory.      |
+| `tree_name`     | `str`      | `"Events"`  | ROOT tree name.                                    |
+| `weight_branch` | `str`      | `"genWeight"` | Event weight branch name.                        |
+
+---
+
+### `skimming` Block (part of `preprocess`)
+
+Configuration for the work-item-based skimming step.
+
+| Parameter            | Type       | Default           | Description                                    |
+|----------------------|------------|-------------------|------------------------------------------------|
+| `selection_function` | `Callable` | *Required*        | Selection function that returns a PackedSelection object. |
+| `selection_use`      | `list[tuple]` | *Required*     | List of (object, variable) tuples specifying inputs for the selection function. |
+| `chunk_size`         | `int`      | `100000`         | Number of events to process per chunk (used for configuration compatibility). |
+| `tree_name`          | `str`      | `"Events"`       | ROOT tree name for input and output files.   |
+
+**Note:** Skimmed files are automatically organised under `general.output_dir/skimmed/` following the structure: `{output_dir}/skimmed/{dataset}/file__{idx}/part_X.root`
 
 ---
 
@@ -367,7 +571,7 @@ Configuration for the differentiable analysis workflow.
 |--------------------------|--------------|-------------|--------------------------------------------------------------------|
 | `soft_selection`         | `dict`      | *Required*  | Differentiable selection function.                                 |
 | &nbsp;&nbsp;↳ `function` | `Callable`  | *Required*  | Selection function to apply.                                       |
-| &nbsp;&nbsp;↳ `use`      | `list[str]` | *Required*  | Input variables passed to `function`.                              |
+| &nbsp;&nbsp;↳ `use`      | `list[str]` | *Required* | Inputs to the selection function.                                  |
 | `params`                 | `dict`      | *Required*  | Optimizable parameters (e.g. `{'met_threshold': 50.0}`).          |
 | `optimize`               | `bool`      | `True`      | Run gradient-based optimisation if `True`.                         |
 | `learning_rate`          | `float`     | `0.01`      | Default optimizer learning rate.                                   |
@@ -635,9 +839,10 @@ Alongside the differentiable path, the framework fully supports a traditional, n
 
 ## Directory Structure
 
+### Repository Structure
 ```
 ├── user/                    # USER-CONFIGURABLE MODULES - Modify these for your analysis
-│   ├── __init__.py         # Package initialization
+│   ├── __init__.py         # Package initialisation
 │   ├── configuration.py    # Main configuration file for the analysis
 │   ├── cuts.py            # Selection logic (both hard and soft/differentiable)
 │   ├── observables.py     # Physics observables and reconstruction functions
@@ -647,12 +852,17 @@ Alongside the differentiable path, the framework fully supports a traditional, n
 │   ├── diff.py            # Implements the full differentiable analysis workflow
 │   └── nondiff.py         # Implements a traditional, non-differentiable analysis
 ├── utils/                  # FRAMEWORK CODE - Supporting utility functions
+│   ├── datasets.py        # Dataset management and configuration utilities
+│   ├── metadata_extractor.py # NanoAOD metadata extraction and work-item generation
+│   ├── skimming.py        # Work-item-based event skimming and preprocessing
 │   ├── mva.py             # MVA (neural network) model definitions and training logic
 │   ├── schema.py          # Pydantic schemas for validating the configuration
-│   ├── plot.py            # Plotting utilities and visualization functions
+│   ├── plot.py            # Plotting utilities and visualisation functions
 │   ├── stats.py           # Statistical analysis functions
+│   ├── jax_stats.py       # JAX-based statistical analysis functions
+│   ├── output_manager.py  # Centralised output directory management
 │   ├── tools.py           # General utility functions
-│   ├── input_files.py     # File handling utilities
+│   ├── logging.py         # Logging configuration utilities
 │   ├── output_files.py    # Output management utilities
 │   └── ...                # Other helper utilities
 ├── cabinetry/
@@ -661,6 +871,57 @@ Alongside the differentiable path, the framework fully supports a traditional, n
 │   └── ...                # Correction files (e.g., from `correctionlib`)
 └── README.md
 ```
+
+### Output Directory Structure
+
+The framework now uses a **centralised output directory management system** that organises all outputs under a single root directory specified by `general.output_dir`. The default structure is:
+
+```
+output/                      # Root output directory (configurable via general.output_dir)
+├── cache/                   # Temporary files and gradients cache
+├── metadata/                # JSON metadata files (fileset.json, workitems.json, etc.)
+├── skimmed/                 # Skimmed ROOT files organised by dataset
+│   ├── {dataset}/
+│   │   └── file__{idx}/
+│   │       └── part_{chunk}.root
+├── plots/                   # All visualisation outputs
+│   ├── features/            # Feature distribution plots
+│   ├── scores/              # MVA score plots
+│   ├── optimisation/        # Parameter optimisation plots
+│   └── fit/                 # Statistical fit plots
+├── models/                  # Trained MVA models (.pkl files)
+├── histograms/              # Analysis histograms (.root and .pkl files)
+└── statistics/              # Statistical analysis results
+```
+
+#### Flexible Directory Configuration
+
+You can customise where the framework looks for metadata and skimmed files:
+
+```python
+# Use default structure under output_dir
+general_config = {
+    "output_dir": "my_analysis_outputs/",
+}
+
+# Or specify existing directories to read from
+general_config = {
+    "output_dir": "my_analysis_outputs/",
+    "metadata_dir": "/shared/existing/metadata/",  # Read metadata from here
+    "skimmed_dir": "/shared/existing/skimmed/",    # Read skimmed files from here
+}
+```
+
+**Fallback Logic:**
+- If `metadata_dir` is specified, the framework reads metadata from that location
+- If not specified, it looks under `output_dir/metadata/`
+- If neither exists and metadata is needed, the framework will error with a helpful message
+- Same logic applies to `skimmed_dir` and `output_dir/skimmed/`
+
+This design allows you to:
+- **Share preprocessed data** between analyses by pointing to existing directories
+- **Keep outputs organised** in a predictable structure
+- **Easily find results** in one centralised location
 
 ### Key Design Principle
 
@@ -723,7 +984,7 @@ For each optimization step:
 - **Histograms**: Events are binned using Kernel Density Estimation (KDE) - smooth and differentiable
 - **Significance**: Statistical model computes discovery significance using the `relaxed` library
 - **Gradients**: JAX computes gradients of significance w.r.t. all parameters in `config.jax.params`
-- **Updates**: Optimizer (optax) updates parameters to maximize significance
+- **Updates**: Optimiser (optax) updates parameters to maximise significance
 
 ### 6. Parameter Flow Through the System
 ```
@@ -792,4 +1053,3 @@ If you have forked this repository and wish to set up your own Read the Docs dep
 2.  **Import the Repository**: From your Read the Docs dashboard, click on "Import a Project" and select your GitHub repository fork.
 3.  **Configuration**: Read the Docs will automatically detect the `.readthedocs.yaml` file and configure the build process. You should not need to change any settings in the Read the Docs project configuration page.
 4.  **Trigger a Build**: The first build should trigger automatically after importing. Subsequent builds will be triggered by pushing new commits to your repository's default branch. You can monitor the build status and logs in your Read the Docs project dashboard.
-```
