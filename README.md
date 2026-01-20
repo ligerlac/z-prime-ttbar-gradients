@@ -14,63 +14,22 @@ This section guides you through running the default analysis configuration provi
 
 Before running, you must set up the Python environment and install the required dependencies. The recommended method is to use Pixi.
 
-##### Using Pixi
+**Option 1: Interactive Development with JupyterLab**
+```bash
+# Install Pixi if you haven't already
+curl -fsSL https://pixi.sh/install.sh | bash
 
-1. Install [Pixi](https://pixi.sh/latest/installation/).
-2. Run
-
-```
+# Launch JupyterLab with the full environment activated
 pixi run start
 ```
 
-from the top level of the repository.
-This will launch a JupyterLab interface with the environment described the by `pixi.toml` Pixi manifest and instantiated in the `pixi.lock` lock file activated.
-
-To interactively use the environment in your local machine's shell run
-
-```
-pixi shell
-```
-
-from the top level of the repository.
-
-##### Using `conda`
-
-The `environment.yml` file contains all the necessary packages. Create and activate the conda environment with the following commands:
-
+**Option 2: Command-line Environment (Recommended for Analysis)**
 ```bash
-conda env create -f environment.yml
-conda activate zprime_diff_analysis
+# Activate a conda-like shell environment
+source pixi_activate.sh
 ```
 
-##### Using `pip`
-
-We also provide a `requirements.txt` file, you can still leverage `conda` for environment management:
-
-```bash
-# Create a new environment with Python 3.10 (or adjust version as needed)
-conda create -n zprime_diff_analysis python=3.10
-
-# Activate the environment
-conda activate zprime_diff_analysis
-
-# Install all dependencies from requirements.txt
-pip install -r requirements.txt
-```
-Alternatively, you can use Python’s built-in virtual environment module:
-
-```bash
-# Create a virtual environment in a folder named .venv
-python3 -m venv .venv
-
-# Activate the virtual environment
-# On macOS/Linux:
-source .venv/bin/activate
-
-# Install dependencies
-pip install --upgrade pip
-pip install -r requirements.txt
-```
+The `pixi_activate.sh` script provides a traditional conda-like experience, activating the environment described in `pixi.toml` and `pixi.lock` for your current shell session. This is the recommended approach for running the analysis from the command line.
 
 #### Data Preparation
 
@@ -604,7 +563,7 @@ Configuration for the differentiable analysis workflow.
 |--------------------------|--------------|-------------|--------------------------------------------------------------------|
 | `soft_selection`         | `dict`      | *Required*  | Differentiable selection function.                                 |
 | &nbsp;&nbsp;↳ `function` | `Callable`  | *Required*  | Selection function to apply.                                       |
-| &nbsp;&nbsp;↳ `use`      | `list[str]` | *Required*  | Input variables passed to `function`.                              |
+| &nbsp;&nbsp;↳ `use`      | `list[str]` | *Required* | Inputs to the selection function.                                  |
 | `params`                 | `dict`      | *Required*  | Optimizable parameters (e.g. `{'met_threshold': 50.0}`).          |
 | `optimize`               | `bool`      | `True`      | Run gradient-based optimisation if `True`.                         |
 | `learning_rate`          | `float`     | `0.01`      | Default optimizer learning rate.                                   |
@@ -1086,4 +1045,3 @@ If you have forked this repository and wish to set up your own Read the Docs dep
 2.  **Import the Repository**: From your Read the Docs dashboard, click on "Import a Project" and select your GitHub repository fork.
 3.  **Configuration**: Read the Docs will automatically detect the `.readthedocs.yaml` file and configure the build process. You should not need to change any settings in the Read the Docs project configuration page.
 4.  **Trigger a Build**: The first build should trigger automatically after importing. Subsequent builds will be triggered by pushing new commits to your repository's default branch. You can monitor the build status and logs in your Read the Docs project dashboard.
-```
