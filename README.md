@@ -2,8 +2,7 @@
 <tr>
 <td><img src="assets/logo.svg" alt="GRAEP logo" width="200"></td>
 <td>
-<h1>Welcome to GRAEP - </h1>
-<h1>a Differentiable HEP Analysis Framework</h1>
+<h1>Gradient-based End-to-End Physics Analysis Framework</h1>
 </td>
 </tr>
 </table>
