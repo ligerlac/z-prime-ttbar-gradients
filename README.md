@@ -1,11 +1,7 @@
-<table border="0">
-<tr>
-<td><img src="assets/logo.svg" alt="GRAEP logo" width="200"></td>
-<td>
-<h1>Gradient-based End-to-End Physics Analysis Framework</h1>
-</td>
-</tr>
-</table>
+<div style="display: flex; align-items: center; gap: 1rem;">
+  <img src="assets/logo.svg" alt="GRAEP logo" width="200">
+  <h1>Gradient-based End-to-End Physics Analysis Framework</h1>
+</div>
 
 This project is a framework for High-Energy Physics (HEP) analysis that leverages automatic differentiation to optimise analysis selections for maximal statistical significance. It is built on top of the scientific Python ecosystem, including `coffea`, `awkward-array`, and `uproot` for data handling, and `JAX` for gradient-based optimisation.
 
