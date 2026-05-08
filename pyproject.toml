@@ -9,7 +9,7 @@ description = "Differentiable HEP analysis framework."
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -18,8 +18,8 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering",
     "Typing :: Typed",
 ]
@@ -130,7 +130,7 @@ report.exclude_lines = ['pragma: no cover', '\.\.\.', 'if typing.TYPE_CHECKING:'
 
 [tool.mypy]
 files = ["src", "tests"]
-python_version = "3.13"
+python_version = "3.12"
 warn_unreachable = true
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
