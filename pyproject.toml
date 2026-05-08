@@ -1,2 +1,192 @@
-[tool.black]
-line-length = 79
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+
+[project]
+name = "graep"
+description = "Differentiable HEP analysis framework."
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering",
+    "Typing :: Typed",
+]
+dynamic = ["version"]  # version is set in src/graep/__init__.py
+authors = [
+    { name = "MoAly98", email = "mohamed.aly@cern.ch" },
+    { name = "lgerlach", email = "lino.oscar.gerlach@cern.ch" },
+]
+keywords = ["jax", "statistics", "inference", "hep", "physics", "hypothesis-testing"]
+dependencies = [
+    # JAX stack
+    "jax>=0.7.2",
+    "jaxtyping>=0.3.2",
+    "jaxopt>=0.8.4,<0.9",
+    "equinox>=0.13.0,<0.14",
+    "optax>=0.2.4,<0.3",
+    "optimistix>=0.0.10",
+    "orbax-checkpoint>=0.6.0",
+    "treescope>=0.1.0",
+    # Differentiable / statistical inference
+    "evermore>=0.4.1",
+    "relaxed", # source pinned in [tool.uv.sources] (custom git fork)
+    # Statistical model + fitters
+    "cabinetry>=0.6.0,<0.7",
+    "pyhf>=0.7,<0.8",
+    "iminuit>=2.30",
+    # Histograms
+    "hist>=2.8.1,<3",
+    # HEP I/O & event handling
+    "awkward>=2.8.2,<=2.8.6", # 2.8.6 is the last release to keep JAX backend support
+    "uproot>=5.3,<6",
+    "coffea>=2024,<2025",
+    "dask-awkward>=2025.5.0",
+    "xrootd>=5.8.1,<6",
+    "fsspec-xrootd>=0.3.0",
+    "vector>=1.5.1,<2",
+    # Corrections
+    "correctionlib>=2.7.0,<3",
+    # Numerics
+    "numpy>=2.2,<3",
+    "scipy>=1.16,<2",
+    "scikit-learn>=1.7,<2",
+    "numba>=0.61,<0.62",
+    # Plotting
+    "matplotlib>=3.9",
+    "mplhep>=0.4,<0.5",
+    # Config / serialisation
+    "pydantic>=2.11,<3",
+    "omegaconf>=2.3,<3",
+    "cloudpickle>=3.1.1,<4",
+    # User-facing helpers
+    "tqdm>=4.60", # for progress bars
+    "tabulate>=0.9.0",
+    "rich",
+]
+
+
+[dependency-groups]
+test = ["pytest >=9", "pytest-cov >=3", "coverage[toml]"]
+docs = [
+    "sphinx>=7",
+    "sphinx-book-theme",
+    "myst-parser<6",
+    "sphinx-design",
+    "sphinx-togglebutton",
+    "sphinx-copybutton",
+    "sphinx-autodoc-typehints",
+    "myst-nb>=1.4",
+    "sphinxcontrib-mermaid",
+]
+examples = [
+    # Extras for running example notebooks
+    "jupyterlab>=4",
+    "ipykernel>=6",
+]
+dev = [
+    { include-group = "test" },
+    { include-group = "docs" },
+    "ipython",
+    "ruff",
+    "pre_commit",
+    "mypy",
+]
+
+[project.urls]
+Homepage = "https://github.com/MoAly98/graep"
+"Bug Tracker" = "https://github.com/MoAly98/graep/issues"
+Discussions = "https://github.com/MoAly98/graep/discussions"
+Changelog = "https://github.com/MoAly98/graep/releases"
+
+
+[tool.hatch]
+version.path = "src/graep/__init__.py"
+
+
+[tool.pytest.ini_options]
+minversion = "7"
+xfail_strict = true
+addopts = ["-ra", "--strict-config", "--strict-markers"]
+pythonpath = ["src"]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning", # <- remove once equinox publishes a new release (see: https://github.com/patrick-kidger/equinox/commit/5a5bf287f73032201c34ff2c73e73573f8232739)
+]
+log_cli_level = "INFO"
+
+report.exclude_lines = ['pragma: no cover', '\.\.\.', 'if typing.TYPE_CHECKING:']
+
+[tool.mypy]
+files = ["src", "tests"]
+python_version = "3.13"
+warn_unreachable = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+strict = false
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+preview = true
+ignore = [
+    "PLR",     # Design related pylint codes
+    "ISC001",  # flake8-implicit-str-concat: Implicit string concatenation
+    "PLW3201", # Dunder method has no special meaning in Python 3 (treescope uses __treescope_repr__)
+    "RUF002",  # Ambiguous Unicode characters in docstrings (Greek letters are standard in physics)
+    "RUF003",  # Ambiguous Unicode characters in comments (Greek letters are standard in physics)
+    "F722",    # jaxtyping: `Float32[Array, "b c"]` (https://docs.kidger.site/jaxtyping/faq/#flake8-or-ruff-are-throwing-an-error)
+    "UP040",   # PEP 695 type alias syntax (https://peps.python.org/pep-0695/)
+    "UP046",   # PEP 695 generic class syntax
+    "UP047",   # PEP 695 generic function syntax
+]
+select = [
+    "E",
+    "F",
+    "W",    # flake8
+    "B",    # flake8-bugbear
+    "I",    # isort
+    "C4",   # flake8-comprehensions
+    "EM",   # flake8-errmsg
+    "ICN",  # flake8-import-conventions
+    "ISC",  # flake8-implicit-str-concat
+    "G",    # flake8-logging-format
+    "PGH",  # pygrep-hooks
+    "PIE",  # flake8-pie
+    "PL",   # pylint
+    "PT",   # flake8-pytest-style
+    "PTH",  # flake8-use-pathlib
+    "RET",  # flake8-return
+    "RUF",  # Ruff-specific
+    "SIM",  # flake8-simplify
+    "UP",   # pyupgrade
+    "YTT",  # flake8-2020
+    "EXE",  # flake8-executable
+    "E303", # Too many blank lines
+]
+unfixable = [
+    "F841", # Would remove unused variables
+]
+flake8-unused-arguments.ignore-variadic-names = true
+isort.required-imports = ["from __future__ import annotations"]
+
+[tool.uv.sources]
+# `relaxed` is consumed from a custom fork that contains fixes required by
+# the differentiable Z' analysis. Replace with the upstream PyPI release once
+# those fixes land.
+relaxed = { git = "https://github.com/pfackeldey/relaxed.git", branch = "fixes_for_zprime" }
