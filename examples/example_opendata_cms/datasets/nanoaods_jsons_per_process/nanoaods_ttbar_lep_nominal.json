@@ -1,0 +1,20 @@
+{
+  "ttbar_lep": {
+    "nominal": {
+      "files": [
+        {
+          "path": "root://eospublic.cern.ch//eos/opendata/cms/mc/RunIISummer20UL16NanoAODv9/TTTo2L2Nu_TuneCP5_13TeV-powheg-pythia8/NANOAODSIM/106X_mcRun2_asymptotic_v17-v1/120000/089E6E3A-DFD1-7148-BD6F-F611D22A1B62.root",
+          "nevts": 136000,
+          "nevts_wt": 9807584.0
+        },
+        {
+          "path": "root://eospublic.cern.ch//eos/opendata/cms/mc/RunIISummer20UL16NanoAODv9/TTTo2L2Nu_TuneCP5_13TeV-powheg-pythia8/NANOAODSIM/106X_mcRun2_asymptotic_v17-v1/120000/13BF43D6-5798-9D4C-9E4A-B148CC97DD4A.root",
+          "nevts": 1260000,
+          "nevts_wt": 90871600.0
+        }
+      ],
+      "nevts_total": 1396000,
+      "nevts_wt_total": 100679184.0
+    }
+  }
+}

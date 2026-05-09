@@ -1,0 +1,20 @@
+{
+  "signal": {
+    "nominal": {
+      "files": [
+        {
+          "path": "root://eospublic.cern.ch//eos/opendata/cms/mc/RunIISummer20UL16NanoAODv9/ZPrimeToTT_M2000_W200_TuneCP2_13TeV-madgraph-pythia8/NANOAODSIM/106X_mcRun2_asymptotic_v17-v2/2530000/288B512F-09A1-5D48-8D1B-6216C5904FB5.root",
+          "nevts": 2000,
+          "nevts_wt": 2000.0
+        },
+        {
+          "path": "root://eospublic.cern.ch//eos/opendata/cms/mc/RunIISummer20UL16NanoAODv9/ZPrimeToTT_M2000_W200_TuneCP2_13TeV-madgraph-pythia8/NANOAODSIM/106X_mcRun2_asymptotic_v17-v2/270000/7A83E108-8CB7-5647-8848-C2C48F430E09.root",
+          "nevts": 228000,
+          "nevts_wt": 228000.0
+        }
+      ],
+      "nevts_total": 230000,
+      "nevts_wt_total": 230000.0
+    }
+  }
+}
