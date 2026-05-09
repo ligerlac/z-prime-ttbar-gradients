@@ -10,13 +10,14 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from graep.config.inputs.base import FilesetSpec
+from graep.config.output import OutputSpec
 
 
 class Config(BaseModel):
     """Top-level configuration for one analysis.
 
     Each field is one section of the framework. Sections are added as
-    the corresponding subsystems become available.
+    the corresponding submodules become available.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -26,5 +27,12 @@ class Config(BaseModel):
         description=(
             "Inputs (datasets) section. A concrete FilesetSpec subclass "
             "such as OpenDataPortalFilesetSpec or RucioFilesetSpec."
+        ),
+    )
+    output: OutputSpec = Field(
+        default_factory=OutputSpec,
+        description=(
+            "Output section. Holds the root output directory and the "
+            "category-to-subdirectory map used by OutputManager."
         ),
     )

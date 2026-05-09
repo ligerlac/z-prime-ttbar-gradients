@@ -5,6 +5,7 @@ A composable HEP analysis framework.
 ## Table of contents
 
 - [Input data](#input-data)
+- [Output](#output)
 
 ---
 
@@ -166,3 +167,69 @@ Two pieces are needed: a resolver class and a matching spec class.
 
 Pass the new spec to `build_fileset` like any other. No registration
 needed.
+
+---
+
+## Output
+
+Every analysis writes things to disk: histograms, plots, fit results,
+exported filesets. GRAEP keeps these tidy with two pieces.
+
+1. **`OutputSpec`** is what you write in your config. It has a root
+   directory and a map from category name to subdirectory name.
+2. **`OutputManager`** is the runtime object. You build it from the spec
+   in your notebook, then ask it for paths with `mgr["category"]`. The
+   directories are created for you.
+
+A minimal usage looks like this:
+
+```python
+from graep.output.manager import OutputManager
+from examples.example_opendata_cms.config import config
+
+mgr = OutputManager.from_spec(config.output)
+hist_path = mgr["histograms"] / "ttbar.root"  # already exists; just write
+```
+
+In the example config, the root is set to
+`examples/example_opendata_cms/output`:
+
+```python
+from graep.config.output import OutputSpec
+
+config = Config(
+    inputs=fileset_spec,
+    output=OutputSpec(root=_HERE / "output"),
+)
+```
+
+### Default categories
+
+Out of the box the manager knows four categories: `histograms`,
+`plots`, `fits`, `fileset`. The subdirectory name matches the category
+name unless you override it.
+
+### Renaming or adding categories
+
+Pass a `categories` mapping on the spec to rename or extend:
+
+```python
+OutputSpec(
+    root=_HERE / "output",
+    categories={"histograms": "hist", "plots": "plot", "fits": "fit"},
+)
+```
+
+Or add a category at runtime:
+
+```python
+mgr["diagnostics"] = "diag"
+log_path = mgr["diagnostics"] / "job.log"
+```
+
+The new subdirectory is created on the spot.
+
+### Asking for an unknown category
+
+`mgr["foo"]` raises `KeyError` with the list of known categories. No
+silent typos.
