@@ -6,6 +6,7 @@ A composable HEP analysis framework.
 
 - [Input data](#input-data)
 - [Output](#output)
+- [Plotting](#plotting)
 
 ---
 
@@ -233,3 +234,82 @@ The new subdirectory is created on the spot.
 
 `mgr["foo"]` raises `KeyError` with the list of known categories. No
 silent typos.
+
+---
+
+## Plotting
+
+The plotting layer is a small set of functions, one per plot type,
+under `graep.plotting`. Each function takes a `PlottingSpec` and an
+`OutputManager` and applies the configured style automatically — no
+setup call needed in the notebook, no path computation at the call
+site.
+
+```python
+from graep.output.manager import OutputManager
+from graep.plotting.histograms import data_mc
+
+mgr = OutputManager.from_spec(config.output)
+data_mc(
+    config.plotting,
+    mgr,
+    bin_edges, data, templates,
+    plot_settings=plot_settings,
+    name="obs_data_mc",
+)
+```
+
+Every plot lands under `mgr["plots"]` with the extension from
+`spec.output_format`. Five functions are available:
+
+| Module | Function | Writes to |
+|---|---|---|
+| `graep.plotting.histograms` | `data_mc` | `mgr["plots"] / f"{name}.{ext}"` — stacked data/MC with a ratio panel. |
+| `graep.plotting.optimisation` | `pvalue_vs_parameters` | `mgr["plots"] / f"{name}.{ext}"` — p-value vs each varying parameter. |
+| `graep.plotting.optimisation` | `parameters_over_iterations` | `mgr["plots"] / f"{name}.{ext}"` — parameters and p-value vs iteration. |
+| `graep.plotting.mva` | `feature_distributions` | `mgr["plots"] / "features"` — one file per (feature, scaling). |
+| `graep.plotting.mva` | `scores` | `mgr["plots"] / "scores"` — per-process score histogram. |
+
+### Spec fields
+
+`PlottingSpec` carries the cross-plot defaults:
+
+| Field | Default | Description |
+|---|---|---|
+| `rcparams` | `DEFAULT_RCPARAMS` | matplotlib rcParams overrides applied via `apply_style`. Includes serif font, math text, and axis line width. Add fontsize entries (`axes.labelsize`, `legend.fontsize`, ...) to tune sizes globally. |
+| `mplhep_style` | `"CMS"` | mplhep style name. Set to `None` to skip. Other choices: `"ATLAS"`, `"LHCb"`, `"ALICE"`. |
+| `figsize` | `(8.0, 6.0)` | Default figure size. Each plot function accepts a per-call `figsize=` override. |
+| `dpi` | `300` | DPI used when saving figures. |
+| `output_format` | `"pdf"` | File extension for saved figures. |
+
+### Per-plot fontsize defaults
+
+Each plot exposes named fontsize kwargs with sensible defaults so
+common cases need no overrides. The kwargs use a common vocabulary:
+
+| Kwarg | Used by | Default(s) |
+|---|---|---|
+| `label_fontsize` | all five | 20 (`data_mc`), 10 (optimisation), 14 (mva) |
+| `title_fontsize` | `data_mc`, optimisation | 18, 10 |
+| `legend_fontsize` | `data_mc`, mva | 16, 12 |
+| `tick_fontsize` | optimisation, mva | 10, 12 |
+| `annotation_fontsize` | `data_mc` | 18 |
+| `ratio_label_fontsize` | `data_mc` | 14 |
+
+Override per-call to tune one element, or set the corresponding
+matplotlib rcParams entry (e.g. `"axes.labelsize"`) on the spec to
+move them all globally.
+
+### Per-call rcParams overrides
+
+Every plot function accepts an optional `rcparams=...` dict applied
+via `plt.rc_context` for the duration of that call. Useful when you
+want one specific plot to deviate from the global look without
+mutating the spec.
+
+```python
+data_mc(
+    spec, mgr, bin_edges, data, templates,
+    rcparams={"font.size": 18, "legend.handlelength": 2.0},
+)
+```

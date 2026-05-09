@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from graep.config.inputs.base import FilesetSpec
 from graep.config.output import OutputSpec
+from graep.config.plotting import PlottingSpec
 
 
 class Config(BaseModel):
@@ -34,5 +35,13 @@ class Config(BaseModel):
         description=(
             "Output section. Holds the root output directory and the "
             "category-to-subdirectory map used by OutputManager."
+        ),
+    )
+    plotting: PlottingSpec = Field(
+        default_factory=PlottingSpec,
+        description=(
+            "Plotting section. Cross-plot defaults (rcParams, mplhep "
+            "style, figsize, dpi, output format) consumed by the "
+            "plotting modules under graep.plotting."
         ),
     )
